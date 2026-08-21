@@ -1,0 +1,148 @@
+"""둠스데이 클락 — 원본의 진짜 종료 규칙.
+
+openfront 에는 **시간 제한도 지배 승리도 없다.** 대신 요구 점유율이 파도처럼 오르고,
+그 아래로 떨어진 쪽이 병력을 흘리다가 영토가 썩어 사라진다. 배틀로얄의 자기장이다.
+
+핵심 성질 셋 (원본 주석에 근거가 적혀 있다):
+
+1. **처음 10분은 0% 다.** 클락은 초반 솎아내기가 아니라 **교착 해결기**다.
+   그동안의 탈락은 순수하게 싸움으로 난다.
+2. 이후 7개 파도로 2/4/7/11/17/25/35% 까지 **선형으로 오르고 잠깐 쉰다.** 뛰지 않는다.
+3. 천장 35% 는 85판 토너먼트에서 2위 점유율이 21.6% 를 넘은 적이 없다는 실측에서 왔다.
+   더 올리면 선두마저 죽기 시작한다.
+
+바 아래로 떨어지면: 경고 30초 → 병력 유출(2%→5%) → 영토 썩음 → 150초 뒤 소멸.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+# 파도 목표치 (basis point, 100 = 1%)
+LEVELS = (200, 400, 700, 1100, 1700, 2500, 3500)
+# 팀전은 같은 사다리를 높여 오른다 — 한쪽이 살아 있으면 그 편이 사는 구조라
+# 같은 압력에서 더 천천히 줄어들기 때문이다.
+LEVELS_TEAM = (300, 600, 1000, 1500, 2100, 2800, 3500)
+
+
+@dataclass(frozen=True)
+class Schedule:
+    grace_seconds: int
+    ramp_seconds: tuple[int, ...]
+    pause_seconds: tuple[int, ...]
+    levels: tuple[int, ...] = LEVELS
+
+
+SCHEDULES: dict[str, Schedule] = {
+    "slow":     Schedule(600, (240,) * 7, (70,) * 6 + (0,)),
+    "normal":   Schedule(600, (168,) * 7, (54,) * 6 + (0,)),
+    "fast":     Schedule(600, (102,) * 7, (31,) * 6 + (0,)),
+    "veryfast": Schedule(600, (36,) * 7, (8,) * 6 + (0,)),
+}
+
+
+def required_basis_points(elapsed: float, speed: str = "normal",
+                          team_game: bool = False) -> int:
+    """`elapsed` 초 시점에 한 **진영**이 쥐고 있어야 하는 점유율(bp).
+
+    유예 동안 0, 이후 파도마다 선형으로 오르고 잠시 유지한다. 원본이 정수 내림으로
+    계산하는 이유는 모든 클라이언트가 같은 값을 봐야 하기 때문이다 — 우리는 단일
+    프로세스라 필요 없지만, 값이 어긋나면 대조가 안 되므로 그대로 둔다."""
+    s = SCHEDULES.get(speed, SCHEDULES["normal"])
+    levels = LEVELS_TEAM if team_game else s.levels
+    if elapsed <= s.grace_seconds:
+        return 0
+    t = elapsed - s.grace_seconds
+    prev = 0
+    for i, target in enumerate(levels):
+        ramp = s.ramp_seconds[i]
+        if t < ramp:
+            return prev + int((target - prev) * t // ramp)
+        t -= ramp
+        if t < s.pause_seconds[i]:
+            return target
+        t -= s.pause_seconds[i]
+        prev = target
+    return levels[-1]
+
+
+def required_tiles(elapsed: float, land_count: int, speed: str = "normal",
+                   team_game: bool = False) -> int:
+    bp = required_basis_points(elapsed, speed, team_game)
+    return int(land_count * bp // 10_000)
+
+
+@dataclass
+class DoomsdayDefaults:
+    """원본 `DOOMSDAY_CLOCK_DEFAULTS` 그대로."""
+    enabled: bool = False           # 원본 기본값도 꺼져 있다
+    speed: str = "normal"
+    warn_seconds: int = 30          # 경고(깜빡임) 뒤에 유출이 시작된다
+    drain_start_percent: float = 2.0
+    drain_max_percent: float = 5.0
+    drain_ramp_seconds: int = 90
+    drain_floor_percent: float = 5.0
+    floor_start_percent: float = 40.0
+    floor_decay_seconds: int = 90
+    rot_death_seconds: int = 150    # **비율이 아니라 마감 시각**이다
+    rot_grain_seconds: int = 10
+    rot_speckle_percent: float = 15.0
+
+
+@dataclass
+class DoomsdayClock:
+    """바 아래로 떨어진 쪽을 표시하고 말려 죽인다."""
+
+    cfg: DoomsdayDefaults = field(default_factory=DoomsdayDefaults)
+    marked_at: dict[int, float] = field(default_factory=dict)   # pid -> 표시된 시각(초)
+
+    def bar_tiles(self, elapsed: float, land_count: int,
+                  team_game: bool = False) -> int:
+        return required_tiles(elapsed, land_count, self.cfg.speed, team_game)
+
+    def update(self, elapsed: float, tiles_of: dict[int, int],
+               land_count: int, team_game: bool = False) -> None:
+        """바 아래면 표시하고, 다시 올라오면 표시를 지운다.
+
+        원본 주석: "the drain stops the moment it climbs back" — 되돌아오면 회복된다."""
+        if not self.cfg.enabled:
+            return
+        bar = self.bar_tiles(elapsed, land_count, team_game)
+        for pid, n in tiles_of.items():
+            if n < bar:
+                self.marked_at.setdefault(pid, elapsed)
+            else:
+                self.marked_at.pop(pid, None)
+
+    def drain_fraction(self, pid: int, elapsed: float) -> float:
+        """이번 tick 에 잃는 병력 비율. 경고 시간 동안은 0 이다."""
+        since = self.marked_at.get(pid)
+        if since is None:
+            return 0.0
+        t = elapsed - since - self.cfg.warn_seconds
+        if t < 0:
+            return 0.0
+        c = self.cfg
+        f = min(1.0, t / c.drain_ramp_seconds)
+        pct = c.drain_start_percent + (c.drain_max_percent - c.drain_start_percent) * f
+        return pct / 100.0
+
+    def troop_floor_fraction(self, pid: int, elapsed: float) -> float:
+        """유출이 멈추는 바닥. 40% 에서 시작해 90초에 걸쳐 5% 로 내려간다 —
+        **한 번의 반격 기회**를 남기되 영구히 살려 두지는 않는다."""
+        since = self.marked_at.get(pid)
+        if since is None:
+            return 1.0
+        c = self.cfg
+        t = max(0.0, elapsed - since - c.warn_seconds)
+        f = min(1.0, t / c.floor_decay_seconds)
+        pct = c.floor_start_percent + (c.drain_floor_percent - c.floor_start_percent) * f
+        return pct / 100.0
+
+    def is_dead(self, pid: int, elapsed: float) -> bool:
+        """`rotDeathSeconds` 는 **마감 시각**이다 — 표시된 뒤 이만큼 지나면 무엇을
+        쥐고 있든 영토가 사라진다. 유출만으로는 절대 안 죽기 때문에 필요하다."""
+        since = self.marked_at.get(pid)
+        if since is None or self.cfg.rot_death_seconds <= 0:
+            return False
+        return elapsed - since >= self.cfg.warn_seconds + self.cfg.rot_death_seconds

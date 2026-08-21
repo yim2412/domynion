@@ -100,6 +100,18 @@ def test_tile_counts_is_a_full_scan():
 
 
 @pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")
+def test_loaded_map_arrays_are_writable():
+    """`np.frombuffer` 는 **읽기 전용** 배열을 준다. `.copy()` 를 빼면 핵이 지형을
+    바꾸는 순간 실전에서만 죽는다 — `from_rows` 로 만든 테스트 지도는 쓰기 가능해서
+    이 버그를 못 잡았다(실제로 P5 를 다 짜고 실전에서야 터졌다)."""
+    gm = GameMap.load(MAPS[0])
+    gm.raw[0] = C.OCEAN_BIT
+    gm.terrain[0] = Terrain.OCEAN
+    gm.owner[0] = 3
+    assert gm.raw.flags.writeable and gm.terrain.flags.writeable
+
+
+@pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")
 def test_owner_starts_neutral():
     gm = GameMap.load(MAPS[0])
     assert (gm.owner == -1).all()

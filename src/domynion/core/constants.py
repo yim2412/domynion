@@ -177,6 +177,12 @@ DEFAULT_SAM_RANGE = 70
 MAX_SAM_RANGE = 150
 SAM_MISSILE_SPEED = 12
 
+# Config.ts :: waterNukes() — **기본값 false**.
+# 꺼져 있으면 폭심은 육지로 남고 **낙진만** 생긴다. 켜면 반대로 바다가 되고
+# 낙진은 지워진다(`setWater` 가 지운다). 둘 다 하면 안 된다 —
+# 실제로 둘 다 했다가 한 판에 낙진이 지도의 90% 를 덮었다.
+WATER_NUKES = False
+
 # MIRV 탄두만 다른 피해식을 쓴다
 MIRV_TARGET_TROOP_RATIO = 0.03
 MIRV_DEATH_SCALE = 500.0

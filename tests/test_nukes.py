@@ -126,24 +126,45 @@ def test_launch_requires_a_silo_and_gold():
     assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(40, 40)) is None
 
 
-def test_detonation_turns_land_to_water_and_clears_the_path_cache():
-    """폭심의 육지는 바다가 된다. **바다 경로 캐시를 반드시 비워야 한다** —
-    안 그러면 P4 의 캐시가 사라진 육지를 계속 육지로 안다."""
-    st = state()
+def _detonate_at(st, dst):
     st.players[0].gold = 10_000_000
     give_silo(st, 0, st.gmap.ref(5, 5))
-    st._path_cache[(1, 2)] = [1, 2]
-    dst = st.gmap.ref(40, 40)
-    before_land = st.gmap.land_count
     n = st.launch_nuke(0, UnitType.ATOM_BOMB, dst)
     for _ in range(60):
         st.tick()
         if n not in st.nukes:
             break
+    return n
+
+
+def test_default_nukes_leave_fallout_not_water(monkeypatch):
+    """`waterNukes()` 기본값은 **false** — 폭심은 육지로 남고 낙진만 생긴다.
+
+    막지 않았으면(둘 다 하면): 낙진이 지도를 덮는다. 실측으로 한 판에 90.3% 였다."""
+    monkeypatch.setattr(C, "WATER_NUKES", False)
+    st = state()
+    dst = st.gmap.ref(40, 40)
+    before_land = st.gmap.land_count
+    _detonate_at(st, dst)
+    assert st.gmap.terrain[dst] != Terrain.OCEAN, "바다가 되면 안 된다"
+    assert st.gmap.land_count == before_land
+    assert st.fallout.at(dst)
+
+
+def test_water_nukes_convert_terrain_and_clear_both_fallout_and_path_cache(monkeypatch):
+    """`waterNukes` 를 켜면 반대다 — 바다가 되고 낙진은 지워진다(`setWater` 가 지운다).
+
+    지형이 바뀌므로 **P4 의 바다 경로 캐시를 반드시 비워야 한다.**"""
+    monkeypatch.setattr(C, "WATER_NUKES", True)
+    st = state()
+    st._path_cache[(1, 2)] = [1, 2]
+    dst = st.gmap.ref(40, 40)
+    before_land = st.gmap.land_count
+    _detonate_at(st, dst)
     assert st.gmap.terrain[dst] == Terrain.OCEAN
     assert st.gmap.land_count < before_land
+    assert not st.fallout.at(dst), "바다 칸에는 낙진이 남지 않는다"
     assert st._path_cache == {}, "지형이 바뀌었는데 경로 캐시가 남아 있다"
-    assert st.fallout.at(dst)
 
 
 def test_nuke_kills_troops_and_takes_tiles():
@@ -181,7 +202,9 @@ def test_sam_intercepts_enemy_nukes_only():
         st.tick()
         if n not in st.nukes:
             break
-    assert st.gmap.terrain[st.gmap.ref(40, 40)] != Terrain.OCEAN, "요격됐어야 한다"
+    # 폭발 여부는 **낙진**으로 판정한다. 기본값(waterNukes=false)에서는 지형이
+    # 안 바뀌므로 지형으로 재면 항상 통과하는 빈 테스트가 된다.
+    assert not st.fallout.at(st.gmap.ref(40, 40)), "요격됐어야 한다"
 
     # 같은 SAM 이 주인의 핵은 안 막는다
     st2 = state()
@@ -194,7 +217,7 @@ def test_sam_intercepts_enemy_nukes_only():
         st2.tick()
         if n2 not in st2.nukes:
             break
-    assert st2.gmap.terrain[st2.gmap.ref(40, 40)] == Terrain.OCEAN, "자기 SAM 이 막았다"
+    assert st2.fallout.at(st2.gmap.ref(40, 40)), "자기 SAM 이 막았다"
 
 
 def test_buildings_inside_the_blast_are_destroyed():

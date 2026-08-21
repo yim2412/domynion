@@ -67,7 +67,11 @@ class GameMap:
     def load(cls, name: str = "world", root: Path | None = None) -> "GameMap":
         base = (root or _RESOURCES) / name
         meta = json.loads((base / "manifest.json").read_text(encoding="utf-8"))["map16x"]
-        raw = np.frombuffer((base / "map16x.bin").read_bytes(), dtype=np.uint8)
+        # ⚠ `.copy()` 가 필수다. `frombuffer` 는 **읽기 전용** 배열을 준다.
+        # 핵이 육지를 바다로 바꿀 때(`P5`) 여기에 쓰기 때문에, 빼면 실전에서만
+        # `ValueError: assignment destination is read-only` 로 죽는다.
+        # 테스트가 못 잡았던 이유: `from_rows` 는 쓰기 가능한 배열을 만든다.
+        raw = np.frombuffer((base / "map16x.bin").read_bytes(), dtype=np.uint8).copy()
         gm = cls(meta["width"], meta["height"], raw, name=name)
         declared = meta.get("num_land_tiles")
         if declared is not None and int((gm.raw & C.LAND_BIT).astype(bool).sum()) != declared:

@@ -22,6 +22,7 @@ from .constants import Terrain
 from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
+from .doomsday import DoomsdayClock
 from .gamemap import GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, trade_gold,
                     trade_spawn_rate, water_path)
@@ -31,9 +32,9 @@ from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
 
 class Victory(Enum):
-    CONQUEST = "정복"
-    DOMINATION = "지배"
-    TIMEOUT = "시간 종료"
+    CONQUEST = "정복"          # 원본의 유일한 승리 조건
+    DOMINATION = "지배"        # ⚠ 우리가 넣은 것 (원본에 없다)
+    TIMEOUT = "시간 종료"      # ⚠ 우리가 넣은 것 (원본에 없다)
 
 
 @dataclass
@@ -59,6 +60,7 @@ class GameState:
     _path_cache: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
     fallout: Fallout | None = None
+    clock: DoomsdayClock = field(default_factory=DoomsdayClock)
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -322,20 +324,26 @@ class GameState:
             if o >= 0:
                 per_player[o] = per_player.get(o, 0) + 1
 
-        # 2) 육지를 바다로 바꾸고 소유를 지운다
+        # 2) 소유를 지우고, **바다로 바꾸거나 낙진을 남기거나 둘 중 하나만** 한다.
+        #    `waterNukes()` 기본값이 false 라 보통은 낙진 쪽이다. 둘 다 하면
+        #    낙진이 지도를 덮어 버린다(실측: 한 판에 90.3%).
         for t in tiles:
             o = int(gm.owner[t])
             if o >= 0:
                 gm.owner[t] = -1
                 self._counts[o] = max(0, self._counts.get(o, 0) - 1)
-            if gm.terrain[t] != Terrain.OCEAN:
-                gm.terrain[t] = Terrain.OCEAN
-                gm.raw[t] = C.OCEAN_BIT
-                gm.land_count -= 1
-        # 지형이 바뀌었다 — 바다 성분과 경로 캐시를 버려야 한다(P4 의 전제가 깨진다)
-        gm._ocean_cc = None
-        self._path_cache.clear()
-        self.fallout.add(tiles)
+        if C.WATER_NUKES:
+            for t in tiles:
+                if gm.terrain[t] != Terrain.OCEAN:
+                    gm.terrain[t] = Terrain.OCEAN
+                    gm.raw[t] = C.OCEAN_BIT
+                    gm.land_count -= 1
+                self.fallout.clear(t)
+            # 지형이 바뀌었다 — 바다 성분과 경로 캐시를 버린다(P4 의 전제가 깨진다)
+            gm._ocean_cc = None
+            self._path_cache.clear()
+        else:
+            self.fallout.add([t for t in tiles if gm.terrain[t] != Terrain.OCEAN])
 
         # 3) 병력 손실 — 칸마다, 남은 타일 수로 나뉜다
         for pid, hit in per_player.items():
@@ -468,6 +476,7 @@ class GameState:
         self._advance_boats()
         self._advance_trade()
         self._advance_attacks()
+        self._tick_clock()
         self._check_end()
 
     def _grow(self) -> None:
@@ -539,6 +548,37 @@ class GameState:
         self.diplomacy.drop_player(target)
         self._rebuild_posts()
 
+    def _tick_clock(self) -> None:
+        """둠스데이 클락 — 원본의 진짜 종료 규칙. 기본은 꺼져 있다(원본도 그렇다)."""
+        if not self.clock.cfg.enabled:
+            return
+        elapsed = self.elapsed
+        team_game = any(t is not None for t in self.diplomacy.teams.values())
+        self.clock.update(elapsed, {p.pid: self.tiles(p.pid) for p in self.alive},
+                          self.gmap.land_count, team_game)
+        for p in list(self.alive):
+            if self.clock.is_dead(p.pid, elapsed):
+                self._wipe(p.pid)
+                continue
+            frac = self.clock.drain_fraction(p.pid, elapsed)
+            if frac <= 0.0:
+                continue
+            floor = self.clock.troop_floor_fraction(p.pid, elapsed) *                 p.max_troops(self.tiles(p.pid))
+            p.troops = max(floor, p.troops * (1.0 - frac * C.TICK_DT))
+
+    def _wipe(self, pid: int) -> None:
+        """영토가 통째로 썩어 사라진다 — 아무도 가져가지 않고 중립이 된다."""
+        refs = self.gmap.owned_refs(pid)
+        if len(refs):
+            self.gmap.owner[refs] = -1
+        self._counts[pid] = 0
+        p = self.players[pid]
+        p.alive = False
+        p.troops = 0.0
+        p.units.units = []
+        self.diplomacy.drop_player(pid)
+        self._rebuild_posts()
+
     def _check_end(self) -> None:
         for p in self.alive:
             if self.tiles(p.pid) <= 0 and not any(a.attacker == p.pid for a in self.attacks):
@@ -549,6 +589,10 @@ class GameState:
         alive = self.alive
         if len(alive) <= 1:
             self._finish(alive[0].pid if alive else None, Victory.CONQUEST)
+            return
+        # ⚠ 아래 둘은 **원본에 없다.** 클락이 켜져 있으면 원본대로 마지막 생존자만
+        # 남을 때까지 간다. 헤드리스 측정을 끝내려고 둔 안전장치일 뿐이다.
+        if self.clock.cfg.enabled:
             return
         top = max(alive, key=lambda p: self.tiles(p.pid))
         if self.share(top.pid) >= C.DOMINATION_TILE_RATIO:

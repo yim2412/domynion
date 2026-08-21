@@ -35,13 +35,20 @@ class MatchResult:
     wall: float
 
 
-def run_match(seed: int, players: int = 4, map_name: str = "world") -> MatchResult:
+def run_match(seed: int, players: int = 4, map_name: str = "world",
+              clock: str | None = None, max_seconds: float | None = None) -> MatchResult:
+    """`clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도
+    지배 승리도 없이 마지막 생존자가 남을 때까지 간다."""
     t0 = time.perf_counter()
     rng = random.Random(seed)
     st = GameState.new(players, rng, map_name=map_name, human=-1)
+    if clock:
+        st.clock.cfg.enabled = True
+        st.clock.cfg.speed = clock
     bots = simple_ai.attach(st, rng)
 
-    while not st.over:
+    cap = max_seconds if max_seconds is not None else float("inf")
+    while not st.over and st.elapsed < cap:
         st.tick()
         for b in bots:
             b.update(st, C.TICK_DT)
@@ -57,7 +64,7 @@ def run_match(seed: int, players: int = 4, map_name: str = "world") -> MatchResu
     )
 
 
-def _worker(args: tuple[int, int, str]) -> MatchResult:
+def _worker(args: tuple) -> MatchResult:
     return run_match(*args)
 
 
@@ -87,10 +94,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--map", dest="map_name", default="world")
     ap.add_argument("--jobs", type=int, default=1, help="동시에 돌릴 프로세스 수")
+    ap.add_argument("--clock", choices=["slow", "normal", "fast", "veryfast"],
+                    help="둠스데이 클락을 켠다 (원본 종료 규칙)")
+    ap.add_argument("--max-seconds", type=float,
+                    help="측정용 상한. 클락을 켜면 판이 길어질 수 있다")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
-    jobs = [(args.seed + i, args.players, args.map_name) for i in range(args.games)]
+    jobs = [(args.seed + i, args.players, args.map_name, args.clock, args.max_seconds)
+            for i in range(args.games)]
     t0 = time.perf_counter()
     results: list[MatchResult] = []
 
