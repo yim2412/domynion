@@ -261,8 +261,10 @@ def test_lod_gets_coarser_as_you_zoom_out():
     assert w._wanted_stride() == 1, "확대했는데 성기게 뽑는다"
     w.zoom = 0.5
     assert w._wanted_stride() == 2
+    w.zoom = 0.8
+    assert w._wanted_stride() == 2, "화면 픽셀보다 촘촘히 뽑아 봐야 버려진다"
     w.zoom = 0.05
-    assert w._wanted_stride() <= 4, "무한정 성겨지면 안 된다"
+    assert w._wanted_stride() <= 6, "무한정 성겨지면 안 된다"
     app.processEvents()
 
 

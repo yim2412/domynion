@@ -223,3 +223,57 @@ def test_is_bot_flag_still_works_for_old_callers():
     """`is_bot=True` 만 주던 호출부가 조용히 human 으로 바뀌면 안 된다."""
     p = PlayerState(pid=0, name="B", is_bot=True)
     assert p.kind == "bot" and p.is_bot
+
+
+# --- 벡터화가 답을 바꾸지 않는가 ---------------------------------------------
+
+def _slow_border_targets(st, pid):
+    """벡터화 전의 구현. **대조용이다** — 런타임에는 쓰지 않는다."""
+    out = set()
+    for t in st.gmap.owned_refs(pid).tolist():
+        for n in st.gmap.neighbors(t):
+            o = int(st.gmap.owner[n])
+            if o != pid and st.gmap.passable(n):
+                out.add(None if o < 0 else o)
+    return out
+
+
+def test_border_targets_matches_the_loop_it_replaced():
+    """`border_targets` 를 numpy 로 폈다(영토 17만 칸에서 119ms → 수 ms).
+
+    빨라져도 답이 다르면 소용없다. 손으로 깐 배치와 실제 확장 양쪽으로 대조한다."""
+    st = make_state(["." * 40] * 20, {0: (0, 0), 1: (39, 19), 2: (20, 10)})
+    for x in range(0, 20):
+        st.gmap.owner[st.gmap.ref(x, 5)] = 0
+    for x in range(20, 40):
+        st.gmap.owner[st.gmap.ref(x, 5)] = 1
+    st.gmap.owner[st.gmap.ref(10, 6)] = 2
+    for pid in (0, 1, 2):
+        assert st.border_targets(pid) == _slow_border_targets(st, pid)
+
+
+def test_border_targets_matches_after_real_expansion():
+    st = make_state(["." * 30] * 20, {0: (0, 0), 1: (29, 19)})
+    st.launch_attack(0, None)
+    st.launch_attack(1, None)
+    for _ in range(200):
+        st.tick()
+        if st.over:
+            break
+    for pid in (0, 1):
+        assert st.border_targets(pid) == _slow_border_targets(st, pid)
+
+
+def test_border_targets_ignores_ocean_and_impassable():
+    st = make_state(["..~.", "..#."], {0: (0, 0), 1: (3, 0)})
+    st.gmap.owner[st.gmap.ref(1, 0)] = 0
+    st._counts = {0: 2, 1: 1}
+    # 바다·통행불가 너머는 닿는 것으로 치지 않는다
+    assert st.border_targets(0) == _slow_border_targets(st, 0)
+    assert 1 not in st.border_targets(0)
+
+
+def test_border_targets_of_a_dead_player_is_empty():
+    st = make_state(["....", "...."], {0: (0, 0), 1: (3, 1)})
+    st.gmap.owner[st.gmap.owner == 1] = -1
+    assert st.border_targets(1) == set()

@@ -759,11 +759,23 @@ class GameState:
         return all(int(scan[pid]) == self._counts.get(pid, 0) for pid in self.players)
 
     def border_targets(self, pid: int) -> set[int | None]:
-        """닿을 수 있는 상대들. AI 가 쓴다. None 은 중립."""
-        out: set[int | None] = set()
-        for t in self.gmap.owned_refs(pid).tolist():
-            for n in self.gmap.neighbors(t):
-                o = int(self.gmap.owner[n])
-                if o != pid and self.gmap.passable(n):
-                    out.add(None if o < 0 else o)
-        return out
+        """닿을 수 있는 상대들. AI 가 쓴다. None 은 중립.
+
+        **numpy 로 편다.** 파이썬 루프로 내 타일마다 이웃을 보면 영토가 17만 칸일 때
+        한 번에 119ms 가 든다(실측, cProfile) — 원본 크기 지도에서 이 함수 하나가
+        시뮬레이션 전체보다 6배 비쌌다. 배열을 네 방향으로 밀어 한 번에 본다."""
+        gm = self.gmap
+        h, w = gm.height, gm.width
+        o = gm.owner.reshape(h, w)
+        mine = o == pid
+        if not mine.any():
+            return set()
+        passable = gm.passable_mask().reshape(h, w)
+        vals = []
+        # 내 칸의 오른쪽/왼쪽/아래/위 이웃 중 통행 가능한 것들의 소유자
+        vals.append(o[:, 1:][mine[:, :-1] & passable[:, 1:]])
+        vals.append(o[:, :-1][mine[:, 1:] & passable[:, :-1]])
+        vals.append(o[1:, :][mine[:-1, :] & passable[1:, :]])
+        vals.append(o[:-1, :][mine[1:, :] & passable[:-1, :]])
+        found = np.unique(np.concatenate(vals)) if vals else np.empty(0, dtype=np.int16)
+        return {None if int(v) < 0 else int(v) for v in found if int(v) != pid}

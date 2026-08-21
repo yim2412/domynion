@@ -42,7 +42,7 @@ pip install -e ".[dev,ui]"
 # 플레이 (기본 해상도 map4x = 1000×500, 육지 15.8만)
 python -m domynion.ui.app --map world --players 4 --difficulty hard
 
-# 해상도: map16x(1/16) · map4x(기본, 1000×500) · map(원본 2000×1000, 시뮬이 무겁다)
+# 해상도: map16x(1/16) · map4x(기본, 1000×500) · map(원본 크기 2000×1000, 육지 65만)
 python -m domynion.ui.app --map world --size map
 
 # 창 없이 한 장 찍는다 (600초 시점)

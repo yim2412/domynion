@@ -200,3 +200,42 @@ def test_donations_move_resources():
     before = st.players[1].troops
     assert st.donate_troops(0, 1, 1_000.0)
     assert st.players[1].troops == before + 1_000.0
+
+
+def _slow_shoreline(gm, pid):
+    """벡터화 전의 구현. 대조용."""
+    import numpy as np
+    return np.array([t for t in gm.owned_refs(pid).tolist() if gm.is_shore(t)],
+                    dtype=np.int64)
+
+
+def test_shoreline_matches_the_loop_it_replaced():
+    """`shoreline_tiles` 를 numpy 로 폈다(영토 17만 칸에서 589ms → 수 ms).
+
+    빨라져도 답이 다르면 소용없다."""
+    import numpy as np
+    gm = GameMap.from_rows(["~....~", "..~...", "......", "~~...~"])
+    for t in range(gm.size):
+        if gm.passable(t):
+            gm.owner[t] = 0
+    fast = np.sort(shoreline_tiles(gm, 0))
+    slow = np.sort(_slow_shoreline(gm, 0))
+    assert np.array_equal(fast, slow)
+    assert len(fast) > 0 and len(fast) < int((gm.owner == 0).sum())
+
+
+def test_shoreline_is_empty_without_territory():
+    import numpy as np
+    gm = GameMap.from_rows(["~..~"])
+    assert len(shoreline_tiles(gm, 3)) == 0
+    assert np.array_equal(shoreline_tiles(gm, 3), _slow_shoreline(gm, 3))
+
+
+def test_inland_tiles_are_not_shoreline():
+    gm = GameMap.from_rows(["~~~~~", "~...~", "~...~", "~...~", "~~~~~"])
+    for t in range(gm.size):
+        if gm.passable(t):
+            gm.owner[t] = 0
+    shore = set(shoreline_tiles(gm, 0).tolist())
+    assert gm.ref(2, 2) not in shore, "한가운데 칸이 해안으로 잡혔다"
+    assert gm.ref(1, 1) in shore

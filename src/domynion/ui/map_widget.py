@@ -133,10 +133,14 @@ class MapWidget(QWidget):
     # --- 층 만들기 --------------------------------------------------------
 
     def _wanted_stride(self) -> int:
-        """줌이 작을수록 성기게 뽑는다. 1 이상이면 원본 해상도가 필요하다."""
-        if self.zoom >= 0.9:
+        """줌이 작을수록 성기게 뽑는다.
+
+        `ceil(1/zoom)` 이라 **화면 픽셀 하나당 표본 하나**가 된다 — 그보다 촘촘히
+        뽑아 봐야 화면에서 버려진다. 처음엔 `round` 를 썼는데 줌 0.8 에서 stride 1 이
+        나와(round(1.25)=1) 원본 해상도로 뽑고 있었다: 2000×1000 전체보기가 18fps."""
+        if self.zoom >= 1.0:
             return 1
-        return max(1, min(4, int(round(1.0 / max(self.zoom, 1e-6)))))
+        return max(1, min(6, math.ceil(1.0 / max(self.zoom, 1e-6))))
 
     def _bake_terrain(self) -> None:
         """지형 층을 굽는다. 지형이 바뀌거나 LOD 가 달라질 때만 부른다."""
