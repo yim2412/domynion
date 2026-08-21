@@ -37,6 +37,10 @@ ACCEPT_CHANCE = 0.6        # 들어온 요청을 받을 확률
 BETRAY_TILE_RATIO = 0.5    # 동맹이 나보다 이만큼 작아지면 배신을 고려한다
 BETRAY_CHANCE = 0.05
 
+# 상륙. 육지로 닿는 곳이 없을 때만 본다 — 배는 병력의 1/5 을 통째로 걸어서 비싸다.
+BOAT_CHANCE = 0.25
+BOAT_SEARCH = 600          # 상륙 후보를 이만큼만 훑는다(지도 전체는 13만 칸이다)
+
 class SimpleAI:
     """플레이어 한 명을 조종한다. 상태를 갖는 이유는 반응 주기 하나 때문이다."""
 
@@ -71,6 +75,38 @@ class SimpleAI:
         target = self.choose_target(st, reachable)
         if target is not False:
             st.launch_attack(self.pid, target)
+        elif self.rng.random() < BOAT_CHANCE:
+            self._maybe_boat(st)          # 육지로 갈 곳이 없으면 바다를 본다
+
+    def _maybe_boat(self, st: GameState) -> None:
+        """바다 건너 상륙. 내 해안 근처에서 남의 땅이나 빈 땅을 찾는다."""
+        import numpy as np
+
+        from ..core.naval import shoreline_tiles
+
+        shore = shoreline_tiles(st.gmap, self.pid)
+        if not len(shore):
+            return
+        origin = int(self.rng.choice(shore.tolist()))
+        gm = st.gmap
+        ox, oy = gm.xy(origin)
+        for _ in range(12):
+            r = self.rng.randint(4, 60)
+            ang = self.rng.random() * 6.283185
+            x = int(ox + r * np.cos(ang))
+            y = int(oy + r * np.sin(ang))
+            if not (0 <= x < gm.width and 0 <= y < gm.height):
+                continue
+            t = gm.ref(x, y)
+            if not gm.passable(t):
+                continue
+            owner = int(gm.owner[t])
+            if owner == self.pid:
+                continue
+            if owner >= 0 and st.diplomacy.is_friendly(self.pid, owner):
+                continue
+            if st.send_boat(self.pid, t) is not None:
+                return
 
     def _diplomacy(self, st: GameState, reachable: "set[int | None]") -> None:
         """들어온 요청을 받고, 이웃에게 걸고, 약해진 동맹은 버린다."""

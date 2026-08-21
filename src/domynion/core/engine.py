@@ -22,6 +22,8 @@ from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .gamemap import GameMap, TileRef
+from .naval import (TradeShip, TransportShip, Warship, best_spawn, trade_gold,
+                    trade_spawn_rate, water_path)
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
@@ -46,6 +48,13 @@ class GameState:
     victory: Victory | None = None
 
     diplomacy: Diplomacy = field(default_factory=Diplomacy)
+    boats: list[TransportShip] = field(default_factory=list)
+    warships: list[Warship] = field(default_factory=list)
+    trade_ships: list[TradeShip] = field(default_factory=list)
+    _trade_rejections: int = 0
+    # 항구 쌍은 계속 반복된다. 바다 지형은 안 바뀌므로 경로를 그대로 재사용한다.
+    # ⚠ P5 에서 핵이 육지를 바다로 만들면 **여기를 비워야 한다.**
+    _path_cache: dict = field(default_factory=dict)
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -117,6 +126,149 @@ class GameState:
     def is_traitor(self, pid: int) -> bool:
         return self.diplomacy.is_traitor(pid, self.tick_count)
 
+    # --- 해상 -------------------------------------------------------------
+
+    def send_boat(self, pid: int, dst: TileRef,
+                  target: int | None = "auto") -> TransportShip | None:
+        """상륙 부대를 띄운다. 병력 `troops/5`, 동시에 최대 3척(`boatMaxNumber`)."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over:
+            return None
+        if sum(1 for b in self.boats if b.owner == pid) >= C.BOAT_MAX_NUMBER:
+            return None
+        if not self.gmap.passable(dst) or int(self.gmap.owner[dst]) == pid:
+            return None
+        if target == "auto":
+            o = int(self.gmap.owner[dst])
+            target = None if o < 0 else o
+        if target is not None and self.diplomacy.is_friendly(pid, target):
+            return None
+
+        src = best_spawn(self.gmap, pid, dst)
+        if src is None:
+            return None
+        path = self._water_path(src, dst)
+        if path is None:
+            return None
+        troops = min(p.troops * C.BOAT_ATTACK_RATIO, p.troops)
+        if troops < C.ATTACK_MIN_TROOPS:
+            return None
+        p.troops -= troops
+        boat = TransportShip(owner=pid, target=target, troops=troops,
+                             path=path, dst=dst)
+        self.boats.append(boat)
+        return boat
+
+    def _advance_boats(self) -> None:
+        still: list[TransportShip] = []
+        for b in self.boats:
+            p = self.players.get(b.owner)
+            if p is None or not p.alive:
+                continue
+            # 상륙 지점이 그 사이 친해졌으면 되돌아온다 — 육상 공격과 같은 규칙이다.
+            if b.target is not None and self.diplomacy.is_friendly(b.owner, b.target):
+                p.troops += b.troops
+                continue
+            b.advance()
+            if not b.arrived:
+                still.append(b)
+                continue
+
+            dst = b.dst
+            owner_now = int(self.gmap.owner[dst])
+            if owner_now == b.owner:
+                p.troops += b.troops          # 이미 내 땅이면 그냥 돌아온다
+                continue
+            self._conquer_tile(b.owner, dst, owner_now)
+            # 상륙에 성공하면 **그 자리에서 육상 공격이 시작된다**(원본도 여기서
+            # AttackExecution 을 새로 만든다). 배가 육지를 계속 먹는 게 아니다.
+            atk = Attack.launch(self.gmap, b.owner, b.target, b.troops,
+                                self.rng, self.tick_count)
+            if atk is None:
+                p.troops += b.troops
+            else:
+                self.attacks.append(atk)
+        self.boats = still
+
+    def _conquer_tile(self, pid: int, tile: TileRef, previous: int) -> None:
+        self.gmap.owner[tile] = pid
+        self._counts[pid] = self._counts.get(pid, 0) + 1
+        if previous >= 0:
+            self._counts[previous] = max(0, self._counts.get(previous, 0) - 1)
+
+    def _advance_trade(self) -> None:
+        """항구가 둘 이상이면 무역선이 뜬다. 도착하면 **양쪽 항구 주인이 함께** 번다."""
+        ports = [(u.tile, p.pid) for p in self.alive
+                 for u in p.units.of(UnitType.PORT) if not u.under_construction]
+        if len(ports) >= 2:
+            rate = trade_spawn_rate(self._trade_rejections, len(self.trade_ships))
+            if self.rng.randrange(max(1, rate)) == 0:
+                if self._spawn_trade_ship(ports):
+                    self._trade_rejections = 0
+                else:
+                    self._trade_rejections += 1
+            else:
+                self._trade_rejections += 1
+
+        still: list[TradeShip] = []
+        for t in self.trade_ships:
+            src_p = self.players.get(t.owner)
+            dst_p = self.players.get(t.dst_owner)
+            if src_p is None or not src_p.alive or dst_p is None or not dst_p.alive:
+                continue
+            if not self._can_trade(t.owner, t.dst_owner):
+                continue                       # 금수 중이면 항로가 끊긴다
+            t.advance()
+            if not t.arrived:
+                still.append(t)
+                continue
+            gold = trade_gold(len(t.path))
+            src_p.gold += gold
+            dst_p.gold += gold
+        self.trade_ships = still
+
+    def _water_path(self, src: TileRef, dst: TileRef) -> "list[TileRef] | None":
+        key = (src, dst)
+        if key not in self._path_cache:
+            self._path_cache[key] = water_path(self.gmap, src, dst)
+        return self._path_cache[key]
+
+    def _can_trade(self, a: int, b: int) -> bool:
+        return (a != b
+                and not self.diplomacy.embargoed(a, b)
+                and not self.diplomacy.embargoed(b, a))
+
+    def _spawn_trade_ship(self, ports: list[tuple[TileRef, int]]) -> bool:
+        src, dst = self.rng.sample(ports, 2)
+        # `canTrade()` — 금수는 **양방향**이다. 어느 한쪽이 걸어도 항로가 끊긴다.
+        if src[1] == dst[1] or not self._can_trade(src[1], dst[1]):
+            return False
+        path = self._water_path(src[0], dst[0])
+        if path is None:
+            return False
+        self.trade_ships.append(TradeShip(owner=src[1], src_port=src[0],
+                                          dst_port=dst[0], dst_owner=dst[1],
+                                          path=path))
+        return True
+
+    # --- 기부 -------------------------------------------------------------
+
+    def donate_gold(self, pid: int, to: int, gold: int) -> bool:
+        a, b = self.players.get(pid), self.players.get(to)
+        if a is None or b is None or pid == to or gold <= 0 or a.gold < gold:
+            return False
+        a.gold -= gold
+        b.gold += gold
+        return True
+
+    def donate_troops(self, pid: int, to: int, troops: float) -> bool:
+        a, b = self.players.get(pid), self.players.get(to)
+        if a is None or b is None or pid == to or troops <= 0 or a.troops < troops:
+            return False
+        a.troops -= troops
+        b.troops += troops
+        return True
+
     # --- 건설 -------------------------------------------------------------
 
     def can_build(self, pid: int, utype: UnitType, near: TileRef) -> TileRef | None:
@@ -130,7 +282,8 @@ class GameState:
         if p.gold < p.units.cost(utype):
             return None
         if utype in STRUCTURES:
-            return find_spot(self.gmap, pid, near, structure_tiles(p.units))
+            return find_spot(self.gmap, pid, near, structure_tiles(p.units),
+                             utype=utype)
         return near if self.gmap.passable(near) else None
 
     def build(self, pid: int, utype: UnitType, near: TileRef) -> Unit | None:
@@ -197,6 +350,8 @@ class GameState:
         self.diplomacy.expire_due(self.tick_count)
         self._grow()
         self._advance_construction()
+        self._advance_boats()
+        self._advance_trade()
         self._advance_attacks()
         self._check_end()
 

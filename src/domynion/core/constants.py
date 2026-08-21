@@ -187,6 +187,29 @@ STRUCTURE_MIN_DIST = 15
 SAM_CONSTRUCTION_TICKS = 30 * 10
 
 
+# --- 해상 (P4) ------------------------------------------------------------
+#
+# Config.ts :: boatMaxNumber() / warship*() / tradeShip*()
+
+BOAT_MAX_NUMBER = 3            # 동시에 띄울 수 있는 수송선 수
+BOAT_TICKS_PER_MOVE = 1        # TransportShipExecution.ticksPerMove
+BOAT_RETREAT_MALUS_PCT = 0.0   # 퇴각해 돌아온 병력의 손실 비율(원본 malusForRetreat)
+
+WARSHIP_PATROL_RANGE = 100
+WARSHIP_TARGETTING_RANGE = 130
+WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
+WARSHIP_DOCKING_RANGE = 5
+WARSHIP_MAX_HEALTH = 1000
+SHELL_DAMAGE = 250
+SHELL_LIFETIME = 50
+
+TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
+TRADE_SPAWN_SIGMOID_MID = 400
+
+# 기부 — Config.ts :: donateCooldown()
+DONATE_COOLDOWN_TICKS = 10 * 10
+
+
 # --- 판 ------------------------------------------------------------------
 #
 # ⚠ 아래 셋은 **원본 값이 아니다.** openfront 는 시간 제한도 지배 승리도 없고,

@@ -46,7 +46,7 @@ class GameMap:
     """
 
     __slots__ = ("width", "height", "size", "raw", "owner",
-                 "terrain", "land_count", "name")
+                 "terrain", "land_count", "name", "_ocean_cc")
 
     def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
         if raw.size != width * height:
@@ -59,6 +59,7 @@ class GameMap:
         self.terrain = _terrain_from_raw(raw)
         self.owner = np.full(self.size, -1, dtype=np.int16)   # -1 = 중립
         self.land_count = int(self.passable_mask().sum())
+        self._ocean_cc: np.ndarray | None = None
 
     # --- 적재 -------------------------------------------------------------
 
@@ -117,6 +118,17 @@ class GameMap:
 
     def passable_mask(self) -> np.ndarray:
         return (self.terrain >= Terrain.PLAINS) & (self.terrain <= Terrain.MOUNTAIN)
+
+    def ocean_components(self) -> np.ndarray:
+        """바다 연결성분 라벨(육지는 -1). 처음 부를 때 한 번 계산해 둔다."""
+        if self._ocean_cc is None:
+            self._ocean_cc = _flood_ocean_components(self)
+        return self._ocean_cc
+
+    def is_shore(self, t: TileRef) -> bool:
+        """육지이면서 바다에 접한 칸. 항구는 여기에만 지을 수 있다."""
+        return self.passable(t) and any(
+            self.terrain[n] == Terrain.OCEAN for n in self.neighbors(t))
 
     # --- 이웃 -------------------------------------------------------------
 
@@ -181,6 +193,31 @@ class GameMap:
                     best, best_d = cand, d
             picks.append(int(best))
         return picks
+
+
+def _flood_ocean_components(gm: "GameMap") -> np.ndarray:
+    """바다를 연결성분으로 라벨링한다. 육지는 -1.
+
+    **경로 탐색의 조기 기각용이다.** 이게 없으면 닿을 수 없는 목적지에 대해 BFS 가
+    바다 전체를 훑는다 — 판당 실행 시간이 15초에서 91초가 됐던 원인이 그것이다."""
+    from collections import deque
+
+    lab = np.full(gm.size, -1, dtype=np.int32)
+    ocean = gm.terrain == Terrain.OCEAN
+    nxt = 0
+    for start in np.flatnonzero(ocean).tolist():
+        if lab[start] >= 0:
+            continue
+        q = deque([start])
+        lab[start] = nxt
+        while q:
+            cur = q.popleft()
+            for n in gm.neighbors(cur):
+                if ocean[n] and lab[n] < 0:
+                    lab[n] = nxt
+                    q.append(n)
+        nxt += 1
+    return lab
 
 
 def _terrain_from_raw(raw: np.ndarray) -> np.ndarray:

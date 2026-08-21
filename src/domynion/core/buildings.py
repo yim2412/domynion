@@ -62,9 +62,15 @@ def euclid_sq(gmap: GameMap, a: TileRef, b: TileRef) -> int:
 
 
 def can_place_structure(gmap: GameMap, tile: TileRef, pid: int,
-                        existing: list[TileRef]) -> bool:
-    """내 영토 위이고, 다른 건물에서 `structureMinDist` 이상 떨어져 있어야 한다."""
+                        existing: list[TileRef],
+                        utype: "UnitType | None" = None) -> bool:
+    """내 영토 위이고, 다른 건물에서 `structureMinDist` 이상 떨어져 있어야 한다.
+
+    **항구만 예외로 해안이어야 한다**(`portSpawn` 이 `isShore` 로 거른다).
+    이걸 빼면 내륙에 항구가 서고, 그 항구에서 배가 못 떠서 무역선이 한 척도 안 뜬다."""
     if not gmap.passable(tile) or int(gmap.owner[tile]) != pid:
+        return False
+    if utype is UnitType.PORT and not gmap.is_shore(tile):
         return False
     min_sq = C.STRUCTURE_MIN_DIST ** 2
     return all(euclid_sq(gmap, tile, t) >= min_sq for t in existing)
@@ -77,7 +83,8 @@ def structure_tiles(player_units) -> list[TileRef]:
 
 
 def find_spot(gmap: GameMap, pid: int, near: TileRef,
-              existing: list[TileRef], search: int = 40) -> TileRef | None:
+              existing: list[TileRef], search: int = 40,
+              utype: "UnitType | None" = None) -> TileRef | None:
     """`near` 근처에서 지을 수 있는 칸을 찾는다 — 가까운 곳부터.
 
     원본 `validStructureSpawnTiles()` 는 BFS 로 내 영토를 훑어 거리순으로 정렬한 뒤
@@ -98,6 +105,6 @@ def find_spot(gmap: GameMap, pid: int, near: TileRef,
             d = dx * dx + dy * dy
             if best_d is not None and d >= best_d:
                 continue
-            if can_place_structure(gmap, t, pid, existing):
+            if can_place_structure(gmap, t, pid, existing, utype):
                 best, best_d = t, d
     return best
