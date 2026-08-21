@@ -675,6 +675,66 @@ P1 에서 map16x 를 고른 것은 속도 때문인데, 그 대가가 여기서 
 
 ---
 
+## 5.17 이식 대조 — 원본을 **실행해서** 맞춰 봤다
+
+"코드를 눈으로 봤다"나 "테스트가 통과한다"는 이식이 맞다는 근거가 아니다. 근거는
+**같은 입력에 같은 출력이 나오는가** 하나뿐이다.
+
+Node 22+ 가 TypeScript 를 그대로 실행하므로, 원본 소스를 고치지 않고 함수를 부를 수
+있다. `tools/oracle.mts` 가 원본을 실행해 기준값을 JSON 으로 뽑고,
+`tools/verify_port.py` 가 같은 입력을 우리 Python 에 넣어 대조한다.
+`tests/test_fidelity.py` 가 그 대조를 테스트로 돌린다.
+
+```
+✅ 181/181 항목이 원본 실행값과 일치
+```
+
+### 대조한 것
+
+| 묶음 | 항목 |
+|---|---|
+| **전투** | `attackLogic` 사람 12케이스 · 중립 18케이스(지형 3종 × 병력 × 사람/봇) |
+| | `attackTilesPerTick` 사람/중립 8케이스 |
+| 병력 | `maxTroops`(사람/봇/도시) · `troopIncreaseRate` |
+| 유닛 | 9종 × (비용 4단계 · 건설 tick · 체력) |
+| 핵 | 반경 3종 · 속도 4종 · `nukeDeathFactor`(일반/MIRV) · `samRange` |
+| 무역·철도 | `tradeShipGold` · `tradeShipSpawnRate` · `trainGold` · `trainSpawnRate` |
+| 클락 | 요구 타일 4속도 × 14시점 + 팀전 |
+| 스칼라 | 26개(초소·동맹·배신자·전함·기차·스폰 거리·`waterNukes` 등) |
+
+### 실행 방법
+
+```bash
+cd <원본리포> && npm i tsx zod nanoid dompurify
+./node_modules/.bin/tsx <이리포>/tools/oracle.mts <원본리포> > <이리포>/tests/oracle.json
+python tools/verify_port.py tests/oracle.json
+```
+
+### 대조 자체를 변이로 검증했다
+
+공격측 손실 계수 0.8→0.81 · 상한 지수 0.6→0.61 · 평야 mag 80→81 · 클락 천장
+3500→3400 · 철도 동맹 수익 35,000→34,000 — **다섯 개 전부 잡혔다.**
+
+### ⚠ 하네스가 틀렸던 것 하나
+
+처음 돌렸을 때 클락만 5개 불일치였다. 원본이 "시간 × 0.35" 를 낸다는 말이 안 되는
+값이라 하네스를 의심했고, 실제로 `doomsdayClockRequiredTiles(profile, land, elapsed)`
+인데 `(profile, elapsed, land)` 로 넘기고 있었다. **불일치가 나오면 우리 구현을
+고치기 전에 하네스를 먼저 의심한다.**
+
+### 아직 대조 못 한 것 (정직하게)
+
+기준값을 뽑으려면 Game/Player 를 크게 흉내 내야 하는 것들이다. 값이 아니라 **흐름**이라
+단위 테스트로만 덮여 있다:
+
+- `AttackExecution.tick()` 의 루프 순서와 우선순위 힙 공식
+- `TransportShipExecution` 의 경로·도착 처리, `WarshipExecution` 의 표적 우선순위
+- `SpawnExecution` 의 후보 탐색(반경 4 원·거리 30·750회 완화)
+- 봇 판단(`AiAttackBehavior`) — 비율 범위는 대조했지만 결정 흐름은 아니다
+- 폭발 타일 집합(`blast_tiles`) — 난수가 들어가 값 대조가 안 된다
+
+---
+
 ## 6. 문서 지위
 
 | 문서 | 지위 |

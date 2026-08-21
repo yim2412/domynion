@@ -1,0 +1,573 @@
+{
+  "doomsday_required_tiles": {
+    "slow": [
+      0,
+      0,
+      0,
+      0,
+      83,
+      140,
+      166,
+      200,
+      400,
+      1100,
+      1700,
+      2500,
+      3500,
+      3500
+    ],
+    "normal": [
+      0,
+      0,
+      0,
+      1,
+      119,
+      200,
+      200,
+      292,
+      678,
+      2128,
+      3500,
+      3500,
+      3500,
+      3500
+    ],
+    "fast": [
+      0,
+      0,
+      0,
+      1,
+      196,
+      268,
+      331,
+      500,
+      1500,
+      3500,
+      3500,
+      3500,
+      3500,
+      3500
+    ],
+    "veryfast": [
+      0,
+      0,
+      0,
+      5,
+      500,
+      1100,
+      1500,
+      3500,
+      3500,
+      3500,
+      3500,
+      3500,
+      3500,
+      3500
+    ]
+  },
+  "doomsday_team": [
+    0,
+    178,
+    439,
+    971,
+    3500
+  ],
+  "max_troops": [
+    102000,
+    131697.86384922225,
+    267302.3284146037,
+    1211653.370824913,
+    2099999.9999999995,
+    12168352.673090324
+  ],
+  "max_troops_bot": [
+    34000,
+    89100.77613820124,
+    699999.9999999999
+  ],
+  "max_troops_cities": 1631697.8638492222,
+  "troop_increase": [
+    48.35047465487605,
+    532.2306407930882,
+    616.2013236757484
+  ],
+  "unit_costs": {
+    "City": {
+      "cost0": 125000,
+      "cost1": 250000,
+      "cost2": 500000,
+      "cost4": 1000000,
+      "duration": 20,
+      "maxHealth": null
+    },
+    "Port": {
+      "cost0": 125000,
+      "cost1": 250000,
+      "cost2": 500000,
+      "cost4": 1000000,
+      "duration": 50,
+      "maxHealth": null
+    },
+    "Factory": {
+      "cost0": 125000,
+      "cost1": 250000,
+      "cost2": 500000,
+      "cost4": 1000000,
+      "duration": 20,
+      "maxHealth": null
+    },
+    "Defense Post": {
+      "cost0": 50000,
+      "cost1": 100000,
+      "cost2": 150000,
+      "cost4": 250000,
+      "duration": 50,
+      "maxHealth": null
+    },
+    "Missile Silo": {
+      "cost0": 1000000,
+      "cost1": 1000000,
+      "cost2": 1000000,
+      "cost4": 1000000,
+      "duration": 100,
+      "maxHealth": null
+    },
+    "SAM Launcher": {
+      "cost0": 1500000,
+      "cost1": 3000000,
+      "cost2": 3000000,
+      "cost4": 3000000,
+      "duration": 300,
+      "maxHealth": null
+    },
+    "Warship": {
+      "cost0": 250000,
+      "cost1": 500000,
+      "cost2": 750000,
+      "cost4": 1000000,
+      "duration": 0,
+      "maxHealth": 1000
+    },
+    "Atom Bomb": {
+      "cost0": 750000,
+      "cost1": 750000,
+      "cost2": 750000,
+      "cost4": 750000,
+      "duration": 0,
+      "maxHealth": null
+    },
+    "Hydrogen Bomb": {
+      "cost0": 5000000,
+      "cost1": 5000000,
+      "cost2": 5000000,
+      "cost4": 5000000,
+      "duration": 0,
+      "maxHealth": null
+    }
+  },
+  "sam_range": [
+    70,
+    81.42857142857143,
+    90,
+    102,
+    118,
+    145.42857142857142
+  ],
+  "trade_gold": [
+    2541,
+    5185,
+    52500,
+    104990,
+    134999
+  ],
+  "trade_spawn_rate": [
+    100,
+    25,
+    200,
+    16
+  ],
+  "train_spawn_rate": [
+    150,
+    165,
+    300,
+    900
+  ],
+  "train_gold": [
+    10000,
+    35000,
+    25000,
+    25000,
+    25000,
+    20000,
+    10000,
+    5000
+  ],
+  "nuke_magnitudes": {
+    "Atom Bomb": [
+      12,
+      30
+    ],
+    "Hydrogen Bomb": [
+      80,
+      100
+    ],
+    "MIRV Warhead": [
+      12,
+      18
+    ]
+  },
+  "nuke_speed": {
+    "Atom Bomb": 10,
+    "Hydrogen Bomb": 10,
+    "MIRV": 15,
+    "MIRV Warhead": 22
+  },
+  "nuke_death_factor": [
+    50,
+    5000,
+    5000
+  ],
+  "nuke_death_factor_mirv": [
+    0,
+    412.2397996915016,
+    0
+  ],
+  "gold_rate": {
+    "human": 100,
+    "bot": 50
+  },
+  "scalars": {
+    "turnIntervalMs": 100,
+    "boatMaxNumber": 3,
+    "structureMinDist": 15,
+    "defensePostRange": 30,
+    "defensePostDefenseBonus": 5,
+    "defensePostSpeedBonus": 3,
+    "cityTroopIncrease": 250000,
+    "allianceDuration": 3000,
+    "traitorDefenseDebuff": 0.5,
+    "traitorSpeedDebuff": 0.8,
+    "traitorDuration": 300,
+    "minDistanceBetweenPlayers": 30,
+    "warshipPatrolRange": 100,
+    "warshipTargettingRange": 130,
+    "warshipShellAttackRate": 20,
+    "warshipPassiveHealing": 1,
+    "warshipPassiveHealingRange": 150,
+    "warshipVeterancyShellDamageBonus": 20,
+    "shellLifetime": 50,
+    "tradeShipShortRangeDebuff": 300,
+    "trainStationMinRange": 15,
+    "trainStationMaxRange": 110,
+    "defaultSamRange": 70,
+    "maxSamRange": 150,
+    "donateCooldown": 100,
+    "waterNukes": false,
+    "startManpowerHuman": 25000,
+    "startManpowerBot": 10000,
+    "startManpowerNation": 18750
+  },
+  "attack_logic_player": [
+    {
+      "terrain": "Plains",
+      "atk": 4000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 107.50418448227373,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 23.919903202295245
+    },
+    {
+      "terrain": "Plains",
+      "atk": 20000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 107.50418448227373,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 6.3786408539454
+    },
+    {
+      "terrain": "Plains",
+      "atk": 1000,
+      "dTroops": 1000000,
+      "dTiles": 200000,
+      "aTiles": 300000,
+      "attackerTroopLoss": 43.90719758224079,
+      "defenderTroopLoss": 5,
+      "tilesPerTickUsed": 10.242180787841374
+    },
+    {
+      "terrain": "Plains",
+      "atk": 50000,
+      "dTroops": 5000,
+      "dTiles": 50,
+      "aTiles": 100,
+      "attackerTroopLoss": 63.871526683957924,
+      "defenderTroopLoss": 100,
+      "tilesPerTickUsed": 3.1899322073377236
+    },
+    {
+      "terrain": "Highland",
+      "atk": 4000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 134.38023060284218,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 28.993822063388176
+    },
+    {
+      "terrain": "Highland",
+      "atk": 20000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 134.38023060284218,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 7.73168588357018
+    },
+    {
+      "terrain": "Highland",
+      "atk": 1000,
+      "dTroops": 1000000,
+      "dTiles": 200000,
+      "aTiles": 300000,
+      "attackerTroopLoss": 54.88399697780098,
+      "defenderTroopLoss": 5,
+      "tilesPerTickUsed": 12.414764591322877
+    },
+    {
+      "terrain": "Highland",
+      "atk": 50000,
+      "dTroops": 5000,
+      "dTiles": 50,
+      "aTiles": 100,
+      "attackerTroopLoss": 79.83940835494741,
+      "defenderTroopLoss": 100,
+      "tilesPerTickUsed": 3.8665844937426948
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 4000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 161.2562767234106,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 36.24227757923522
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 20000,
+      "dTroops": 40000,
+      "dTiles": 500,
+      "aTiles": 800,
+      "attackerTroopLoss": 161.2562767234106,
+      "defenderTroopLoss": 80,
+      "tilesPerTickUsed": 9.664607354462726
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 1000,
+      "dTroops": 1000000,
+      "dTiles": 200000,
+      "aTiles": 300000,
+      "attackerTroopLoss": 65.86079637336118,
+      "defenderTroopLoss": 5,
+      "tilesPerTickUsed": 15.518455739153596
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 50000,
+      "dTroops": 5000,
+      "dTiles": 50,
+      "aTiles": 100,
+      "attackerTroopLoss": 95.80729002593688,
+      "defenderTroopLoss": 100,
+      "tilesPerTickUsed": 4.833230617178368
+    }
+  ],
+  "attack_logic_neutral": [
+    {
+      "terrain": "Plains",
+      "atk": 1000,
+      "who": "human",
+      "attackerTroopLoss": 16,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 33
+    },
+    {
+      "terrain": "Plains",
+      "atk": 1000,
+      "who": "bot",
+      "attackerTroopLoss": 8,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 33
+    },
+    {
+      "terrain": "Plains",
+      "atk": 25000,
+      "who": "human",
+      "attackerTroopLoss": 16,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Plains",
+      "atk": 25000,
+      "who": "bot",
+      "attackerTroopLoss": 8,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Plains",
+      "atk": 100000,
+      "who": "human",
+      "attackerTroopLoss": 16,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Plains",
+      "atk": 100000,
+      "who": "bot",
+      "attackerTroopLoss": 8,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Highland",
+      "atk": 1000,
+      "who": "human",
+      "attackerTroopLoss": 20,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 40
+    },
+    {
+      "terrain": "Highland",
+      "atk": 1000,
+      "who": "bot",
+      "attackerTroopLoss": 10,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 40
+    },
+    {
+      "terrain": "Highland",
+      "atk": 25000,
+      "who": "human",
+      "attackerTroopLoss": 20,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Highland",
+      "atk": 25000,
+      "who": "bot",
+      "attackerTroopLoss": 10,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Highland",
+      "atk": 100000,
+      "who": "human",
+      "attackerTroopLoss": 20,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Highland",
+      "atk": 100000,
+      "who": "bot",
+      "attackerTroopLoss": 10,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 1000,
+      "who": "human",
+      "attackerTroopLoss": 24,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 50
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 1000,
+      "who": "bot",
+      "attackerTroopLoss": 12,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 50
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 25000,
+      "who": "human",
+      "attackerTroopLoss": 24,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 25000,
+      "who": "bot",
+      "attackerTroopLoss": 12,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 100000,
+      "who": "human",
+      "attackerTroopLoss": 24,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    },
+    {
+      "terrain": "Mountain",
+      "atk": 100000,
+      "who": "bot",
+      "attackerTroopLoss": 12,
+      "defenderTroopLoss": 0,
+      "tilesPerTickUsed": 5
+    }
+  ],
+  "attack_tiles_per_tick": [
+    {
+      "atk": 5000,
+      "dTroops": 20000,
+      "border": 100,
+      "vsPlayer": 150,
+      "vsNeutral": 200
+    },
+    {
+      "atk": 5000,
+      "dTroops": 20000,
+      "border": 200,
+      "vsPlayer": 300,
+      "vsNeutral": 400
+    },
+    {
+      "atk": 10000000,
+      "dTroops": 1,
+      "border": 10,
+      "vsPlayer": 15,
+      "vsNeutral": 20
+    },
+    {
+      "atk": 1,
+      "dTroops": 10000000,
+      "border": 10,
+      "vsPlayer": 0.30000000000000004,
+      "vsNeutral": 20
+    }
+  ],
+  "attack_amount": {
+    "human": 10000,
+    "bot": 2500,
+    "boat": 10000
+  }
+}

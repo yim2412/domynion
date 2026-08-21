@@ -24,6 +24,10 @@
 | ✅ | 규칙 이식(P1~P6) · 원본 봇 · 원본 스폰 · **UI** |
 | ⬜ | **증강형 테크트리**(원본에 없는 우리 층) |
 
+**원본과 같은지는 실행해서 대조한다** — `tools/oracle.mts` 가 원본 TypeScript 를
+직접 실행해 기준값을 뽑고, `tests/test_fidelity.py` 가 우리 값과 맞춰 본다.
+현재 **181/181 일치**(전투 공식 30케이스 포함).
+
 진행 상황과 원본 공식은 [`docs/openfront-port.md`](docs/openfront-port.md).
 
 ## 설치
