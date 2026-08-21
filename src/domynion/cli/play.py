@@ -35,6 +35,21 @@ class MatchResult:
     stops: int                    # 실제로 일어난 증강 정지 횟수 (설계값은 7회)
 
 
+def apply_ai_overrides(**kw: float | int | None) -> None:
+    """AI 튜닝 상수를 덮어쓴다. 교착의 원인이 규칙인지 AI 인지 가르려면 AI 쪽을
+    코드 수정 없이 흔들어 볼 수 있어야 한다.
+
+    `simple_ai` 의 메서드들이 이 값을 **모듈 전역으로 조회**하기 때문에 여기서
+    setattr 하면 그대로 먹는다. 이름 import 로 바꾸면 조용히 안 먹으니 주의."""
+    for name, value in kw.items():
+        if value is None:
+            continue
+        attr = name.upper()
+        if not hasattr(simple_ai, attr):
+            raise SystemExit(f"simple_ai 에 {attr} 가 없다 — 이름이 바뀌었는지 확인할 것")
+        setattr(simple_ai, attr, value)
+
+
 def run_match(seed: int, players: int, dt: float = C.TICK_DT) -> MatchResult:
     rng = random.Random(seed)
     st = GameState.new(players, rng)
@@ -127,13 +142,47 @@ def summarize(results: list[MatchResult], wall: float) -> str:
     return "\n".join(lines)
 
 
+def brief(results: list[MatchResult], args) -> str:
+    """스윕용 한 줄. 교착 지표는 **시간 종료 비율**이다 — 판이 안 끝난다는 뜻이다."""
+    n = len(results)
+    timeout = sum(1 for r in results if r.victory is Victory.TIMEOUT) / n
+    secs = statistics.median([r.seconds for r in results])
+    floored = sum(1 for r in results if r.min_cost_mult <= 0.2 + 1e-9) / n
+
+    taken: Counter[str] = Counter()
+    won: Counter[str] = Counter()
+    for r in results:
+        for pid, augs in r.augments.items():
+            for key, lv in augs.items():
+                taken[key] += lv
+                if pid == r.winner:
+                    won[key] += lv
+
+    def rate(key: str) -> float:
+        return won.get(key, 0) / taken[key] * 100 if taken.get(key) else 0.0
+
+    return (f"bias={simple_ai.NEUTRAL_BIAS:<4} conc={simple_ai.MAX_CONCURRENT} "
+            f"fill={simple_ai.LAUNCH_FILL:<5} | "
+            f"시간종료 {timeout * 100:>5.1f}%  중앙 {secs:>4.0f}초  "
+            f"개척단 {rate('settlers'):>4.1f}%  강행군 {rate('forced_march'):>4.1f}%  "
+            f"하한 {floored * 100:>4.1f}%  n={n}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Domynion 헤드리스 밸런스 측정")
     ap.add_argument("--games", type=int, default=40)
     ap.add_argument("--players", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--verbose", action="store_true", help="판마다 한 줄씩 찍는다")
+    ap.add_argument("--brief", action="store_true", help="스윕용 한 줄 요약")
+    ap.add_argument("--neutral-bias", type=float, help="AI: 중립 선호 (기본 1.6)")
+    ap.add_argument("--max-concurrent", type=int, help="AI: 동시 부대 수 (기본 1)")
+    ap.add_argument("--launch-fill", type=float, help="AI: 출정 충전율 (기본 0.55)")
     args = ap.parse_args(argv)
+
+    apply_ai_overrides(neutral_bias=args.neutral_bias,
+                       max_concurrent=args.max_concurrent,
+                       launch_fill=args.launch_fill)
 
     t0 = time.perf_counter()
     results = []
@@ -144,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             kind = r.victory.value if r.victory else "무승부"
             print(f"  seed {r.seed:>5}  {kind:<10} {r.seconds:>6.0f}초  "
                   f"승자 P{r.winner}  점유 {r.top_share * 100:.0f}%", flush=True)
-    print(summarize(results, time.perf_counter() - t0))
+    wall = time.perf_counter() - t0
+    print(brief(results, args) if args.brief else summarize(results, wall))
     return 0
 
 
