@@ -37,7 +37,9 @@ BUILD_EVERY_SEC = 5.0
 ALLY_CHANCE = 0.15         # 반응마다 이 확률로 이웃에게 동맹을 건다
 ACCEPT_CHANCE = 0.6        # 들어온 요청을 받을 확률
 BETRAY_TILE_RATIO = 0.5    # 동맹이 나보다 이만큼 작아지면 배신을 고려한다
-BETRAY_CHANCE = 0.05
+# 반응 주기(1초)마다 굴리므로 값이 작아야 한다. 0.05 로 뒀더니 한 판에 배신이 49회
+# 나고 동맹이 하나도 안 남았다 — 배신 낙인(30초)이 값이라는 감각이 사라진다.
+BETRAY_CHANCE = 0.002
 
 # 상륙. 육지로 닿는 곳이 없을 때만 본다 — 배는 병력의 1/5 을 통째로 걸어서 비싸다.
 BOAT_CHANCE = 0.25
@@ -182,6 +184,13 @@ class SimpleAI:
             near = int(self.rng.choice(refs.tolist()))
             if st.build(self.pid, utype, near) is not None:
                 return
+
+        # 전함은 건물이 아니라 바다에 띄운다 — 항구 옆 바다 칸을 찾는다.
+        if p.gold >= p.units.cost(UnitType.WARSHIP) and p.units.of(UnitType.PORT):
+            port = self.rng.choice(p.units.of(UnitType.PORT))
+            for n in st.gmap.neighbors(port.tile):
+                if st.build_warship(self.pid, n) is not None:
+                    return
 
     def choose_target(self, st: GameState,
                       reachable: "set[int | None] | None" = None) -> "int | None | bool":
