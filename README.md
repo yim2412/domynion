@@ -15,14 +15,14 @@
 
 ## 상태
 
-**P1~P6 이식 완료 — 원본의 규칙 계통이 전부 돈다.** 실제 openfront 지도 위에서
-영토 확장 · 골드 · 건물 · 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 ·
-둠스데이 클락 · 원본 봇(난이도 4단계)이 함께 작동한다. 테스트 167개.
+**플레이할 수 있다.** 실제 openfront 지도 위에서 영토 확장 · 골드 · 건물 ·
+동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 · 둠스데이 클락 · 원본 봇이
+함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 179개.
 
 | | |
 |---|---|
-| ✅ | 지도·전투 · 골드/건물 · 외교 · 해상 · 철도 · 핵 · 클락 · 스폰 · 원본 봇 |
-| ⬜ | **P7 증강형 테크트리** · UI |
+| ✅ | 규칙 이식(P1~P6) · 원본 봇 · 원본 스폰 · **UI** |
+| ⬜ | **증강형 테크트리**(원본에 없는 우리 층) |
 
 진행 상황과 원본 공식은 [`docs/openfront-port.md`](docs/openfront-port.md).
 
@@ -35,25 +35,28 @@ pip install -e ".[dev,ui]"
 ## 실행
 
 ```bash
+# 플레이
+python -m domynion.ui.app --map world --players 4 --difficulty hard
+
+# 창 없이 한 장 찍는다 (600초 시점)
+python -m domynion.ui.app --shot shot.png --at 600 --map world
+
 # 헤드리스로 판을 돌려 밸런스를 잰다
 python -m domynion.cli.play --games 40 --map world --jobs 8
 python -m domynion.cli.play --games 20 --map world --clock normal --difficulty hard
 
-# 판을 그림으로 찍는다 (창 없이)
-python -m domynion.cli.shot --seed 1 --map world --at 120 600 --tile 3 --out shots/
-
 # 테스트
 python -m pytest tests -q
-
-# 변이 테스트는 바이트코드 캐시를 꺼야 한다 (계획서 5.5절 참고)
-PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q
+PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q   # 변이 테스트는 캐시를 끈다
 ```
 
-`--clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도 지배
-승리도 없이 마지막 생존자가 남을 때까지 간다. `--ai nation|simple`,
-`--difficulty easy|medium|hard|impossible`.
+조작: **좌클릭** = 그 칸의 *소유자 전체*를 공격 · 우클릭 드래그 = 이동 ·
+휠 = 확대 · Space = 일시정지.
 
-지도는 `world` `asia` `europe` `africa` 넷을 담아 뒀다 — 출처와 라이선스는
+`--clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도 지배
+승리도 없이 마지막 생존자가 남을 때까지 간다.
+
+지도는 `world` `asia` `europe` `africa` 넷 — 출처와 라이선스는
 [`resources/maps/ATTRIBUTION.md`](resources/maps/ATTRIBUTION.md).
 
 ## 구조
@@ -69,7 +72,14 @@ src/domynion/
     engine.py      tick(dt), 증강 정지, 탈락, 승리 판정
   ai/
     simple_ai.py   규칙 기반 AI — 반응 주기로 묶여 있다
-  ui/            (예정) PyQt6 — 전체화면 지도 + 오버레이 HUD
+  ui/
+    frame.py       타일 해상도 프레임 생성 (확대는 Qt 가 한다)
+    map_widget.py  지도 + 국경선 + 이름
+    hud.py         순위표 · 병력바 · 공격 슬라이더
+    main_window.py 조립 + 실시간 타이머
+    app.py         진입점 (--shot 스크린샷 모드)
+    render.py      PIL 렌더러 (창 없이 그림 파일을 뽑는 용도)
+    palette.py     색
   cli/
     play.py        헤드리스 시뮬레이션 (밸런스 측정)
 ```

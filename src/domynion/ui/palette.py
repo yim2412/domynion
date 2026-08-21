@@ -37,11 +37,16 @@ PLAYER_COLORS: list[RGB] = [
     (222, 130, 168),   # 분홍
 ]
 
-OWNER_BLEND = 0.48      # 소유자 색을 이만큼 섞는다. 1.0 이면 지형이 안 보인다
+OWNER_BLEND = 0.66      # 소유자 색을 이만큼 섞는다. 1.0 이면 지형이 안 보인다
 BORDER_COLOR: RGB = (18, 18, 22)
 COAST_COLOR: RGB = (20, 38, 56)
 LABEL_COLOR: RGB = (255, 255, 255)
 LABEL_SHADOW: RGB = (0, 0, 0)
+
+# 한글이 되는 폰트를 **명시한다.** Qt 기본 폰트에 한글 글리프가 없으면 글자가 전부
+# 두부(□)가 된다 — 오프스크린 렌더에서 실제로 그랬다.
+UI_FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕", "Noto Sans KR",
+                    "Segoe UI", "Arial")
 
 TEXTURE_AMP = 0.16      # 지형 질감의 세기. 크면 타일 경계가 도로 보인다
 TEXTURE_PERIOD = 24     # 타일 몇 개마다 한 주기인가. **1 이면 체크무늬가 된다**
