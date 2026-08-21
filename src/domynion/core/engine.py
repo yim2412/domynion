@@ -30,6 +30,7 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import place_players
+from .relations import Relation, gold_donation_relation
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
@@ -68,6 +69,12 @@ class GameState:
     rail: RailNetwork = field(default_factory=RailNetwork)
     log: EventLog = field(default_factory=EventLog)
     trains: list[Train] = field(default_factory=list)
+
+    # 관계 변화량이 난이도를 탄다(`AttackExecution` 의 relationChange).
+    difficulty: str = "medium"
+
+    # 금수 벌점을 이미 매겼는지(`embargoMalusApplied`). 매 tick 깎으면 안 된다.
+    _embargo_malus: dict[int, set[int]] = field(default_factory=dict)
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -152,9 +159,26 @@ class GameState:
         self.attacks.append(atk)
         if target is not None:
             self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
+            # 맞은 쪽만 나빠진다(`AttackExecution` 도 target 쪽만 갱신한다).
+            self.relate(target, pid, C.REL_ATTACKED.get(self.difficulty, -70.0))
+            if self.diplomacy.is_friendly(pid, target):
+                self.relate(pid, target, C.REL_ATTACKED_ALLY)
         return atk
 
     # --- 이벤트 -----------------------------------------------------------
+
+    def relate(self, who: int, about: int, delta: float) -> None:
+        """`who` 가 `about` 을 보는 눈을 바꾼다. **한 방향이다.**
+
+        양쪽을 다 바꿔야 하는 것은 동맹 성사·MIRV 둘뿐이고, 나머지는 당한 쪽만
+        나빠진다 — 친 쪽은 자기가 뭘 했는지 신경 쓰지 않는다."""
+        p = self.players.get(who)
+        if p is not None and who != about:
+            p.relations.update(about, delta)
+
+    def relation_of(self, who: int, about: int) -> Relation:
+        p = self.players.get(who)
+        return Relation.NEUTRAL if p is None else p.relations.of(about)
 
     def emit(self, kind: EventKind, who: int | None = None, other: int | None = None,
              tile: TileRef | None = None, amount: float = 0.0, text: str = "") -> None:
@@ -175,6 +199,8 @@ class GameState:
         if ok:
             self.emit(EventKind.ALLIANCE_ACCEPTED, who=requestor, other=pid)
             self.emit(EventKind.ALLIANCE_ACCEPTED, who=pid, other=requestor)
+            self.relate(requestor, pid, C.REL_ALLIANCE_ACCEPTED)
+            self.relate(pid, requestor, C.REL_ALLIANCE_ACCEPTED)
         return ok
 
     def reject_alliance(self, pid: int, requestor: int) -> None:
@@ -186,6 +212,16 @@ class GameState:
         ok = self.diplomacy.break_alliance(pid, other, self.tick_count)
         if ok:
             self.emit(EventKind.ALLIANCE_BROKEN, who=other, other=pid)
+            self.relate(other, pid, C.REL_ALLIANCE_BROKEN)
+            # 이웃도 배신을 본다. 배신자가 조용히 다음 상대를 찾지 못하게 하는 장치다.
+            #
+            # ⚠ 원본 필터는 "피해자 제외"가 아니라 **피해자와 같은 팀이 아닌 이웃**
+            # (`!n.isOnSameTeam(recipient)`)이다. 피해자 본인이 이웃이면 −100 위에
+            # −40 이 더 얹힌다. clamp 는 update 마다 걸리므로 −140 이 아니라
+            # (동맹으로 얻은 +100) −100 −40 = −40 이 된다.
+            for n in self.border_targets(pid):
+                if n is not None and not self.diplomacy.same_team(n, other):
+                    self.relate(n, pid, C.REL_ALLIANCE_BROKEN_NEIGHBOUR)
         return ok
 
     def is_traitor(self, pid: int) -> bool:
@@ -436,6 +472,13 @@ class GameState:
                     utype, EventKind.NUKE_INBOUND)
         victim = int(self.gmap.owner[dst])
         self.emit(kind, who=victim if victim >= 0 else None, other=pid, tile=dst)
+        if victim >= 0 and victim != pid:
+            if utype is UnitType.MIRV:
+                # MIRV 만 **양방향**이다 — 쏜 쪽도 상대를 적으로 확정한다.
+                self.relate(victim, pid, C.REL_MIRV)
+                self.relate(pid, victim, C.REL_MIRV)
+            else:
+                self.relate(victim, pid, C.REL_NUKED)
         return n
 
     def _split_mirv(self, n: Nuke) -> None:
@@ -589,6 +632,26 @@ class GameState:
             owner.gold += train_gold(t.rel, t.cities_visited)
         self.trains = still
 
+    def _apply_embargo_relations(self) -> None:
+        """금수는 **걸려 있는 동안 계속** 깎는 것이 아니라 한 번만 깎는다.
+
+        매 tick 깎으면 몇 초 만에 −100 에 박혀 풀어도 회복이 안 된다. 원본은
+        적용 여부를 따로 기억해 두고(`embargoMalusApplied`) 상태가 바뀔 때만
+        움직인다. 푸는 것도 같은 크기로 되돌린다."""
+        alive = [p.pid for p in self.alive]
+        for pid in alive:
+            applied = self._embargo_malus.setdefault(pid, set())
+            for other in alive:
+                if other == pid:
+                    continue
+                on = self.diplomacy.embargoed(other, pid)   # 상대가 나를 막았나
+                if on and other not in applied:
+                    self.relate(pid, other, C.REL_EMBARGO)
+                    applied.add(other)
+                elif not on and other in applied:
+                    self.relate(pid, other, -C.REL_EMBARGO)
+                    applied.discard(other)
+
     # --- 기부 -------------------------------------------------------------
 
     def donate_gold(self, pid: int, to: int, gold: int) -> bool:
@@ -599,6 +662,9 @@ class GameState:
         b.gold += gold
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=gold)
         self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=gold)
+        # 액수에 비례한다. 덩어리 크기가 시간에 따라 커져서 후반에 관계를 살 수 없다.
+        self.relate(to, pid, gold_donation_relation(gold, self.tick_count,
+                                                    self.difficulty))
         return True
 
     def donate_troops(self, pid: int, to: int, troops: float) -> bool:
@@ -609,6 +675,7 @@ class GameState:
         b.troops += troops
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=troops)
         self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=troops)
+        self.relate(to, pid, C.REL_TROOP_DONATION)   # 병력은 액수와 무관하게 +50
         return True
 
     # --- 건설 -------------------------------------------------------------
@@ -692,6 +759,8 @@ class GameState:
         for gone in self.diplomacy.expire_due(self.tick_count):
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.a, other=gone.b)
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)
+        self._decay_relations()
+        self._apply_embargo_relations()
         self._grow()
         self._advance_construction()
         self._advance_nukes()
@@ -702,6 +771,11 @@ class GameState:
         self._advance_attacks()
         self._tick_clock()
         self._check_end()
+
+    def _decay_relations(self) -> None:
+        """`PlayerExecution.tick` 이 매 tick 부르는 것. 원한은 잊힌다."""
+        for p in self.alive:
+            p.relations.decay()
 
     def _grow(self) -> None:
         for p in self.alive:

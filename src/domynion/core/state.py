@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from . import constants as C
 from .gamemap import TileRef
+from .relations import Relations
 from .units import UnitStore
 
 
@@ -35,6 +36,9 @@ class PlayerState:
 
     # 사람이 슬라이더로 조절하는 값. 기본은 원본의 attackAmount().
     attack_ratio: float | None = None
+
+    # 내가 남들을 어떻게 보는가. **한 방향**이다 — 상대가 나를 보는 눈은 상대에게 있다.
+    relations: Relations = field(default_factory=Relations)
 
     augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
 

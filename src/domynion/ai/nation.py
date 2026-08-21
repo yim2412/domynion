@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
 from ..core.units import STRUCTURES, UnitType
 
@@ -110,7 +111,33 @@ class NationBot:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
             return
+        self._embargoes(st)
         self._maybe_attack(st)
+
+    # --- 금수 -------------------------------------------------------------
+
+    def _embargoes(self, st: GameState) -> None:
+        """`NationExecution` — 적대적이면 금수를 걸고, 중립으로 돌아오면 푼다.
+
+        **거는 문턱과 푸는 문턱이 다르다**(적대에서 걸고 중립에서 푼다). 같으면
+        관계가 문턱 근처에서 떨릴 때 금수가 매 tick 켜졌다 꺼진다.
+
+        hard 이상은 중립이 돼도 안 풀고, impossible 은 우호가 돼도 안 푼다 —
+        어려울수록 한 번 틀어지면 되돌리기 어렵다."""
+        d = st.diplomacy
+        for other in st.border_targets(self.pid):
+            if other is None or other not in st.players:
+                continue
+            rel = st.relation_of(self.pid, other)
+            on = d.embargoed(self.pid, other)
+            hostile = rel <= Relation.HOSTILE
+            if hostile and not on and not d.same_team(self.pid, other):
+                d.start_embargo(self.pid, other)
+            elif rel >= Relation.FRIENDLY and on and self.difficulty != "impossible":
+                d.stop_embargo(self.pid, other)
+            elif rel >= Relation.NEUTRAL and on:
+                if self.difficulty not in ("hard", "impossible"):
+                    d.stop_embargo(self.pid, other)
 
     # --- 공격 -------------------------------------------------------------
 
@@ -245,17 +272,32 @@ class NationBot:
     # --- 외교 -------------------------------------------------------------
 
     def _alliance_requests(self, st: GameState, enemies: list) -> None:
-        """국경을 맞댄 적에게 동맹을 건다. 들어온 요청도 여기서 받는다."""
+        """국경을 맞댄 적에게 동맹을 건다. 들어온 요청도 여기서 받는다.
+
+        **수락 여부는 관계가 정한다.** 동전 던지기로 받으면 방금 나를 핵으로 친
+        상대와도 절반 확률로 손을 잡아, 사람이 외교를 관리할 이유가 사라진다
+        (`NationAllianceBehavior` : 중립 미만이면 거절, 우호면 거의 수락)."""
         d = st.diplomacy
         for requestor, recipients in list(d.pending.items()):
             if self.pid in recipients and requestor in st.players:
-                if self.rng.random() < 0.5:
+                if self._accepts_alliance(st, requestor):
                     st.accept_alliance(self.pid, requestor)
                 else:
                     d.reject(self.pid, requestor)
         for foe in enemies:
+            # 적대적인 상대에게는 먼저 손을 내밀지 않는다
+            if st.relation_of(self.pid, foe.pid) <= Relation.HOSTILE:
+                continue
             if self.rng.randrange(4) == 0:
                 st.request_alliance(self.pid, foe.pid)
+
+    def _accepts_alliance(self, st: GameState, requestor: int) -> bool:
+        rel = st.relation_of(self.pid, requestor)
+        if rel < Relation.NEUTRAL:
+            return False                       # 사이가 나쁘면 무조건 거절
+        if rel >= Relation.FRIENDLY:
+            return self.rng.randrange(3) != 0  # 우호면 대체로 받는다
+        return self.rng.random() < 0.5         # 중립은 여전히 반반
 
     # --- 건설 -------------------------------------------------------------
 

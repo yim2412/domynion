@@ -94,6 +94,39 @@ TROOP_GROWTH_DIV = 4.0
 
 CITY_TROOP_INCREASE = 250_000.0    # Config.ts :: cityTroopIncrease()
 
+# --- 관계도 ------------------------------------------------------------------
+# PlayerImpl.ts :: relationFromValue / updateRelation / decayRelations
+RELATION_MAX = 100.0               # within(-100, 100)
+RELATION_HOSTILE_BELOW = -50.0
+RELATION_FRIENDLY_AT = 50.0
+RELATION_DECAY_PER_TICK = 0.05     # 원한도 호감도 시간이 지나면 잊힌다
+
+# 무엇이 관계를 얼마나 움직이는가 — 각 Execution 에 흩어져 있던 값을 모았다.
+REL_ALLIANCE_ACCEPTED = 100.0      # AllianceRequestExecution (양쪽 다)
+REL_ALLIANCE_BROKEN = -100.0       # BreakAllianceExecution (당한 쪽 → 깬 쪽)
+REL_ALLIANCE_BROKEN_NEIGHBOUR = -40.0   # 이웃들도 배신을 본다
+REL_TARGETED = -40.0               # TargetPlayerExecution
+REL_NUKED = -100.0                 # NukeExecution
+REL_MIRV = -100.0                  # MIRVExecution (양방향)
+REL_TROOP_DONATION = 50.0          # DonateTroopExecution
+REL_EMBARGO = -20.0                # NationExecution (걸면 −20, 풀면 +20)
+REL_ATTACKED_ALLY = -20.0          # AiAttackBehavior — 동맹을 친 벌
+REL_WARSHIP_SANK_TRADE = -7.5      # NationWarshipBehavior
+REL_WARSHIP_SANK_OTHER = -15.0
+
+# 공격당하면 얼마나 나빠지는가 — 난이도가 높을수록 더 오래 기억한다.
+REL_ATTACKED: dict[str, float] = {
+    "easy": -60.0, "medium": -70.0, "hard": -80.0, "impossible": -100.0,
+}
+
+# 골드 기부 한 덩어리 크기(`getGoldChunkSize`). 덩어리당 관계 +5.
+GOLD_CHUNK_SIZE: dict[str, float] = {
+    "easy": 2_500.0, "medium": 5_000.0, "hard": 12_500.0, "impossible": 25_000.0,
+}
+
+# `numSpawnPhaseTurns()` — 기부 덩어리 크기 스케일링의 분모에 들어간다.
+SPAWN_PHASE_TURNS = 100
+
 # 스폰 면역 — Config.ts :: spawnImmunityDuration() / PlayerImpl :: isImmune()
 #
 # **사람 공격자만 면역을 존중한다**(원본 주석: "Only human attackers respect PVP
