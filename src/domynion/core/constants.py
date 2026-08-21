@@ -112,6 +112,15 @@ REL_ASSIST_COST = -20.0            # 동맹의 부탁을 들어준 대가(AiAtta
 #
 # 동맹에게 "저놈을 쳐 달라"고 찍는 것이다. 이게 없으면 동맹은 서로 안 친다는
 # 소극적 약속일 뿐이고, **함께 싸우는 수단이 없다.**
+# 퇴각 — RetreatExecution.ts
+#
+# 명령하고 2초 뒤에 실제로 물러난다. 즉시 물리면 되돌릴 수 없는 클릭 한 번으로
+# 부대가 증발한다.
+RETREAT_DELAY_TICKS = 20
+# **사람을 치던 부대만** 25% 를 잃는다. 중립 확장은 공짜로 무를 수 있다 —
+# 안 그러면 잘못 찍은 확장을 취소하는 데 병력을 버려야 한다.
+RETREAT_MALUS = 0.25
+
 TARGET_DURATION_TICKS = 10 * 10    # 표적으로 남는 시간
 TARGET_COOLDOWN_TICKS = 15 * 10    # 다음 표적을 찍기까지
 REL_NUKED = -100.0                 # NukeExecution

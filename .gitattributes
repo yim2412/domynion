@@ -6,3 +6,18 @@
 # 그 파일에만 LF 로 보이는 바이트가 있었기 때문이다. **조용히, 한 파일만** 깨진다.
 *.bin binary
 *.png binary
+
+# 소스는 **LF 로 고정한다.** `core.autocrlf=true` 인 채로 두면 체크아웃마다 CRLF 가
+# 붙는데, 그 파일을 파이썬 `read_text`(universal newline) 로 읽고 `write_text` 로
+# 쓰는 스크립트가 줄을 두 배로 늘린다 — 실제로 당했다:
+#
+#   `git show` 가 낸 CRLF 를 `read_bytes().decode()` 로 읽고 `write_text` 로 쓰자
+#   `\r\r\n` 이 됐고, 다음 읽기에서 그게 **두 줄**로 해석돼
+#   `ui/actions.py` 가 288 → 576 줄이 된 채 커밋됐다(2026-08-21).
+#
+# 파이썬·마크다운은 LF 로 문제없이 읽힌다. 편집 스크립트는 그와 별개로
+# **바이너리로 읽고 써야 한다** — 아래 설정은 저장소 형태만 고정한다.
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.mts text eol=lf

@@ -754,6 +754,24 @@ class GameState:
         p.start = centre
         return True
 
+    # --- 퇴각 -------------------------------------------------------------
+
+    def order_retreat(self, pid: int, attack: Attack) -> bool:
+        """진행 중인 공격을 물린다. **2초 뒤에 실제로 물러난다.**
+
+        원본은 명령과 실행을 나눈다(`RetreatExecution` 의 `cancelDelay = 20`).
+        즉시 물리면 되돌릴 수 없는 클릭 한 번으로 부대가 증발한다.
+        """
+        if attack.attacker != pid or attack not in self.attacks:
+            return False
+        if attack.retreat_ordered_at is not None:
+            return False
+        attack.retreat_ordered_at = self.tick_count
+        return True
+
+    def my_attacks(self, pid: int) -> list[Attack]:
+        return [a for a in self.attacks if a.attacker == pid]
+
     # --- 표적 -------------------------------------------------------------
 
     def can_target(self, pid: int, other: int) -> bool:
@@ -996,7 +1014,15 @@ class GameState:
             defender = self.players.get(a.target) if a.target is not None else None
             # 공격이 시작된 뒤에 동맹이 맺어질 수 있다. 원본은 매 tick 확인해서
             # 그런 부대를 **퇴각**시킨다 — 안 그러면 동맹 중에 계속 두들겨 맞는다.
-            if (a.target is not None
+            if a.retreating:
+                # 물러나는 중에는 진격하지 않는다. 시간이 차면 실제로 물린다.
+                if (self.tick_count - a.retreat_ordered_at
+                        >= C.RETREAT_DELAY_TICKS):
+                    a.retreated = True
+                else:
+                    still.append(a)
+                    continue
+            elif (a.target is not None
                     and self.diplomacy.is_friendly(a.attacker, a.target)):
                 a.retreated = True
             elif defender is not None and not defender.alive:
@@ -1020,7 +1046,15 @@ class GameState:
 
             if a.finished:
                 if a.retreated:
-                    atk.troops += a.troops      # 퇴각한 병력은 돌아온다
+                    # 사람을 치던 부대만 25% 를 잃는다(`malusForRetreat`).
+                    # 중립 확장은 공짜로 무를 수 있다 — 안 그러면 잘못 찍은
+                    # 확장을 취소하는 데 병력을 버려야 한다.
+                    lost = (a.troops * C.RETREAT_MALUS
+                            if a.target is not None else 0.0)
+                    atk.troops += a.troops - lost
+                    if lost:
+                        self.emit(EventKind.ATTACK_CANCELLED, who=a.attacker,
+                                  other=a.target, amount=lost)
             else:
                 still.append(a)
         self.attacks = still

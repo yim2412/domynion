@@ -137,6 +137,10 @@ class Attack:
     heap: list[tuple[float, TileRef]] = field(default_factory=list)
     seen: set[TileRef] = field(default_factory=set)
     retreated: bool = False
+    # 퇴각을 **명령한** tick. 원본은 명령 즉시 진격을 멈추고 2초 뒤에 실제로
+    # 물린다(`RetreatExecution` 의 `cancelDelay`) — 즉시 사라지면 되돌릴 수 없는
+    # 클릭 한 번으로 부대가 증발한다.
+    retreat_ordered_at: int | None = None
 
     @classmethod
     def launch(cls, gmap: GameMap, attacker: int, target: int | None,
@@ -178,6 +182,11 @@ class Attack:
     @property
     def finished(self) -> bool:
         return self.retreated or not self.heap or self.troops < C.ATTACK_MIN_TROOPS
+
+    @property
+    def retreating(self) -> bool:
+        """물러나는 중. 진격은 멈췄지만 아직 부대는 남아 있다."""
+        return self.retreat_ordered_at is not None and not self.retreated
 
     # --- 진행 -------------------------------------------------------------
 
