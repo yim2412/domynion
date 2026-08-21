@@ -60,6 +60,16 @@ class MainWindow(QMainWindow):
         # 탈락하면 판이 안 끝나도 그 자리에서 뜬다 — 없을 때는 내가 죽은 줄도 몰랐다.
         self.end = EndModal(state, human, self.map)
 
+        # 페이즈 중에는 화면에 할 일이 하나뿐이다 — 그걸 말해 준다.
+        self.spawn_hint = QLabel(
+            "<b>시작할 곳을 고르세요</b><br>"
+            "<span style='opacity:.75'>땅을 클릭하면 그 자리에서 시작합니다 · "
+            "고르기 전까지 판은 멈춰 있습니다</span>", self.map)
+        self.spawn_hint.setStyleSheet(
+            "color:#fff; background: rgba(16,20,28,225); padding: 12px 20px;"
+            "border-radius: 8px; font-size: 15px;")
+        self.spawn_hint.setVisible(state.spawn_phase)
+
         # 커서가 얹힌 대상 정보. 무엇을 치는지 모르면 클릭이 도박이 된다.
         self.inspect = QLabel("", self.map)
         self.inspect.setStyleSheet(
@@ -168,6 +178,14 @@ class MainWindow(QMainWindow):
         self.immunity.refresh()
         self.emoji.refresh()
         self.end.check()
+        if self.spawn_hint.isVisible():
+            self.spawn_hint.adjustSize()
+            self.spawn_hint.move(
+                (self.map.width() - self.spawn_hint.width()) // 2, 60)
+            self.spawn_hint.raise_()
+            # 상한을 넘겨 엔진이 알아서 시작했을 수도 있다.
+            if not self.state.spawn_phase:
+                self.spawn_hint.hide()
         self._refresh_inspect()
         self.events.refresh()
         self.attacks.refresh()
@@ -203,6 +221,16 @@ class MainWindow(QMainWindow):
         self.inspect.move(12, self.scoreboard.y() + self.scoreboard.height() + 8)
         self.inspect.show()
         self.inspect.raise_()
+
+    def _pick_spawn(self, tile) -> None:
+        """시작 위치를 고른다. 고르는 순간 판이 시작된다(싱글플레이 규칙)."""
+        if not self.state.choose_spawn(self.human, tile):
+            self._flash("여기서는 시작할 수 없다 — 바다·남의 땅이 너무 많다")
+            return
+        self.map.ping(tile)
+        self.state.end_spawn_phase()
+        self.spawn_hint.hide()
+        self._flash("시작", ticks=12)
 
     def _open_emoji(self, target: int) -> None:
         self.emoji.open_for(target)
@@ -273,6 +301,10 @@ class MainWindow(QMainWindow):
             return
         if not self.state.gmap.passable(tile):
             self._flash("바다다 — 육지를 찍어야 한다")
+            return
+        if self.state.spawn_phase:
+            # 페이즈 중엔 메뉴가 뜨면 안 된다 — 아직 할 수 있는 일이 없다.
+            self._pick_spawn(tile)
             return
         self.map.ping(tile)
         self.map.open_menu(e.position(), tile,

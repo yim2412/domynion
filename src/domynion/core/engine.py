@@ -29,7 +29,7 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     trade_gold, trade_spawn_rate, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
-from .spawn import place_players
+from .spawn import spawn_tiles, place_players
 from . import emoji as emoji_mod
 from .emoji import Emojis
 from .emoji import relation_delta as emoji_relation_delta
@@ -78,6 +78,11 @@ class GameState:
     # 관계 변화량이 난이도를 탄다(`AttackExecution` 의 relationChange).
     difficulty: str = "medium"
 
+    # 스폰 페이즈 — 사람이 시작 위치를 고르는 동안 **판 전체가 멈춘다**.
+    # 원본은 `activeDuringSpawnPhase()` 가 false 인 Execution 을 전부 건너뛴다:
+    # AI 도, 공격도, 성장도 안 돈다. None 이면 이미 끝난 것이다.
+    spawn_phase: bool = False
+
     # 금수 벌점을 이미 매겼는지(`embargoMalusApplied`). 매 tick 깎으면 안 된다.
     _embargo_malus: dict[int, set[int]] = field(default_factory=dict)
 
@@ -107,6 +112,8 @@ class GameState:
         st._counts = {pid: len(tiles) for pid, (_, tiles) in enumerate(spawns)}
         st._posts = DefensePostIndex(gmap.size)
         st.fallout = Fallout(gmap.size)
+        # 사람이 없으면(헤드리스) 고를 사람도 없다 — 그냥 시작한다.
+        st.spawn_phase = human in players
         return st
 
     # --- 조회 -------------------------------------------------------------
@@ -658,6 +665,46 @@ class GameState:
                     self.relate(pid, other, -C.REL_EMBARGO)
                     applied.discard(other)
 
+    # --- 스폰 -------------------------------------------------------------
+
+    def end_spawn_phase(self) -> None:
+        """페이즈를 끝내고 시계를 0 으로 돌린다.
+
+        ⚠ **면역이 여기서부터 세어진다.** 안 그러면 고르는 데 쓴 시간이 면역에서
+        깎여, 늦게 고른 사람일수록 보호를 덜 받는다(원본은 `spawnPhaseTurns +
+        immunityDuration` 으로 더해서 같은 문제를 피한다).
+        """
+        if not self.spawn_phase:
+            return
+        self.spawn_phase = False
+        self.tick_count = 0
+
+    def choose_spawn(self, pid: int, centre: TileRef) -> bool:
+        """시작 위치를 고른다. **페이즈 동안은 몇 번이든 옮길 수 있다.**
+
+        원본 `SpawnExecution` 은 옮길 때 이전 칸을 전부 반납한다(`relinquish`).
+        반납을 빼면 옮긴 자리마다 영토가 쌓여 고르는 것만으로 이길 수 있다.
+        """
+        if not self.spawn_phase:
+            return False
+        p = self.players.get(pid)
+        if p is None:
+            return False
+        tiles = spawn_tiles(self.gmap, centre, require_all_valid=False)
+        # 남의 땅·바다를 뺀 나머지가 너무 적으면 시작점으로 못 쓴다.
+        if not tiles or len(tiles) < C.SPAWN_MIN_TILES:
+            return False
+
+        gm = self.gmap
+        old = gm.owned_refs(pid)
+        if len(old):
+            gm.owner[old] = -1
+        for t in tiles:
+            gm.owner[t] = pid
+        self._counts[pid] = len(tiles)
+        p.start = centre
+        return True
+
     # --- 이모지 -----------------------------------------------------------
 
     def send_emoji(self, pid: int, to: int, emoji: str) -> bool:
@@ -821,6 +868,12 @@ class GameState:
         if self.over:
             return
         self.tick_count += 1
+        if self.spawn_phase:
+            # 시간만 흐르고 아무 일도 일어나지 않는다. 상한(`numSpawnPhaseTurns`)을
+            # 넘기면 안 고른 사람도 그냥 시작한다 — 원본도 기다려 주지 않는다.
+            if self.tick_count >= C.SPAWN_PHASE_TURNS:
+                self.end_spawn_phase()
+            return
         for gone in self.diplomacy.expire_due(self.tick_count):
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.a, other=gone.b)
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)

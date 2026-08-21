@@ -138,6 +138,11 @@ GOLD_CHUNK_SIZE: dict[str, float] = {
 # `numSpawnPhaseTurns()` — 기부 덩어리 크기 스케일링의 분모에 들어간다.
 SPAWN_PHASE_TURNS = 100
 
+# 시작 원(반경 4)에서 이만큼은 쓸 수 있어야 시작점으로 인정한다. **우리 값이다** —
+# 원본은 사람이 고를 때 `requireAllValid=false` 로 걸러만 주는데, 그러면 반도 끝
+# 세 칸을 골라도 시작이 돼 첫 공격에 사라진다.
+SPAWN_MIN_TILES = 20
+
 # 스폰 면역 — Config.ts :: spawnImmunityDuration() / PlayerImpl :: isImmune()
 #
 # **사람 공격자만 면역을 존중한다**(원본 주석: "Only human attackers respect PVP
