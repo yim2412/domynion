@@ -249,3 +249,23 @@ def test_hard_ai_never_lifts_at_neutral():
     st.players[1].relations.update(0, +60)      # 우호
     bot._embargoes(st)
     assert not st.diplomacy.embargoed(1, 0), "우호면 푼다"
+
+
+# --- 화면에 보이는가 --------------------------------------------------------
+
+def test_menu_shows_the_relation_that_actually_decides():
+    """**상대가 나를 보는 값**을 보여야 한다. 내가 상대를 보는 값이 아니다 —
+    동맹 요청이 받아들여질지 정하는 것은 상대 쪽이다."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    from domynion.core.relations import RELATION_LABEL
+    from domynion.ui.actions import diplomacy_items
+    QApplication.instance() or QApplication([])
+
+    st = state()
+    st.players[1].relations.update(0, -80)      # 상대(P1)가 나(P0)를 적대
+    st.players[0].relations.update(1, +80)      # 나는 상대를 우호로 봄
+    labels = [i.label for i in diplomacy_items(st, 0, 1, lambda _m: None)]
+    assert f"관계 · {RELATION_LABEL[Relation.HOSTILE]}" in labels
+    assert f"관계 · {RELATION_LABEL[Relation.FRIENDLY]}" not in labels

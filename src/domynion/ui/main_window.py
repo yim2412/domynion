@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
 from ..ai import nation
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core.relations import RELATION_COLOUR, RELATION_LABEL
 from .actions import root_items
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
@@ -177,9 +178,14 @@ class MainWindow(QMainWindow):
         send = mine.attack_troops() if mine else 0.0
         ratio = (p.troops / send) if send > 0 else float("inf")
         hint = ("유리" if ratio < 0.6 else "불리" if ratio > 2 else "팽팽")
+        # **상대가 나를 어떻게 보는가**. 내가 상대를 보는 눈이 아니다 —
+        # 동맹 요청이 받아들여질지 정하는 것은 상대 쪽 값이다.
+        rel = st.relation_of(pid, self.human)
         self.inspect.setText(
             f"<b>{p.name}</b>  영토 {st.share(pid) * 100:.1f}%  "
-            f"병력 {p.troops:,.0f}<br>"
+            f"병력 {p.troops:,.0f}  "
+            f"<span style='color:{RELATION_COLOUR[rel]}'>"
+            f"{RELATION_LABEL[rel]}</span><br>"
             f"<span style='opacity:.75'>내가 보낼 병력 {send:,.0f} · "
             f"상대/내 = {ratio:.2f} ({hint})</span>")
         self.inspect.adjustSize()

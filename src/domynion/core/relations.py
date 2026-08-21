@@ -90,3 +90,20 @@ def gold_donation_relation(gold: float, tick: int, difficulty: str) -> float:
     if chunk <= 0:
         return 0.0
     return min(100.0, int(gold // chunk) * 5.0)
+
+
+# 화면에 뭐라고 쓸 것인가. **여기 한 곳에만 둔다** — 등급 이름이 UI 여러 곳에
+# 흩어지면 문턱을 바꿀 때 화면과 규칙이 어긋난다.
+RELATION_LABEL = {
+    Relation.HOSTILE: "적대",
+    Relation.DISTRUSTFUL: "불신",
+    Relation.NEUTRAL: "중립",
+    Relation.FRIENDLY: "우호",
+}
+
+RELATION_COLOUR = {
+    Relation.HOSTILE: "#ff6b6b",
+    Relation.DISTRUSTFUL: "#ffa94d",
+    Relation.NEUTRAL: "#adb5bd",
+    Relation.FRIENDLY: "#69db7c",
+}

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core.relations import (RELATION_COLOUR, RELATION_LABEL,
+                              Relation)
 from ..core.gamemap import TileRef
 from ..core.units import UNIT_INFO, UnitType
 from .radial import Item
@@ -188,6 +190,8 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
     allied = d.allied(me, target)
     incoming = me in d.pending.get(target, set())
     outgoing = target in d.pending.get(me, set())
+    # 동맹 요청이 받아들여질지는 **상대가 나를 보는 값**이 정한다.
+    rel = st.relation_of(target, me)
 
     items = [
         Item("동맹 수락", action=lambda: _accept(st, me, target, notify),
@@ -198,6 +202,12 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
         Item("동맹 거절", action=lambda: _reject(st, me, target, notify),
              enabled=incoming, hint='들어온 요청이 없다' if not incoming else
                   f'P{target} 의 요청을 물린다', colour=COL_PLAIN),
+        Item(f"관계 · {RELATION_LABEL[rel]}", enabled=False,
+             hint=("상대가 나를 보는 눈이다. "
+                   + ("적대라 동맹 요청을 받지 않는다" if rel < Relation.NEUTRAL
+                      else "우호라 동맹 요청을 대체로 받아 준다"
+                      if rel >= Relation.FRIENDLY else "중립 — 반반이다")),
+             colour=RELATION_COLOUR[rel]),
         Item("동맹 요청", action=lambda: _request(st, me, target, notify),
              enabled=not allied and not outgoing,
              hint="이미 동맹이다" if allied else
