@@ -1,0 +1,160 @@
+"""핵 · 낙진 · SAM · 전함 — openfront 의 요격/파괴 계통.
+
+핵은 **두 개의 반경**을 갖는다. `inner` 안은 무조건 날아가고, `inner`~`outer` 사이는
+방향마다 다른 문턱(원본은 각도별로 `inner²~outer²` 사이를 무작위로 뽑아 보간한다)이
+걸려 폭발 자국이 원이 아니라 울퉁불퉁해진다. 그 모양이 게임의 인상을 만든다.
+
+병력 손실은 **칸마다 반복 적용**되고 남은 타일 수로 나뉜다:
+
+    nukeDeathFactor = 5 × 병력 / max(1, 남은타일수)      (MIRV 탄두는 다른 식)
+
+그래서 좁은 나라가 훨씬 크게 다친다. 진행 중인 공격 부대와 수송선도 같이 깎인다.
+
+폭심의 **육지는 바다가 된다**(`queueWaterConversion`). 지형이 바뀌므로 바다 경로
+캐시를 반드시 비워야 한다.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+from dataclasses import dataclass
+
+import numpy as np
+
+from . import constants as C
+from .constants import Terrain
+from .gamemap import GameMap, TileRef
+from .units import UnitType
+
+
+NUKE_MAGNITUDES: dict[UnitType, tuple[int, int]] = {
+    UnitType.ATOM_BOMB: (12, 30),
+    UnitType.HYDROGEN_BOMB: (80, 100),
+    UnitType.MIRV_WARHEAD: (12, 18),
+}
+
+NUKE_SPEED: dict[UnitType, int] = {
+    UnitType.ATOM_BOMB: 10,
+    UnitType.HYDROGEN_BOMB: 10,
+    UnitType.MIRV: 15,
+    UnitType.MIRV_WARHEAD: 22,
+}
+
+_NUM_SAMPLES = 64          # 폭발 가장자리를 흔드는 각도 표본 수
+
+
+def sam_range(level: int) -> float:
+    """`samRange(level)` = 150 − 480/(level+5). Lv1 = 70, 위로 갈수록 150 에 수렴."""
+    return C.MAX_SAM_RANGE - 480.0 / (level + 5)
+
+
+def blast_tiles(gmap: GameMap, dst: TileRef, utype: UnitType,
+                rng: random.Random) -> list[TileRef]:
+    """폭발이 닿는 칸들. `inner` 안은 전부, 바깥은 방향마다 문턱이 다르다."""
+    inner, outer = NUKE_MAGNITUDES[utype]
+    inner2, outer2 = inner * inner, outer * outer
+    radii = [rng.uniform(inner2, outer2) for _ in range(_NUM_SAMPLES)]
+
+    w, h = gmap.width, gmap.height
+    cx, cy = dst % w, dst // w
+    out: list[TileRef] = []
+    for py in range(max(0, cy - outer), min(h - 1, cy + outer) + 1):
+        for px in range(max(0, cx - outer), min(w - 1, cx + outer) + 1):
+            dx, dy = px - cx, py - cy
+            d2 = dx * dx + dy * dy
+            if d2 > outer2:
+                continue
+            if d2 > inner2:
+                angle = math.atan2(dy, dx) + math.pi
+                t = angle / (2 * math.pi) * _NUM_SAMPLES
+                i0 = int(t) % _NUM_SAMPLES
+                i1 = (i0 + 1) % _NUM_SAMPLES
+                frac = t - math.floor(t)
+                if d2 > radii[i0] * (1 - frac) + radii[i1] * frac:
+                    continue
+            tile = py * w + px
+            if gmap.terrain[tile] == Terrain.IMPASSABLE:
+                continue
+            out.append(tile)
+    return out
+
+
+def death_factor(utype: UnitType, troops: float, tiles_left: int,
+                 max_troops: float) -> float:
+    """`nukeDeathFactor` — 칸마다 한 번씩 적용된다.
+
+    일반 핵은 `5 × 병력 / 남은타일수` 라, **영토가 좁을수록 한 칸의 피해가 크다.**
+    MIRV 탄두만 다른 식으로, 상한 대비 초과 병력을 지수로 눌러 잡는다."""
+    if utype is not UnitType.MIRV_WARHEAD:
+        return 5.0 * troops / max(1, tiles_left)
+    target = C.MIRV_TARGET_TROOP_RATIO * max_troops
+    excess = max(0.0, troops - target)
+    if max_troops <= 0:
+        return 0.0
+    return C.MIRV_DEATH_SCALE * (
+        1.0 - math.exp(-C.MIRV_DEATH_STEEPNESS * excess / max_troops))
+
+
+@dataclass
+class Nuke:
+    """비행 중인 핵. `speed` 칸씩 직선으로 날아간다."""
+
+    owner: int
+    utype: UnitType
+    src: TileRef
+    dst: TileRef
+    progress: float = 0.0
+
+    def tile(self, gmap: GameMap) -> TileRef:
+        w = gmap.width
+        sx, sy = self.src % w, self.src // w
+        dx, dy = self.dst % w, self.dst // w
+        total = math.hypot(dx - sx, dy - sy)
+        if total <= 0:
+            return self.dst
+        f = min(1.0, self.progress / total)
+        return int(round(sy + (dy - sy) * f)) * w + int(round(sx + (dx - sx) * f))
+
+    def advance(self) -> None:
+        self.progress += NUKE_SPEED[self.utype]
+
+    def arrived(self, gmap: GameMap) -> bool:
+        w = gmap.width
+        sx, sy = self.src % w, self.src // w
+        dx, dy = self.dst % w, self.dst // w
+        return self.progress >= math.hypot(dx - sx, dy - sy)
+
+
+class Fallout:
+    """낙진 — 방어를 크게 올린다(`falloutDefenseModifier` = 5 − 비율 × 2).
+
+    비율은 **지도 전체의 낙진 비율**이라, 핵이 많이 터진 판일수록 낙진 한 칸의
+    방어 효과가 오히려 줄어든다."""
+
+    __slots__ = ("mask", "_count")
+
+    def __init__(self, size: int):
+        self.mask = np.zeros(size, dtype=bool)
+        self._count = 0
+
+    def add(self, tiles: list[TileRef]) -> None:
+        if not tiles:
+            return
+        idx = np.asarray(tiles, dtype=np.int64)
+        self.mask[idx] = True
+        self._count = int(self.mask.sum())
+
+    def clear(self, tile: TileRef) -> None:
+        if self.mask[tile]:
+            self.mask[tile] = False
+            self._count -= 1
+
+    def ratio(self, land_count: int) -> float:
+        return self._count / land_count if land_count else 0.0
+
+    def modifier(self, land_count: int) -> float:
+        return C.FALLOUT_DEFENSE_BASE - self.ratio(land_count) * C.FALLOUT_DEFENSE_SLOPE
+
+    def at(self, tile: TileRef) -> bool:
+        return bool(self.mask[tile])

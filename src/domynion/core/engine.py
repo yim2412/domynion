@@ -18,12 +18,14 @@ from enum import Enum
 import numpy as np
 
 from . import constants as C
+from .constants import Terrain
 from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .gamemap import GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, trade_gold,
                     trade_spawn_rate, water_path)
+from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
@@ -55,6 +57,8 @@ class GameState:
     # 항구 쌍은 계속 반복된다. 바다 지형은 안 바뀌므로 경로를 그대로 재사용한다.
     # ⚠ P5 에서 핵이 육지를 바다로 만들면 **여기를 비워야 한다.**
     _path_cache: dict = field(default_factory=dict)
+    nukes: list[Nuke] = field(default_factory=list)
+    fallout: Fallout | None = None
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -75,6 +79,7 @@ class GameState:
         st = cls(gmap=gmap, players=players, rng=rng)
         st._counts = {pid: 1 for pid in players}
         st._posts = DefensePostIndex(gmap.size)
+        st.fallout = Fallout(gmap.size)
         return st
 
     # --- 조회 -------------------------------------------------------------
@@ -251,6 +256,115 @@ class GameState:
                                           path=path))
         return True
 
+    # --- 핵 ---------------------------------------------------------------
+
+    def launch_nuke(self, pid: int, utype: UnitType, dst: TileRef) -> Nuke | None:
+        """미사일 사일로에서 쏜다. 사일로가 없으면 못 쏜다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over:
+            return None
+        if utype not in NUKE_MAGNITUDES and utype is not UnitType.MIRV:
+            return None
+        silos = [u for u in p.units.of(UnitType.MISSILE_SILO)
+                 if not u.under_construction]
+        if not silos:
+            return None
+        cost = p.units.cost(utype)
+        if p.gold < cost:
+            return None
+        p.gold -= cost
+        p.units.record_constructed(utype)
+        src = min(silos, key=lambda u: self._dist_sq(u.tile, dst)).tile
+        n = Nuke(owner=pid, utype=utype, src=src, dst=dst)
+        self.nukes.append(n)
+        return n
+
+    def _dist_sq(self, a: TileRef, b: TileRef) -> int:
+        w = self.gmap.width
+        return (a % w - b % w) ** 2 + (a // w - b // w) ** 2
+
+    def _advance_nukes(self) -> None:
+        still: list[Nuke] = []
+        for n in self.nukes:
+            n.advance()
+            if self._sam_intercepts(n):
+                continue
+            if n.arrived(self.gmap):
+                self._detonate(n)
+            else:
+                still.append(n)
+        self.nukes = still
+
+    def _sam_intercepts(self, n: Nuke) -> bool:
+        """SAM 은 **자기 것이 아닌** 핵만 요격한다. 사거리는 레벨에 따라 70~150."""
+        here = n.tile(self.gmap)
+        for p in self.alive:
+            if p.pid == n.owner or self.diplomacy.is_friendly(p.pid, n.owner):
+                continue
+            for sam in p.units.of(UnitType.SAM_LAUNCHER):
+                if sam.under_construction:
+                    continue
+                r = sam_range(sam.level)
+                if self._dist_sq(sam.tile, here) <= r * r:
+                    return True
+        return False
+
+    def _detonate(self, n: Nuke) -> None:
+        tiles = blast_tiles(self.gmap, n.dst, n.utype, self.rng)
+        if not tiles:
+            return
+        gm = self.gmap
+
+        # 1) 소유자별로 몇 칸이 날아갔는지 센다 — 병력 손실이 이 수만큼 반복 적용된다
+        per_player: dict[int, int] = {}
+        for t in tiles:
+            o = int(gm.owner[t])
+            if o >= 0:
+                per_player[o] = per_player.get(o, 0) + 1
+
+        # 2) 육지를 바다로 바꾸고 소유를 지운다
+        for t in tiles:
+            o = int(gm.owner[t])
+            if o >= 0:
+                gm.owner[t] = -1
+                self._counts[o] = max(0, self._counts.get(o, 0) - 1)
+            if gm.terrain[t] != Terrain.OCEAN:
+                gm.terrain[t] = Terrain.OCEAN
+                gm.raw[t] = C.OCEAN_BIT
+                gm.land_count -= 1
+        # 지형이 바뀌었다 — 바다 성분과 경로 캐시를 버려야 한다(P4 의 전제가 깨진다)
+        gm._ocean_cc = None
+        self._path_cache.clear()
+        self.fallout.add(tiles)
+
+        # 3) 병력 손실 — 칸마다, 남은 타일 수로 나뉜다
+        for pid, hit in per_player.items():
+            p = self.players.get(pid)
+            if p is None:
+                continue
+            before = self.tiles(pid) + hit
+            cap = p.max_troops(max(1, self.tiles(pid)))
+            mine = [a for a in self.attacks if a.attacker == pid]
+            boats = [b for b in self.boats if b.owner == pid]
+            for i in range(hit):
+                left = before - i
+                p.troops = max(0.0, p.troops - death_factor(n.utype, p.troops, left, cap))
+                for a in mine:
+                    a.troops = max(0.0, a.troops
+                                   - death_factor(n.utype, a.troops, left, cap))
+                for b in boats:
+                    b.troops = max(0.0, b.troops
+                                   - death_factor(n.utype, b.troops, left, cap))
+
+        # 4) 폭심 반경 안의 건물·배가 사라진다
+        outer2 = NUKE_MAGNITUDES[n.utype][1] ** 2
+        for p in self.players.values():
+            p.units.units = [u for u in p.units.units
+                             if self._dist_sq(n.dst, u.tile) >= outer2]
+        self.boats = [b for b in self.boats
+                      if self._dist_sq(n.dst, b.tile) >= outer2]
+        self._rebuild_posts()
+
     # --- 기부 -------------------------------------------------------------
 
     def donate_gold(self, pid: int, to: int, gold: int) -> bool:
@@ -350,6 +464,7 @@ class GameState:
         self.diplomacy.expire_due(self.tick_count)
         self._grow()
         self._advance_construction()
+        self._advance_nukes()
         self._advance_boats()
         self._advance_trade()
         self._advance_attacks()
@@ -379,6 +494,8 @@ class GameState:
                                self.tiles(a.target) if a.target is not None else 0,
                                self.tiles(a.attacker), self.rng, self.tick_count,
                                defense_posts=self._posts,
+                               fallout=self.fallout,
+                               land_count=self.gmap.land_count,
                                defender_traitor=(
                                    a.target is not None
                                    and self.diplomacy.is_traitor(a.target, self.tick_count)))

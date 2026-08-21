@@ -46,7 +46,8 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
                  attacker: PlayerState, defender: PlayerState | None,
                  defender_tiles: int, attacker_tiles: int,
                  defense_post: bool = False, defender_traitor: bool = False,
-                 same_team_disconnected: bool = False) -> AttackResult:
+                 same_team_disconnected: bool = False,
+                 fallout_mod: float | None = None) -> AttackResult:
     """한 칸을 먹을 때의 손실과 예산 소모. `defender is None` 이면 중립이다.
 
     중립과 플레이어는 **완전히 다른 분기**다. 하나로 합치지 말 것 — 원본이 그렇게
@@ -61,7 +62,10 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
         mag *= C.DEFENSE_POST_DEFENSE_BONUS
         speed *= C.DEFENSE_POST_SPEED_BONUS
 
-    # 낙진은 P5 에서 이 자리에 들어간다.
+    # 낙진은 방어를 크게 올린다(계수 2.5~5). 폭심을 지나 진격하는 것이 비싸진다.
+    if fallout_mod is not None:
+        mag *= fallout_mod
+        speed *= fallout_mod
 
     if defender is None:
         div = C.NEUTRAL_LOSS_DIV_BOT if attacker.is_bot else C.NEUTRAL_LOSS_DIV_HUMAN
@@ -181,7 +185,9 @@ class Attack:
              defender: PlayerState | None, defender_tiles: int,
              attacker_tiles: int, rng: random.Random,
              tick: int, defense_posts: "object | None" = None,
-             defender_traitor: bool = False) -> list[TileRef]:
+             defender_traitor: bool = False,
+             fallout: "object | None" = None,
+             land_count: int = 0) -> list[TileRef]:
         """`AttackExecution.tick()`. 이번 tick 에 정복한 칸들을 돌려준다."""
         want = -1 if self.target is None else self.target
         budget = tiles_per_tick(
@@ -214,9 +220,12 @@ class Attack:
             guarded = (defense_posts is not None
                        and defender is not None
                        and defense_posts.covers(gmap, tile, defender.pid))
+            fallout_mod = (fallout.modifier(land_count)
+                           if fallout is not None and fallout.at(tile) else None)
             r = attack_logic(gmap, tile, self.troops, attacker, defender,
                              defender_tiles, attacker_tiles, defense_post=guarded,
-                             defender_traitor=defender_traitor)
+                             defender_traitor=defender_traitor,
+                             fallout_mod=fallout_mod)
             budget -= r.tiles_used
             self.troops -= r.attacker_loss
             if defender is not None:

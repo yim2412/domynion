@@ -166,9 +166,21 @@ DEFENSE_POST_RANGE = 30
 DEFENSE_POST_DEFENSE_BONUS = 5.0
 DEFENSE_POST_SPEED_BONUS = 3.0
 
-# 낙진 (P5 에서 쓴다) — falloutDefenseModifier(비율) = 5 − 비율 × 2
+# 낙진 — falloutDefenseModifier(비율) = 5 − 비율 × 2.
+# 비율은 **지도 전체의 낙진 비율**이라, 핵이 많이 터질수록 한 칸의 효과가 줄어든다.
 FALLOUT_DEFENSE_BASE = 5.0
 FALLOUT_DEFENSE_SLOPE = 2.0
+
+# 핵·SAM (P5) — Config.ts :: nukeMagnitudes/nukeSpeed/samRange/nukeDeathFactor
+NUKE_TARGETABLE_RANGE = 150
+DEFAULT_SAM_RANGE = 70
+MAX_SAM_RANGE = 150
+SAM_MISSILE_SPEED = 12
+
+# MIRV 탄두만 다른 피해식을 쓴다
+MIRV_TARGET_TROOP_RATIO = 0.03
+MIRV_DEATH_SCALE = 500.0
+MIRV_DEATH_STEEPNESS = 2.0
 
 # 공격자 Human/Nation 이 Bot 을 칠 때
 ATTACK_VS_BOT_MAG_MULT = 0.7

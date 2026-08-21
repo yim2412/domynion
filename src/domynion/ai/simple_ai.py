@@ -25,9 +25,11 @@ LAUNCH_FILL = 0.35         # 병력이 상한의 이만큼 차면 공격한다
 NEUTRAL_BIAS = 0.4         # 중립 선호
 MAX_CONCURRENT = 2         # 동시에 굴리는 부대 수
 
-# 건설 우선순위. 도시가 첫째인 이유는 병력 상한을 직접 올리기 때문이다(레벨당 25만).
-# 원본 봇(`NationExecution`)의 판단은 P6 에서 옮긴다 — 지금은 골드가 놀지 않게만 한다.
-BUILD_ORDER = (UnitType.CITY, UnitType.PORT, UnitType.DEFENSE_POST, UnitType.FACTORY)
+# 지을 수 있는 것 중 **가장 비싼 것**을 산다. 싼 것부터 사면 골드가 늘 바닥이라
+# 사일로(100만)에 영영 못 닿는다 — 실제로 그렇게 두니 한 판에 핵이 0발이었다.
+# 원본 봇(`NationExecution`)의 판단은 P6 에서 옮긴다.
+BUILD_ORDER = (UnitType.CITY, UnitType.PORT, UnitType.DEFENSE_POST,
+               UnitType.FACTORY, UnitType.MISSILE_SILO, UnitType.SAM_LAUNCHER)
 BUILD_EVERY_SEC = 5.0
 
 # 외교. 원본 봇(`NationExecution`)의 판단은 P6 에서 옮긴다 — 지금은 동맹 규칙이
@@ -41,6 +43,9 @@ BETRAY_CHANCE = 0.05
 BOAT_CHANCE = 0.25
 BOAT_SEARCH = 600          # 상륙 후보를 이만큼만 훑는다(지도 전체는 13만 칸이다)
 
+# 핵. 사일로가 있고 골드가 남을 때만 — 원폭 75만이라 도시 여러 채 값이다.
+NUKE_EVERY_SEC = 20.0
+
 class SimpleAI:
     """플레이어 한 명을 조종한다. 상태를 갖는 이유는 반응 주기 하나 때문이다."""
 
@@ -49,6 +54,7 @@ class SimpleAI:
         self.rng = rng
         self._cooldown = rng.uniform(0.0, REACT_SEC)   # 전원이 같은 tick 에 움직이지 않게
         self._build_cd = rng.uniform(0.0, BUILD_EVERY_SEC)
+        self._nuke_cd = rng.uniform(0.0, NUKE_EVERY_SEC)
 
     # --- 공격 -------------------------------------------------------------
 
@@ -57,6 +63,7 @@ class SimpleAI:
         if not p.alive or st.over:
             return
         self._maybe_build(st, dt)
+        self._maybe_nuke(st, dt)
 
         self._cooldown -= dt
         if self._cooldown > 0.0:
@@ -77,6 +84,30 @@ class SimpleAI:
             st.launch_attack(self.pid, target)
         elif self.rng.random() < BOAT_CHANCE:
             self._maybe_boat(st)          # 육지로 갈 곳이 없으면 바다를 본다
+
+    def _maybe_nuke(self, st: GameState, dt: float) -> None:
+        """가장 넓은 적의 영토 한복판을 노린다. 사일로가 있어야 쏠 수 있다."""
+        self._nuke_cd -= dt
+        if self._nuke_cd > 0.0:
+            return
+        self._nuke_cd += NUKE_EVERY_SEC
+        p = st.players[self.pid]
+        if not p.units.of(UnitType.MISSILE_SILO):
+            return
+        for utype in (UnitType.HYDROGEN_BOMB, UnitType.ATOM_BOMB):
+            if p.gold < p.units.cost(utype):
+                continue
+            foes = [q for q in st.alive
+                    if q.pid != self.pid
+                    and not st.diplomacy.is_friendly(self.pid, q.pid)]
+            if not foes:
+                return
+            biggest = max(foes, key=lambda q: st.tiles(q.pid))
+            refs = st.gmap.owned_refs(biggest.pid)
+            if not len(refs):
+                return
+            st.launch_nuke(self.pid, utype, int(self.rng.choice(refs.tolist())))
+            return
 
     def _maybe_boat(self, st: GameState) -> None:
         """바다 건너 상륙. 내 해안 근처에서 남의 땅이나 빈 땅을 찾는다."""
@@ -138,11 +169,19 @@ class SimpleAI:
             return
         self._build_cd += BUILD_EVERY_SEC
         p = st.players[self.pid]
-        for utype in BUILD_ORDER:
-            if p.gold >= p.units.cost(utype):
-                near = int(self.rng.choice(st.gmap.owned_refs(self.pid).tolist()))
-                if st.build(self.pid, utype, near) is not None:
-                    return
+        affordable = [(p.units.cost(u), u) for u in BUILD_ORDER
+                      if p.gold >= p.units.cost(u)]
+        if not affordable:
+            return
+        refs = st.gmap.owned_refs(self.pid)
+        if not len(refs):
+            return
+        # 정렬 키를 비용 하나로 잡는다. 튜플째 비교하면 값이 같을 때 UnitType 끼리
+        # 비교하려다 TypeError 로 판이 통째로 죽는다 (실제로 그랬다).
+        for _, utype in sorted(affordable, key=lambda pair: pair[0], reverse=True):
+            near = int(self.rng.choice(refs.tolist()))
+            if st.build(self.pid, utype, near) is not None:
+                return
 
     def choose_target(self, st: GameState,
                       reachable: "set[int | None] | None" = None) -> "int | None | bool":
