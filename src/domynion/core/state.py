@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from . import constants as C
 from .gamemap import TileRef
+from .units import UnitStore
 
 
 @dataclass
@@ -26,14 +27,16 @@ class PlayerState:
     start: TileRef | None = None
     alive: bool = True
 
-    # 도시 레벨 합. P2 에서 실제 유닛으로 바뀐다 — 지금은 상한 공식이 이 값을 읽는
-    # 자리만 열어 둔다(원본 공식에 들어 있으므로 빼면 공식이 달라진다).
-    city_levels: int = 0
+    units: UnitStore = field(default_factory=UnitStore)
 
     # 사람이 슬라이더로 조절하는 값. 기본은 원본의 attackAmount().
     attack_ratio: float | None = None
 
     augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
+
+    @property
+    def city_levels(self) -> int:
+        return self.units.city_levels()
 
     def __post_init__(self) -> None:
         if self.troops <= 0.0:
@@ -53,7 +56,7 @@ class PlayerState:
         base = C.MAX_TROOPS_MULT * (
             tile_count ** C.MAX_TROOPS_TILE_EXP * C.MAX_TROOPS_TILE_MULT
             + C.MAX_TROOPS_BASE
-        ) + self.city_levels * C.CITY_TROOP_INCREASE
+        ) + self.units.city_levels() * C.CITY_TROOP_INCREASE
         return base / C.BOT_MAX_TROOPS_DIV if self.is_bot else base
 
     def troop_increase(self, tile_count: int) -> float:

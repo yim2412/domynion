@@ -44,7 +44,8 @@ class AttackResult:
 
 def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
                  attacker: PlayerState, defender: PlayerState | None,
-                 defender_tiles: int, attacker_tiles: int) -> AttackResult:
+                 defender_tiles: int, attacker_tiles: int,
+                 defense_post: bool = False) -> AttackResult:
     """한 칸을 먹을 때의 손실과 예산 소모. `defender is None` 이면 중립이다.
 
     중립과 플레이어는 **완전히 다른 분기**다. 하나로 합치지 말 것 — 원본이 그렇게
@@ -53,7 +54,13 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
     mag = C.TERRAIN_MAG[terrain]
     speed = C.TERRAIN_SPEED[terrain]
 
-    # 방어초소·낙진·팀 규칙은 P2/P5 에서 이 자리에 들어간다.
+    # 방어초소는 **수비자 것일 때만** 걸린다. 사거리 30 안에 하나라도 있으면
+    # 방어 ×5, 속도 ×3 — 원본에서 가장 큰 단일 수정자다.
+    if defense_post:
+        mag *= C.DEFENSE_POST_DEFENSE_BONUS
+        speed *= C.DEFENSE_POST_SPEED_BONUS
+
+    # 낙진은 P5 에서 이 자리에 들어간다.
 
     if defender is None:
         div = C.NEUTRAL_LOSS_DIV_BOT if attacker.is_bot else C.NEUTRAL_LOSS_DIV_HUMAN
@@ -166,7 +173,7 @@ class Attack:
     def step(self, gmap: GameMap, attacker: PlayerState,
              defender: PlayerState | None, defender_tiles: int,
              attacker_tiles: int, rng: random.Random,
-             tick: int) -> list[TileRef]:
+             tick: int, defense_posts: "object | None" = None) -> list[TileRef]:
         """`AttackExecution.tick()`. 이번 tick 에 정복한 칸들을 돌려준다."""
         want = -1 if self.target is None else self.target
         budget = tiles_per_tick(
@@ -196,8 +203,11 @@ class Attack:
                 if n not in self.seen and gmap.owner[n] == want and gmap.passable(n):
                     self._push(gmap, n, rng, tick)
 
+            guarded = (defense_posts is not None
+                       and defender is not None
+                       and defense_posts.covers(gmap, tile, defender.pid))
             r = attack_logic(gmap, tile, self.troops, attacker, defender,
-                             defender_tiles, attacker_tiles)
+                             defender_tiles, attacker_tiles, defense_post=guarded)
             budget -= r.tiles_used
             self.troops -= r.attacker_loss
             if defender is not None:

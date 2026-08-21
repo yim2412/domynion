@@ -244,7 +244,7 @@ maxTroops = 2 × (타일^0.6 × 1000 + 50000)
 |---|---|---|
 | **P1a** | 지도를 numpy 배열로 · 원본 `.bin` 118장 로더 (4.5절) | ✅ |
 | **P1b** | 지형 3종 · 병력 상한/성장 · attackLogic · 우선순위 힙 · tick 10Hz | ✅ |
-| **P2** | 골드 · City/Port/Factory/DefensePost + 건설·업그레이드 | ⬜ |
+| **P2** | 골드 · City/Port/Factory/DefensePost + 건설·업그레이드 | ✅ |
 | **P3** | 동맹 · 배신자 · 팀 · 금수 · 기부 | ⬜ |
 | **P4** | 보트(TransportShip) · Warship · Shell · TradeShip · 철도 | ⬜ |
 | **P5** | MissileSilo · AtomBomb · HydrogenBomb · MIRV · SAM · 낙진 | ⬜ |
@@ -324,6 +324,34 @@ v0.1 에서 잰 증강 밸런스(개척단 우세, 할인 중첩 하한 도달�
 | 우선순위 부호 뒤집기 (비싼 지형 먼저) | `test_cheap_terrain_is_taken_first` |
 | 지형 임계값 10 → 12 | `test_terrain_thresholds_match_original` |
 | 수비 손실을 타일당 → 절대값 | `test_defender_loses_troops_per_tile` |
+
+---
+
+## 5.6 P2 진행 기록 — 골드·건물
+
+`core/units.py`(종류·비용), `core/buildings.py`(배치·방어초소 조회) 추가.
+
+### 옮기면서 두 번 틀렸던 곳
+
+- **완공 카운터는 건설이 *시작될 때* 오른다.** 처음엔 완공 시점에 올렸는데,
+  원본 `buildUnit()` 은 유닛을 만드는 그 줄에서 `recordUnitConstructed()` 를 부른다
+  (PlayerImpl.ts 주석: "already accounts for in-progress builds"). 완공 시점으로
+  미루면 짓는 동안 같은 건물을 원본보다 **싸게 연달아** 지을 수 있다.
+- **도시 1채를 계속 업그레이드하면 값이 안 오른다.** 비용이 `min(보유, 완공)` 이라
+  보유 1 에 묶인다. 직관과 다르지만 원본이 그렇다 — `upgradeUnit()` 은 `extraUnits`
+  없이 `cost()` 를 부른다(그 인자는 UI 의 묶음 업그레이드 미리보기 전용이다).
+
+### 성능을 위해 원본과 다르게 만든 곳 (동작은 같다)
+
+원본은 칸마다 `nearbyUnits(tile, 30, DefensePost)` 를 부른다. 우리 지도는 확장이
+tick 당 수백 칸이라 초소마다 거리를 재면 루프가 터진다. 그래서 **초소가 덮는 칸을
+칠해 둔 배열**(`DefensePostIndex`)을 들고, 초소가 생기거나 주인이 바뀔 때만 다시 칠한다.
+판정 결과는 같다: 사거리 30, 완공된 것만(원본도 `includeUnderConstruction` 기본 false).
+
+### 실측 (world, 4인, 900초)
+
+병력이 151k → **235k** 로 올랐다. 도시 레벨당 상한 +250,000 이 붙은 결과다.
+판당 실행 시간은 16→17초로 거의 그대로.
 
 ---
 

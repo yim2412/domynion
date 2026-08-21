@@ -19,8 +19,10 @@ import numpy as np
 
 from . import constants as C
 from .attack import Attack
+from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .gamemap import GameMap, TileRef
 from .state import PlayerState
+from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
 
 class Victory(Enum):
@@ -43,6 +45,7 @@ class GameState:
     victory: Victory | None = None
 
     _counts: dict[int, int] = field(default_factory=dict)
+    _posts: DefensePostIndex | None = None
 
     # --- 설정 -------------------------------------------------------------
 
@@ -59,6 +62,7 @@ class GameState:
             gmap.owner[tile] = pid
         st = cls(gmap=gmap, players=players, rng=rng)
         st._counts = {pid: 1 for pid in players}
+        st._posts = DefensePostIndex(gmap.size)
         return st
 
     # --- 조회 -------------------------------------------------------------
@@ -93,6 +97,77 @@ class GameState:
         self.attacks.append(atk)
         return atk
 
+    # --- 건설 -------------------------------------------------------------
+
+    def can_build(self, pid: int, utype: UnitType, near: TileRef) -> TileRef | None:
+        """지을 수 있으면 실제로 지을 칸을, 아니면 None.
+
+        원본 `canBuild()` = 골드가 되는가(`canBuildUnitType`) + 자리가 있는가
+        (`canSpawnUnitType`). 둘을 한 번에 본다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive:
+            return None
+        if p.gold < p.units.cost(utype):
+            return None
+        if utype in STRUCTURES:
+            return find_spot(self.gmap, pid, near, structure_tiles(p.units))
+        return near if self.gmap.passable(near) else None
+
+    def build(self, pid: int, utype: UnitType, near: TileRef) -> Unit | None:
+        tile = self.can_build(pid, utype, near)
+        if tile is None:
+            return None
+        p = self.players[pid]
+        p.gold -= p.units.cost(utype)
+        unit = Unit(utype=utype, owner=pid, tile=tile,
+                    ticks_left=UNIT_INFO[utype].construction_ticks)
+        p.units.units.append(unit)
+        # 원본은 `buildUnit()` 안에서, **건설이 끝나기 전에** 완공 카운터를 올린다
+        # (PlayerImpl.ts 주석: "already accounts for in-progress builds").
+        # 완공 시점으로 미루면 짓는 동안 같은 건물을 원본보다 싸게 연달아 지을 수 있다.
+        p.units.record_constructed(utype)
+        if not unit.under_construction:
+            self._activate(p, unit)
+        return unit
+
+    def upgrade(self, pid: int, unit: Unit) -> bool:
+        """`upgradeUnit()` — 같은 비용 함수를 다시 낸다. 레벨이 오르면 완공수가 하나
+        늘어 **다음 업그레이드가 더 비싸진다.**"""
+        p = self.players.get(pid)
+        if p is None or not UNIT_INFO[unit.utype].upgradable or unit.under_construction:
+            return False
+        cost = p.units.cost(unit.utype)
+        if p.gold < cost:
+            return False
+        p.gold -= cost
+        unit.level += 1
+        p.units.record_constructed(unit.utype)
+        return True
+
+    def _activate(self, p: PlayerState, unit: Unit) -> None:
+        """건설이 끝났을 때. 완공 카운터는 이미 `build()` 에서 올렸다.
+
+        방어초소는 **완공된 것만** 효과가 있다 — 원본이 `nearbyUnits(...)` 를
+        `includeUnderConstruction` 없이 부르고, 그 기본값이 false 다."""
+        if unit.utype is UnitType.DEFENSE_POST:
+            self._rebuild_posts()
+
+    def _rebuild_posts(self) -> None:
+        posts = [(u.tile, u.owner) for p in self.players.values()
+                 for u in p.units.of(UnitType.DEFENSE_POST)
+                 if not u.under_construction]
+        if self._posts is None:
+            self._posts = DefensePostIndex(self.gmap.size)
+        self._posts.rebuild(self.gmap, posts)
+
+    def _advance_construction(self) -> None:
+        for p in self.alive:
+            for u in p.units.units:
+                if u.under_construction:
+                    u.ticks_left -= 1
+                    if not u.under_construction:
+                        self._activate(p, u)
+
     # --- tick -------------------------------------------------------------
 
     def tick(self) -> None:
@@ -100,6 +175,7 @@ class GameState:
             return
         self.tick_count += 1
         self._grow()
+        self._advance_construction()
         self._advance_attacks()
         self._check_end()
 
@@ -120,7 +196,8 @@ class GameState:
             else:
                 taken = a.step(self.gmap, atk, defender,
                                self.tiles(a.target) if a.target is not None else 0,
-                               self.tiles(a.attacker), self.rng, self.tick_count)
+                               self.tiles(a.attacker), self.rng, self.tick_count,
+                               defense_posts=self._posts)
                 if taken:
                     self._counts[a.attacker] = self._counts.get(a.attacker, 0) + len(taken)
                     if a.target is not None:
@@ -150,6 +227,15 @@ class GameState:
         self._counts[target] = 0
         d.alive = False
         d.troops = 0.0
+        # `conquerPlayer` — 건물도 정복자에게 넘어간다. 버리면 도시가 사라져
+        # 병력 상한이 갑자기 떨어진다.
+        winner = self.players[attacker]
+        for u in d.units.units:
+            u.owner = attacker
+            winner.units.units.append(u)
+            winner.units.record_constructed(u.utype)
+        d.units.units = []
+        self._rebuild_posts()
 
     def _check_end(self) -> None:
         for p in self.alive:

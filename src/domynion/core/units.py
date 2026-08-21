@@ -1,0 +1,149 @@
+"""유닛 — 종류·비용·건설. openfront `UnitType` / `unitInfo()` 그대로.
+
+**비용이 지수로 오른다.** `min(1e6, 2^n × 125000)` 같은 꼴이라 도시 4채째부터 상한에
+걸린다. `n` 은 이미 **지어 놓은** 같은 종류의 수인데, 원본은 정확히
+`min(보유수, 완공수)` 를 쓴다 — 건설 중인 것을 세면 짓는 도중에 값이 오른다.
+
+Port 와 Factory 는 **비용을 공유한다**(`costWrapper(fn, Port, Factory)`). 둘을 섞어
+지어도 다음 값이 같이 오른다. 따로 세면 원본보다 싸진다.
+
+업그레이드는 같은 비용 함수를 다시 내는 것이다 — 레벨을 올리면 완공수가 하나 늘어
+다음 업그레이드가 더 비싸진다(`upgradeUnit()`).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+from . import constants as C
+from .gamemap import TileRef
+
+
+class UnitType(Enum):
+    TRANSPORT_SHIP = "Transport"
+    WARSHIP = "Warship"
+    SHELL = "Shell"
+    SAM_MISSILE = "SAMMissile"
+    PORT = "Port"
+    ATOM_BOMB = "Atom Bomb"
+    HYDROGEN_BOMB = "Hydrogen Bomb"
+    TRADE_SHIP = "Trade Ship"
+    MISSILE_SILO = "Missile Silo"
+    DEFENSE_POST = "Defense Post"
+    SAM_LAUNCHER = "SAM Launcher"
+    CITY = "City"
+    MIRV = "MIRV"
+    MIRV_WARHEAD = "MIRV Warhead"
+    TRAIN = "Train"
+    FACTORY = "Factory"
+
+
+# 건물 — 지도 위에 자리를 차지하고 최소 거리 규칙이 걸리는 것들
+STRUCTURES = (UnitType.CITY, UnitType.PORT, UnitType.FACTORY,
+              UnitType.DEFENSE_POST, UnitType.MISSILE_SILO,
+              UnitType.SAM_LAUNCHER)
+
+
+@dataclass(frozen=True)
+class UnitInfo:
+    """`cost_fn(n)` 의 n 은 이미 완공한 같은 종류의 수다."""
+    cost_fn: object                     # Callable[[int], int]
+    construction_ticks: int = 0
+    upgradable: bool = False
+    max_health: int | None = None
+    shares_cost_with: tuple[UnitType, ...] = ()
+
+
+def _capped_doubling(cap: int, base: int):
+    return lambda n: min(cap, 2 ** n * base)
+
+
+def _capped_linear(cap: int, step: int):
+    return lambda n: min(cap, (n + 1) * step)
+
+
+UNIT_INFO: dict[UnitType, UnitInfo] = {
+    UnitType.CITY: UnitInfo(
+        _capped_doubling(1_000_000, 125_000), construction_ticks=2 * 10, upgradable=True),
+    UnitType.PORT: UnitInfo(
+        _capped_doubling(1_000_000, 125_000), construction_ticks=5 * 10, upgradable=True,
+        shares_cost_with=(UnitType.FACTORY,)),
+    UnitType.FACTORY: UnitInfo(
+        _capped_doubling(1_000_000, 125_000), construction_ticks=2 * 10, upgradable=True,
+        shares_cost_with=(UnitType.PORT,)),
+    UnitType.DEFENSE_POST: UnitInfo(
+        _capped_linear(250_000, 50_000), construction_ticks=5 * 10),
+    UnitType.MISSILE_SILO: UnitInfo(
+        lambda n: 1_000_000, construction_ticks=10 * 10, upgradable=True),
+    UnitType.SAM_LAUNCHER: UnitInfo(
+        _capped_linear(3_000_000, 1_500_000),
+        construction_ticks=C.SAM_CONSTRUCTION_TICKS, upgradable=True),
+    UnitType.WARSHIP: UnitInfo(
+        _capped_linear(1_000_000, 250_000), max_health=1000),
+    UnitType.ATOM_BOMB: UnitInfo(lambda n: 750_000),
+    UnitType.HYDROGEN_BOMB: UnitInfo(lambda n: 5_000_000),
+    UnitType.TRANSPORT_SHIP: UnitInfo(lambda n: 0),
+    UnitType.SHELL: UnitInfo(lambda n: 0),
+    UnitType.SAM_MISSILE: UnitInfo(lambda n: 0),
+    UnitType.TRADE_SHIP: UnitInfo(lambda n: 0),
+    UnitType.MIRV_WARHEAD: UnitInfo(lambda n: 0),
+    UnitType.TRAIN: UnitInfo(lambda n: 0),
+}
+
+
+@dataclass
+class Unit:
+    utype: UnitType
+    owner: int
+    tile: TileRef
+    level: int = 1
+    health: int | None = None
+    ticks_left: int = 0                 # 건설이 끝나기까지
+    active: bool = True
+
+    def __post_init__(self) -> None:
+        if self.health is None:
+            self.health = UNIT_INFO[self.utype].max_health
+
+    @property
+    def under_construction(self) -> bool:
+        return self.ticks_left > 0
+
+
+class UnitStore:
+    """한 플레이어가 가진 유닛들.
+
+    비용 계산이 `min(보유수, 완공수)` 를 쓰기 때문에 **둘을 따로 센다.** 하나로
+    합치면 건설 중에 값이 올라 원본보다 비싸진다."""
+
+    __slots__ = ("units", "_constructed")
+
+    def __init__(self) -> None:
+        self.units: list[Unit] = []
+        self._constructed: dict[UnitType, int] = {}
+
+    def owned(self, utype: UnitType) -> int:
+        return sum(1 for u in self.units if u.utype is utype and u.active)
+
+    def constructed(self, utype: UnitType) -> int:
+        return self._constructed.get(utype, 0)
+
+    def record_constructed(self, utype: UnitType) -> None:
+        self._constructed[utype] = self._constructed.get(utype, 0) + 1
+
+    def of(self, utype: UnitType) -> list[Unit]:
+        return [u for u in self.units if u.utype is utype and u.active]
+
+    def city_levels(self) -> int:
+        """완공된 도시의 레벨 합. 병력 상한 공식이 이 값을 읽는다."""
+        return sum(u.level for u in self.units
+                   if u.utype is UnitType.CITY and u.active and not u.under_construction)
+
+    def cost(self, utype: UnitType, extra: int = 0) -> int:
+        """`costWrapper` — 비용을 공유하는 종류는 합쳐 센다."""
+        info = UNIT_INFO[utype]
+        n = extra
+        for t in (utype, *info.shares_cost_with):
+            n += min(self.owned(t), self.constructed(t))
+        return int(info.cost_fn(n))

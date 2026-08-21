@@ -155,7 +155,7 @@ TRAITOR_DEFENSE_DEBUFF = 0.5
 TRAITOR_SPEED_DEBUFF = 0.8
 TRAITOR_DURATION_TICKS = 30 * 10
 
-# 방어초소 (P2 에서 쓴다)
+# 방어초소
 DEFENSE_POST_RANGE = 30
 DEFENSE_POST_DEFENSE_BONUS = 5.0
 DEFENSE_POST_SPEED_BONUS = 3.0
@@ -168,9 +168,17 @@ FALLOUT_DEFENSE_SLOPE = 2.0
 ATTACK_VS_BOT_MAG_MULT = 0.7
 
 
-# --- 골드 (P2) ------------------------------------------------------------
+# --- 골드·건물 (P2) -------------------------------------------------------
+#
+# Config.ts :: goldAdditionRate() — tick 당이다(초당이 아니다).
 GOLD_PER_TICK_HUMAN = 100
 GOLD_PER_TICK_BOT = 50
+
+# Config.ts :: structureMinDist() — 건물끼리 이만큼 떨어져야 한다(유클리드).
+STRUCTURE_MIN_DIST = 15
+
+# Config.ts :: SAM_CONSTRUCTION_TICKS
+SAM_CONSTRUCTION_TICKS = 30 * 10
 
 
 # --- 판 ------------------------------------------------------------------

@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 
 from ..core.engine import GameState
+from ..core.units import UnitType
 
 # --- AI 튜닝 (게임 밸런스가 아니라 '행동'이라 constants.py 와 분리한다) ---------
 
@@ -24,6 +25,11 @@ LAUNCH_FILL = 0.35         # 병력이 상한의 이만큼 차면 공격한다
 NEUTRAL_BIAS = 0.4         # 중립 선호
 MAX_CONCURRENT = 2         # 동시에 굴리는 부대 수
 
+# 건설 우선순위. 도시가 첫째인 이유는 병력 상한을 직접 올리기 때문이다(레벨당 25만).
+# 원본 봇(`NationExecution`)의 판단은 P6 에서 옮긴다 — 지금은 골드가 놀지 않게만 한다.
+BUILD_ORDER = (UnitType.CITY, UnitType.PORT, UnitType.DEFENSE_POST, UnitType.FACTORY)
+BUILD_EVERY_SEC = 5.0
+
 class SimpleAI:
     """플레이어 한 명을 조종한다. 상태를 갖는 이유는 반응 주기 하나 때문이다."""
 
@@ -31,18 +37,20 @@ class SimpleAI:
         self.pid = pid
         self.rng = rng
         self._cooldown = rng.uniform(0.0, REACT_SEC)   # 전원이 같은 tick 에 움직이지 않게
+        self._build_cd = rng.uniform(0.0, BUILD_EVERY_SEC)
 
     # --- 공격 -------------------------------------------------------------
 
     def update(self, st: GameState, dt: float) -> None:
+        p = st.players[self.pid]
+        if not p.alive or st.over:
+            return
+        self._maybe_build(st, dt)
+
         self._cooldown -= dt
         if self._cooldown > 0.0:
             return
         self._cooldown += REACT_SEC
-
-        p = st.players[self.pid]
-        if not p.alive or st.over:
-            return
         if sum(1 for a in st.attacks if a.attacker == self.pid) >= MAX_CONCURRENT:
             return
         if p.troops / p.max_troops(st.tiles(self.pid)) < LAUNCH_FILL:
@@ -51,6 +59,20 @@ class SimpleAI:
         target = self.choose_target(st)
         if target is not False:
             st.launch_attack(self.pid, target)
+
+    def _maybe_build(self, st: GameState, dt: float) -> None:
+        """골드가 쌓이는 대로 짓는다. 건설은 공격 판단보다 드물게 본다 —
+        건물 자리 탐색이 비싸서 매 초 돌리면 판당 실행 시간이 눈에 띄게 늘어난다."""
+        self._build_cd -= dt
+        if self._build_cd > 0.0:
+            return
+        self._build_cd += BUILD_EVERY_SEC
+        p = st.players[self.pid]
+        for utype in BUILD_ORDER:
+            if p.gold >= p.units.cost(utype):
+                near = int(self.rng.choice(st.gmap.owned_refs(self.pid).tolist()))
+                if st.build(self.pid, utype, near) is not None:
+                    return
 
     def choose_target(self, st: GameState) -> "int | None | bool":
         """칠 상대. 닿는 곳이 없으면 False 를 돌려준다 (None 은 '중립'이라 못 쓴다)."""

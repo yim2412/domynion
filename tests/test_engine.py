@@ -14,6 +14,7 @@ from domynion.core import constants as C
 from domynion.core.engine import GameState, Victory
 from domynion.core.gamemap import GameMap
 from domynion.core.state import PlayerState
+from domynion.core.units import Unit, UnitType
 
 
 def make_state(rows: list[str], owners: dict[int, tuple[int, int]],
@@ -52,11 +53,22 @@ def test_map_must_be_large_enough_for_territory_to_matter():
 
 
 def test_city_levels_raise_the_cap():
-    """도시는 P2 에서 붙지만 공식에는 이미 들어 있다 — 빼면 원본과 달라진다."""
+    """도시 레벨 합 × 250000 이 병력 상한에 더해진다."""
     plain = PlayerState(pid=0, name="P0")
-    with_city = PlayerState(pid=1, name="P1", city_levels=3)
+    with_city = PlayerState(pid=1, name="P1")
+    with_city.units.units.append(Unit(UnitType.CITY, 1, tile=0, level=3))
     assert (with_city.max_troops(100) - plain.max_troops(100)
             == pytest.approx(3 * C.CITY_TROOP_INCREASE))
+
+
+def test_city_under_construction_does_not_raise_the_cap():
+    """건설 중인 도시는 세지 않는다 — 원본이 `!isUnderConstruction()` 을 건다.
+
+    막지 않았으면: 짓자마자 상한이 올라 건설 시간이 무의미해진다."""
+    p = PlayerState(pid=0, name="P0")
+    base = p.max_troops(100)
+    p.units.units.append(Unit(UnitType.CITY, 0, tile=0, level=1, ticks_left=20))
+    assert p.max_troops(100) == base
 
 
 def test_bot_cap_and_growth_are_reduced():
