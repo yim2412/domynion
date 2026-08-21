@@ -35,8 +35,8 @@ def ui_font(size: int, bold: bool = True) -> QFont:
     return font
 
 
-MIN_ZOOM = 0.5
-MAX_ZOOM = 12.0
+MIN_ZOOM = 0.2      # 원본 크기 지도(2000×1000)를 화면에 담으려면 0.5 로는 모자란다
+MAX_ZOOM = 24.0
 
 
 class MapWidget(QWidget):
@@ -46,6 +46,7 @@ class MapWidget(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # 키 입력을 받으려면 필요하다
         self.state = state
         self.frames = FrameBuilder(state.gmap)
         self.zoom = 0.0            # 0 이면 첫 그리기에서 화면에 맞춘다
@@ -56,6 +57,9 @@ class MapWidget(QWidget):
         self._overlay_img: QImage | None = None
         self._overlay_buf: np.ndarray | None = None
         self.hovered_tile: int | None = None
+        self.hovered_owner: int | None = None
+        # 공격이 나갔다는 표시. 클릭했는데 아무 일도 안 일어나면 눌렸는지조차 모른다.
+        self._pings: list[tuple[int, int, int]] = []      # (x, y, 남은 프레임)
         self._bake_terrain()
 
     # --- 좌표 -------------------------------------------------------------
@@ -130,6 +134,8 @@ class MapWidget(QWidget):
         p.drawImage(target, self._overlay_img)      # 알파 합성은 Qt 가 한다
 
         self._draw_borders(p)
+        self._draw_hover(p)
+        self._draw_pings(p)
         self._draw_labels(p)
         p.end()
 
@@ -152,6 +158,56 @@ class MapWidget(QWidget):
             py = oy + y * z
             lines.append(QLineF(ox + x * z, py, ox + (x + 1) * z, py))
         p.drawLines(lines)
+
+    def ping(self, tile: int) -> None:
+        """클릭한 자리에 잠깐 표시를 남긴다. 없으면 눌렸는지조차 알 수 없다."""
+        gm = self.state.gmap
+        self._pings.append((tile % gm.width, tile // gm.width, 12))
+
+    def _draw_pings(self, p: QPainter) -> None:
+        if not self._pings:
+            return
+        z, ox, oy = self.zoom, self.offset.x(), self.offset.y()
+        keep = []
+        for x, y, life in self._pings:
+            r = (14 - life) * max(2.0, z)
+            fade = int(220 * life / 12)
+            p.setPen(QPen(QColor(255, 255, 255, fade), max(1.5, z / 3)))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(ox + (x + 0.5) * z, oy + (y + 0.5) * z), r, r)
+            if life > 1:
+                keep.append((x, y, life - 1))
+        self._pings = keep
+
+    def _draw_hover(self, p: QPainter) -> None:
+        """커서가 얹힌 나라의 국경을 밝게 덧그린다 — **무엇을 치게 되는지**가 보여야 한다.
+
+        openfront 에서 클릭은 그 칸이 아니라 소유자 전체를 겨눈다. 대상이 안 보이면
+        오조작이 잦다."""
+        if self.hovered_owner is None:
+            return
+        vx, hx = self.frames.border_segments(self.visible_tiles())
+        if not len(vx) and not len(hx):
+            return
+        gm = self.state.gmap
+        owner = gm.owner.reshape(gm.height, gm.width)
+        z, ox, oy = self.zoom, self.offset.x(), self.offset.y()
+        col = QColor(*P.player_color(self.hovered_owner))
+        col = QColor(min(255, col.red() + 70), min(255, col.green() + 70),
+                     min(255, col.blue() + 70))
+        p.setPen(QPen(col, max(1.5, self.zoom / 2.5)))
+        lines = []
+        me = self.hovered_owner
+        for x, y in vx:
+            if owner[y, x] == me or owner[y, x - 1] == me:
+                px = ox + x * z
+                lines.append(QLineF(px, oy + y * z, px, oy + (y + 1) * z))
+        for x, y in hx:
+            if owner[y, x] == me or owner[y - 1, x] == me:
+                py = oy + y * z
+                lines.append(QLineF(ox + x * z, py, ox + (x + 1) * z, py))
+        if lines:
+            p.drawLines(lines)
 
     def _draw_labels(self, p: QPainter) -> None:
         anchors = self.frames.label_anchors(self.state.alive)
@@ -179,12 +235,40 @@ class MapWidget(QWidget):
     # --- 입력 -------------------------------------------------------------
 
     def wheelEvent(self, e: QWheelEvent) -> None:
-        """커서 아래 지점을 고정한 채 확대한다 — 그래야 보던 곳을 잃지 않는다."""
+        self.zoom_at(e.position(), 1.15 ** (e.angleDelta().y() / 120))
+
+    def keyPressEvent(self, e) -> None:
+        """화살표/WASD 로 이동, +/- 로 확대. 마우스만으로 다루면 손이 바쁘다."""
+        step = 80
+        moves = {
+            Qt.Key.Key_Left: (step, 0), Qt.Key.Key_A: (step, 0),
+            Qt.Key.Key_Right: (-step, 0), Qt.Key.Key_D: (-step, 0),
+            Qt.Key.Key_Up: (0, step), Qt.Key.Key_W: (0, step),
+            Qt.Key.Key_Down: (0, -step), Qt.Key.Key_S: (0, -step),
+        }
+        if e.key() in moves:
+            dx, dy = moves[e.key()]
+            self.offset += QPointF(dx, dy)
+            self.update()
+            return
+        if e.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_at(QPointF(self.width() / 2, self.height() / 2), 1.25)
+            return
+        if e.key() in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
+            self.zoom_at(QPointF(self.width() / 2, self.height() / 2), 0.8)
+            return
+        if e.key() == Qt.Key.Key_F:
+            self.zoom = 0.0                 # 화면에 맞춘다
+            self.ensure_zoom()
+            self.update()
+            return
+        super().keyPressEvent(e)
+
+    def zoom_at(self, pos: QPointF, factor: float) -> None:
+        """`pos` 아래 지점을 고정한 채 확대한다 — 그래야 보던 곳을 잃지 않는다."""
         self.ensure_zoom()
-        pos = e.position()
         before = ((pos.x() - self.offset.x()) / self.zoom,
                   (pos.y() - self.offset.y()) / self.zoom)
-        factor = 1.15 ** (e.angleDelta().y() / 120)
         self.zoom = max(MIN_ZOOM, min(MAX_ZOOM, self.zoom * factor))
         self.offset = QPointF(pos.x() - before[0] * self.zoom,
                               pos.y() - before[1] * self.zoom)
@@ -201,7 +285,13 @@ class MapWidget(QWidget):
             self._drag_from = e.position()
             self.update()
         else:
-            self.hovered_tile = self.tile_at(e.position())
+            t = self.tile_at(e.position())
+            if t != self.hovered_tile:
+                self.hovered_tile = t
+                gm = self.state.gmap
+                o = int(gm.owner[t]) if t is not None and gm.passable(t) else -2
+                self.hovered_owner = None if o < 0 else o
+                self.update()
 
     def mouseReleaseEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.RightButton:
