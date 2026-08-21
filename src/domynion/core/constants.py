@@ -119,6 +119,17 @@ REL_ATTACKED: dict[str, float] = {
     "easy": -60.0, "medium": -70.0, "hard": -80.0, "impossible": -100.0,
 }
 
+# 이모지 — NationEmojiBehavior.ts / PlayerImpl.canSendEmoji
+#
+# 🖕 하나가 −100 이다. 사람이 AI 관계를 바꾸는 수단 중 **유일하게 공짜**다.
+REL_EMOJI_INSULT = -100.0          # 🖕
+REL_EMOJI_CLOWN = -10.0            # 🤡
+# ⚠ 좋은 이모지는 **easy 에서만** 통한다. 아니면 쿨다운마다 눌러 관계를 산다.
+REL_EMOJI_PEACEFUL = 15.0          # 🕊️🏳️❤️🥰👏
+
+EMOJI_COOLDOWN_TICKS = 5 * 10      # emojiMessageCooldown() — 같은 상대에게 5초
+EMOJI_AI_INTERVAL_TICKS = 300      # shouldSendEmoji — AI 가 먼저 거는 말은 30초에 한 번
+
 # 골드 기부 한 덩어리 크기(`getGoldChunkSize`). 덩어리당 관계 +5.
 GOLD_CHUNK_SIZE: dict[str, float] = {
     "easy": 2_500.0, "medium": 5_000.0, "hard": 12_500.0, "impossible": 25_000.0,

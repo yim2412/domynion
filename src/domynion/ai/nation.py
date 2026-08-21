@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core import emoji
 from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
 from ..core.units import STRUCTURES, UnitType
@@ -176,6 +177,14 @@ class NationBot:
         troops = self._attack_troops(st, target)
         if troops is None:
             return False
+        if target is not None:
+            # 관계가 나쁘지 않은데 친다 = 내가 먼저 시작한 것(😈).
+            # 이미 사이가 나쁘면 보복으로 본다(😡). `maybeSendAttackEmoji` 그대로.
+            if st.relation_of(self.pid, target) >= Relation.NEUTRAL:
+                if self.rng.randrange(2) == 0:
+                    st.ai_emoji(self.pid, target, emoji.AGGRESSIVE_ATTACK)
+            elif self.rng.randrange(4) == 0:
+                st.ai_emoji(self.pid, target, emoji.ATTACK)
         p = st.players[self.pid]
         saved = p.attack_ratio
         p.attack_ratio = min(1.0, troops / p.troops) if p.troops > 0 else 0.0
@@ -292,12 +301,25 @@ class NationBot:
                 st.request_alliance(self.pid, foe.pid)
 
     def _accepts_alliance(self, st: GameState, requestor: int) -> bool:
+        """받을 것인가. 관계보다 **배신자 낙인이 먼저**다.
+
+        원본은 배신자를 90% 거절한다(`nextInt(0, 100) >= 10`). 관계만 보면 방금
+        남을 배신한 자가 관계가 중립이라는 이유로 받아들여진다 — 그러면 배신에
+        비용이 없어져 동맹 자체가 의미를 잃는다."""
+        if st.is_traitor(requestor) and self.rng.randrange(100) >= 10:
+            st.ai_emoji(self.pid, requestor, emoji.CONFUSED)
+            return False
         rel = st.relation_of(self.pid, requestor)
         if rel < Relation.NEUTRAL:
+            st.ai_emoji(self.pid, requestor, emoji.CONFUSED)
             return False                       # 사이가 나쁘면 무조건 거절
         if rel >= Relation.FRIENDLY:
-            return self.rng.randrange(3) != 0  # 우호면 대체로 받는다
-        return self.rng.random() < 0.5         # 중립은 여전히 반반
+            ok = self.rng.randrange(3) != 0    # 우호면 대체로 받는다
+        else:
+            ok = self.rng.random() < 0.5       # 중립은 여전히 반반
+        if ok:
+            st.ai_emoji(self.pid, requestor, emoji.HANDSHAKE)
+        return ok
 
     # --- 건설 -------------------------------------------------------------
 

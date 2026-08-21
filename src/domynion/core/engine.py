@@ -30,6 +30,10 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import place_players
+from . import emoji as emoji_mod
+from .emoji import Emojis
+from .emoji import relation_delta as emoji_relation_delta
+from .emoji import reply_to as emoji_reply_to
 from .relations import Relation, gold_donation_relation
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
@@ -68,6 +72,7 @@ class GameState:
     clock: DoomsdayClock = field(default_factory=DoomsdayClock)
     rail: RailNetwork = field(default_factory=RailNetwork)
     log: EventLog = field(default_factory=EventLog)
+    emojis: Emojis = field(default_factory=Emojis)
     trains: list[Train] = field(default_factory=list)
 
     # 관계 변화량이 난이도를 탄다(`AttackExecution` 의 relationChange).
@@ -479,6 +484,7 @@ class GameState:
                 self.relate(pid, victim, C.REL_MIRV)
             else:
                 self.relate(victim, pid, C.REL_NUKED)
+            self.ai_emoji(pid, victim, emoji_mod.NUKE)
         return n
 
     def _split_mirv(self, n: Nuke) -> None:
@@ -652,6 +658,58 @@ class GameState:
                     self.relate(pid, other, -C.REL_EMBARGO)
                     applied.discard(other)
 
+    # --- 이모지 -----------------------------------------------------------
+
+    def send_emoji(self, pid: int, to: int, emoji: str) -> bool:
+        """이모지 하나를 보낸다. 원본에서 이건 장식이 아니라 **관계 조작 수단**이다.
+
+        🖕 하나가 −100 이다 — 사람이 AI 의 눈을 바꾸는 방법 중 유일하게 공짜다
+        (공격은 병력을, 기부는 골드를 쓴다). 그래서 5초 쿨다운이 붙어 있다.
+        """
+        me, them = self.players.get(pid), self.players.get(to)
+        if me is None or them is None or self.over:
+            return False
+        if not me.alive or not them.alive:
+            return False
+        if not self.emojis.can_send(pid, to, self.tick_count):
+            return False
+        self.emojis.record(pid, to, self.tick_count)
+        self.emit(EventKind.CHAT, who=to, other=pid, text=emoji)
+
+        # 받는 쪽이 AI 일 때만 관계가 움직이고 답이 온다. 사람끼리는 그냥 말이다.
+        if them.kind != "nation":
+            return True
+        delta = emoji_relation_delta(emoji, self.difficulty)
+        if delta:
+            self.relate(to, pid, delta)
+        reply = emoji_reply_to(emoji, self.rng, self.relation_of(pid, to))
+        if reply is not None and self.emojis.can_send(to, pid, self.tick_count):
+            self.emojis.record(to, pid, self.tick_count)
+            self.emit(EventKind.CHAT, who=pid, other=to, text=reply)
+        return True
+
+    def ai_emoji(self, pid: int, to: int, pool: tuple[str, ...]) -> bool:
+        """AI 가 **먼저** 말을 건다.
+
+        `shouldSendEmoji` 의 두 조건을 그대로 지킨다: 봇은 안 보내고, **받는 쪽이
+        사람이 아니면 안 보낸다.** AI 끼리 주고받지 않는다는 뜻이라, 화면에 뜨는
+        이모지는 전부 나에게 온 말이 된다.
+        """
+        me, them = self.players.get(pid), self.players.get(to)
+        if me is None or them is None or self.over:
+            return False
+        if me.kind == "bot" or them.kind != "human":
+            return False
+        if not me.alive or not them.alive:
+            return False
+        if not self.emojis.ai_may_speak(pid, to, self.tick_count):
+            return False
+        if not self.emojis.can_send(pid, to, self.tick_count):
+            return False
+        self.emojis.record(pid, to, self.tick_count)
+        self.emit(EventKind.CHAT, who=to, other=pid, text=self.rng.choice(pool))
+        return True
+
     # --- 기부 -------------------------------------------------------------
 
     def donate_gold(self, pid: int, to: int, gold: int) -> bool:
@@ -663,8 +721,15 @@ class GameState:
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=gold)
         self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=gold)
         # 액수에 비례한다. 덩어리 크기가 시간에 따라 커져서 후반에 관계를 살 수 없다.
-        self.relate(to, pid, gold_donation_relation(gold, self.tick_count,
-                                                    self.difficulty))
+        bump = gold_donation_relation(gold, self.tick_count, self.difficulty)
+        self.relate(to, pid, bump)
+        # **적으면 적다고 말한다.** 답이 없으면 준 사람은 통했는지 알 수 없다.
+        them = self.players.get(to)
+        if them is not None and them.kind == "nation":
+            pool = (emoji_mod.LOVE if bump >= 50 else
+                    emoji_mod.DONATION_OK if bump > 0 else
+                    emoji_mod.DONATION_TOO_SMALL)
+            self.ai_emoji(to, pid, pool)
         return True
 
     def donate_troops(self, pid: int, to: int, troops: float) -> bool:

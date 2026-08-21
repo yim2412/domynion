@@ -20,7 +20,8 @@ from ..ai import nation
 from ..core import constants as C
 from ..core.engine import GameState
 from ..core.relations import RELATION_COLOUR, RELATION_LABEL
-from .actions import root_items
+from .actions import EMOJI_OPEN, root_items
+from .emojitable import EmojiTable
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
 from .map_widget import MapWidget
@@ -50,6 +51,10 @@ class MainWindow(QMainWindow):
 
         # 면역은 규칙에만 넣으면 안 된다 — 왜 공격이 안 되는지 항상 보여야 한다.
         self.immunity = ImmunityBar(state, human, self.map)
+
+        # 이모지는 장식이 아니다 — 🖕 하나가 상대 관계를 −100 움직인다.
+        self.emoji = EmojiTable(state, human, self.map)
+        self.emoji.picked.connect(self._send_emoji)
 
         # 커서가 얹힌 대상 정보. 무엇을 치는지 모르면 클릭이 도박이 된다.
         self.inspect = QLabel("", self.map)
@@ -157,6 +162,7 @@ class MainWindow(QMainWindow):
         self.scoreboard.adjustSize()
         self.controls.refresh()
         self.immunity.refresh()
+        self.emoji.refresh()
         self._refresh_inspect()
         self.events.refresh()
         self.attacks.refresh()
@@ -193,6 +199,21 @@ class MainWindow(QMainWindow):
         self.inspect.show()
         self.inspect.raise_()
 
+    def _open_emoji(self, target: int) -> None:
+        self.emoji.open_for(target)
+        self.emoji.move((self.map.width() - self.emoji.width()) // 2,
+                        (self.map.height() - self.emoji.height()) // 2)
+
+    def _send_emoji(self, ch: str) -> None:
+        t = self.emoji.target
+        if t is None:
+            return
+        if self.state.send_emoji(self.human, t, ch):
+            self._show_banner(f"{ch}  →  {self.state.players[t].name}")
+            self._flash_left = 15
+        else:
+            self._flash("아직 보낼 수 없다 (쿨다운)")
+
     def _announce(self) -> None:
         st = self.state
         who = st.players[st.winner].name if st.winner is not None else "무승부"
@@ -200,6 +221,10 @@ class MainWindow(QMainWindow):
         self._show_banner(f"{kind} — {who}")
 
     def _flash(self, text: str, ticks: int = 20) -> None:
+        # 메뉴는 위젯을 모른다 — 이모지 판을 열라는 신호만 흘려보낸다.
+        if text.startswith(EMOJI_OPEN):
+            self._open_emoji(int(text[len(EMOJI_OPEN):]))
+            return
         """잠깐 뜨는 안내. 클릭이 아무 일도 안 했을 때 이유를 알려 준다."""
         self._show_banner(text)
         self._flash_left = ticks

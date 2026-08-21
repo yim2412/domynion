@@ -30,6 +30,7 @@ CATEGORY_COLOUR = {
     Category.ALLIANCE: "#b9a3e0",
     Category.TRADE: "#8fd6f0",
     Category.SYSTEM: "#d8d8dd",
+    Category.CHAT: "#f0d68f",
 }
 
 
@@ -51,6 +52,8 @@ def describe(st: GameState, e: Event, me: int) -> str:
         return f"SAM 이 {who} 의 핵을 요격"
     if k is EventKind.SAM_MISS:
         return f"{who} 의 SAM 에 요격당함"
+    if k is EventKind.CHAT:
+        return f"{who} : {e.text}"
     if k is EventKind.CONQUERED_PLAYER:
         gone = st.players.get(int(e.amount))
         return f"{who} 가 {gone.name if gone else '?'} 를 정복"

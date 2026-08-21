@@ -37,6 +37,7 @@ class EventKind(Enum):
     DONATION_SENT = "기부 보냄"
     DONATION_RECEIVED = "기부 받음"
     RENEW_ALLIANCE = "동맹 연장"
+    CHAT = "이모지"
     DOOMSDAY_MARKED = "둠스데이 경고"     # 원본에는 없다 — 클락이 별도 UI 라서
 
 
@@ -46,6 +47,7 @@ class Category(Enum):
     ALLIANCE = "동맹"
     TRADE = "무역"
     SYSTEM = "판"
+    CHAT = "말"
 
 
 CATEGORY: dict[EventKind, Category] = {
@@ -71,6 +73,7 @@ CATEGORY: dict[EventKind, Category] = {
     EventKind.DONATION_SENT: Category.TRADE,
     EventKind.DONATION_RECEIVED: Category.TRADE,
     EventKind.DOOMSDAY_MARKED: Category.SYSTEM,
+    EventKind.CHAT: Category.CHAT,
 }
 
 # 이것들은 **놓치면 안 되는 것**이라 화면 가운데에 크게 띄운다.
