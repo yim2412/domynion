@@ -20,6 +20,7 @@ import numpy as np
 from . import constants as C
 from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
+from .diplomacy import Diplomacy
 from .gamemap import GameMap, TileRef
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
@@ -43,6 +44,8 @@ class GameState:
     over: bool = False
     winner: int | None = None
     victory: Victory | None = None
+
+    diplomacy: Diplomacy = field(default_factory=Diplomacy)
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -87,6 +90,8 @@ class GameState:
         p = self.players.get(pid)
         if p is None or not p.alive or self.over:
             return None
+        if target is not None and self.diplomacy.is_friendly(pid, target):
+            return None                 # 친한 상대는 못 친다 — 먼저 동맹을 깨야 한다
         troops = p.attack_troops()
         if troops < C.ATTACK_MIN_TROOPS:
             return None
@@ -96,6 +101,21 @@ class GameState:
         p.troops -= troops
         self.attacks.append(atk)
         return atk
+
+    # --- 외교 -------------------------------------------------------------
+
+    def request_alliance(self, pid: int, other: int) -> bool:
+        return self.diplomacy.request(pid, other)
+
+    def accept_alliance(self, pid: int, requestor: int) -> bool:
+        return self.diplomacy.accept(pid, requestor, self.tick_count) is not None
+
+    def break_alliance(self, pid: int, other: int) -> bool:
+        """동맹 파기. 상대가 이미 배신자가 아니면 **내가** 배신자가 된다."""
+        return self.diplomacy.break_alliance(pid, other, self.tick_count)
+
+    def is_traitor(self, pid: int) -> bool:
+        return self.diplomacy.is_traitor(pid, self.tick_count)
 
     # --- 건설 -------------------------------------------------------------
 
@@ -174,6 +194,7 @@ class GameState:
         if self.over:
             return
         self.tick_count += 1
+        self.diplomacy.expire_due(self.tick_count)
         self._grow()
         self._advance_construction()
         self._advance_attacks()
@@ -191,13 +212,21 @@ class GameState:
             if atk is None or not atk.alive:
                 continue
             defender = self.players.get(a.target) if a.target is not None else None
-            if defender is not None and not defender.alive:
+            # 공격이 시작된 뒤에 동맹이 맺어질 수 있다. 원본은 매 tick 확인해서
+            # 그런 부대를 **퇴각**시킨다 — 안 그러면 동맹 중에 계속 두들겨 맞는다.
+            if (a.target is not None
+                    and self.diplomacy.is_friendly(a.attacker, a.target)):
+                a.retreated = True
+            elif defender is not None and not defender.alive:
                 a.retreated = True
             else:
                 taken = a.step(self.gmap, atk, defender,
                                self.tiles(a.target) if a.target is not None else 0,
                                self.tiles(a.attacker), self.rng, self.tick_count,
-                               defense_posts=self._posts)
+                               defense_posts=self._posts,
+                               defender_traitor=(
+                                   a.target is not None
+                                   and self.diplomacy.is_traitor(a.target, self.tick_count)))
                 if taken:
                     self._counts[a.attacker] = self._counts.get(a.attacker, 0) + len(taken)
                     if a.target is not None:
@@ -235,6 +264,7 @@ class GameState:
             winner.units.units.append(u)
             winner.units.record_constructed(u.utype)
         d.units.units = []
+        self.diplomacy.drop_player(target)
         self._rebuild_posts()
 
     def _check_end(self) -> None:
@@ -242,6 +272,7 @@ class GameState:
             if self.tiles(p.pid) <= 0 and not any(a.attacker == p.pid for a in self.attacks):
                 p.alive = False
                 p.troops = 0.0
+                self.diplomacy.drop_player(p.pid)
 
         alive = self.alive
         if len(alive) <= 1:

@@ -45,7 +45,8 @@ class AttackResult:
 def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
                  attacker: PlayerState, defender: PlayerState | None,
                  defender_tiles: int, attacker_tiles: int,
-                 defense_post: bool = False) -> AttackResult:
+                 defense_post: bool = False, defender_traitor: bool = False,
+                 same_team_disconnected: bool = False) -> AttackResult:
     """한 칸을 먹을 때의 손실과 예산 소모. `defender is None` 이면 중립이다.
 
     중립과 플레이어는 **완전히 다른 분기**다. 하나로 합치지 말 것 — 원본이 그렇게
@@ -75,6 +76,8 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
 
     if attacker.is_bot is False and defender.is_bot:
         mag *= C.ATTACK_VS_BOT_MAG_MULT
+    if same_team_disconnected:
+        mag = 0.0        # 같은 팀의 연결 끊긴 수비자는 공짜로 넘어온다
 
     defense_sig = 1.0 - sigmoid(defender_tiles,
                                 C.DEFENSE_DEBUFF_DECAY_RATE,
@@ -91,17 +94,21 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
     # 수비측은 **타일당 병력**을 잃는다. v0.1 은 이 값을 *비용*에 써서 교착을 만들었지만,
     # 원본은 *손실*에만 쓴다. 같은 수식이 다른 자리에 있는 것이라 헷갈리지 말 것.
     defender_loss = defender.troops / max(defender_tiles, 1)
+    traitor_mod = C.TRAITOR_DEFENSE_DEBUFF if defender_traitor else 1.0
 
     a = (within(defender.troops / max(attack_troops, 1e-9), *C.ATTACKER_LOSS_A_CLAMP)
-         * mag * C.ATTACKER_LOSS_A_MULT * large_defender * large_attack_bonus)
-    b = C.ATTACKER_LOSS_B_MULT * defender_loss * (mag / C.ATTACKER_LOSS_B_MAG_DIV)
+         * mag * C.ATTACKER_LOSS_A_MULT * large_defender * large_attack_bonus
+         * traitor_mod)
+    b = (C.ATTACKER_LOSS_B_MULT * defender_loss
+         * (mag / C.ATTACKER_LOSS_B_MAG_DIV) * traitor_mod)
 
     return AttackResult(
         attacker_loss=C.ATTACKER_LOSS_A_WEIGHT * a + C.ATTACKER_LOSS_B_WEIGHT * b,
         defender_loss=defender_loss,
         tiles_used=within(
             defender.troops / (C.TILES_USED_TROOP_MULT * max(attack_troops, 1e-9)),
-            *C.TILES_USED_CLAMP) * speed * large_defender * large_speed_bonus,
+            *C.TILES_USED_CLAMP) * speed * large_defender * large_speed_bonus
+        * (C.TRAITOR_SPEED_DEBUFF if defender_traitor else 1.0),
     )
 
 
@@ -173,7 +180,8 @@ class Attack:
     def step(self, gmap: GameMap, attacker: PlayerState,
              defender: PlayerState | None, defender_tiles: int,
              attacker_tiles: int, rng: random.Random,
-             tick: int, defense_posts: "object | None" = None) -> list[TileRef]:
+             tick: int, defense_posts: "object | None" = None,
+             defender_traitor: bool = False) -> list[TileRef]:
         """`AttackExecution.tick()`. 이번 tick 에 정복한 칸들을 돌려준다."""
         want = -1 if self.target is None else self.target
         budget = tiles_per_tick(
@@ -207,7 +215,8 @@ class Attack:
                        and defender is not None
                        and defense_posts.covers(gmap, tile, defender.pid))
             r = attack_logic(gmap, tile, self.troops, attacker, defender,
-                             defender_tiles, attacker_tiles, defense_post=guarded)
+                             defender_tiles, attacker_tiles, defense_post=guarded,
+                             defender_traitor=defender_traitor)
             budget -= r.tiles_used
             self.troops -= r.attacker_loss
             if defender is not None:

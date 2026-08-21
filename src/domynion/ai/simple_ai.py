@@ -30,6 +30,13 @@ MAX_CONCURRENT = 2         # 동시에 굴리는 부대 수
 BUILD_ORDER = (UnitType.CITY, UnitType.PORT, UnitType.DEFENSE_POST, UnitType.FACTORY)
 BUILD_EVERY_SEC = 5.0
 
+# 외교. 원본 봇(`NationExecution`)의 판단은 P6 에서 옮긴다 — 지금은 동맹 규칙이
+# 판에서 실제로 작동하는지 볼 만큼만 한다.
+ALLY_CHANCE = 0.15         # 반응마다 이 확률로 이웃에게 동맹을 건다
+ACCEPT_CHANCE = 0.6        # 들어온 요청을 받을 확률
+BETRAY_TILE_RATIO = 0.5    # 동맹이 나보다 이만큼 작아지면 배신을 고려한다
+BETRAY_CHANCE = 0.05
+
 class SimpleAI:
     """플레이어 한 명을 조종한다. 상태를 갖는 이유는 반응 주기 하나 때문이다."""
 
@@ -56,9 +63,36 @@ class SimpleAI:
         if p.troops / p.max_troops(st.tiles(self.pid)) < LAUNCH_FILL:
             return
 
-        target = self.choose_target(st)
+        # `border_targets` 는 내 영토를 전부 훑는다(13만 칸 지도에서 비싸다).
+        # 외교와 목표 선택이 각자 부르면 판당 실행 시간이 17→29초가 된다 — 한 번만 부른다.
+        reachable = st.border_targets(self.pid)
+        self._diplomacy(st, reachable)
+
+        target = self.choose_target(st, reachable)
         if target is not False:
             st.launch_attack(self.pid, target)
+
+    def _diplomacy(self, st: GameState, reachable: "set[int | None]") -> None:
+        """들어온 요청을 받고, 이웃에게 걸고, 약해진 동맹은 버린다."""
+        d = st.diplomacy
+        for requestor, recipients in list(d.pending.items()):
+            if self.pid in recipients and requestor in st.players:
+                if self.rng.random() < ACCEPT_CHANCE:
+                    st.accept_alliance(self.pid, requestor)
+                else:
+                    d.reject(self.pid, requestor)
+
+        neighbours = [o for o in reachable if o is not None]
+        for other in neighbours:
+            if d.is_friendly(self.pid, other):
+                # 동맹이 크게 약해졌으면 등을 돌린다. 배신 낙인(30초)이 값이므로
+                # 자주 하지는 않는다.
+                mine, theirs = st.tiles(self.pid), st.tiles(other)
+                if (theirs < mine * BETRAY_TILE_RATIO
+                        and self.rng.random() < BETRAY_CHANCE):
+                    st.break_alliance(self.pid, other)
+            elif self.rng.random() < ALLY_CHANCE:
+                st.request_alliance(self.pid, other)
 
     def _maybe_build(self, st: GameState, dt: float) -> None:
         """골드가 쌓이는 대로 짓는다. 건설은 공격 판단보다 드물게 본다 —
@@ -74,13 +108,17 @@ class SimpleAI:
                 if st.build(self.pid, utype, near) is not None:
                     return
 
-    def choose_target(self, st: GameState) -> "int | None | bool":
+    def choose_target(self, st: GameState,
+                      reachable: "set[int | None] | None" = None) -> "int | None | bool":
         """칠 상대. 닿는 곳이 없으면 False 를 돌려준다 (None 은 '중립'이라 못 쓴다)."""
-        reachable = st.border_targets(self.pid)
+        if reachable is None:
+            reachable = st.border_targets(self.pid)
         best, best_score = False, -1.0
         for owner in reachable:
             if owner == self.pid:
                 continue
+            if owner is not None and st.diplomacy.is_friendly(self.pid, owner):
+                continue                # 친한 상대는 후보가 아니다
             if owner is None:
                 score = NEUTRAL_BIAS
             else:

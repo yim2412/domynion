@@ -150,7 +150,13 @@ BUDGET_BORDER_NOISE_MAX = 6                  # borderSize() + rand(0, 5)
 ATTACK_MIN_TROOPS = 1.0                      # 이보다 적으면 부대가 소멸(퇴각 없음)
 CONQUER_PLAYER_TILES = 100                   # 수비자가 이 미만이면 통째로 흡수
 
-# 배신자 (P3 에서 쓴다)
+# 외교 (P3) — Config.ts :: allianceDuration() / traitor*()
+#
+# 동맹 5분. 호스트가 1~15분으로 바꿀 수 있고 0 이면 동맹이 아예 없다.
+ALLIANCE_DURATION_TICKS = 300 * 10
+TEMPORARY_EMBARGO_TICKS = 300 * 10
+
+# 동맹을 깬 쪽에 30초 동안 붙는 낙인. 방어가 절반이 되고 상대 확장이 빨라진다.
 TRAITOR_DEFENSE_DEBUFF = 0.5
 TRAITOR_SPEED_DEBUFF = 0.8
 TRAITOR_DURATION_TICKS = 30 * 10
