@@ -23,6 +23,7 @@ from ..core.gamemap import DEFAULT_SIZE, SIZES
 # 지도가 빽빽한 것이 이 게임의 기본 상태다 — 몇 명만 두면 전혀 다른 게임이 된다.
 DEFAULT_BOTS = 400
 DEFAULT_NATIONS = 72        # world manifest 의 나라 수
+DEFAULT_DIFFICULTY = "easy"
 
 
 def build_state(seed: int, players: int, map_name: str, human: int,
@@ -51,7 +52,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="부족(봇) 수. 원본 싱글 기본이 400 이다")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--human", type=int, default=0, help="사람이 잡을 pid")
-    ap.add_argument("--difficulty", choices=list(C.DIFFICULTIES), default="medium")
+    # 원본 싱글 기본이 easy 다(`DEFAULT_OPTIONS.selectedDifficulty`).
+    # 난이도는 AI 의 공격 주기뿐 아니라 **사람을 얼마나 봐주는지**도 정한다.
+    ap.add_argument("--difficulty", choices=list(C.DIFFICULTIES),
+                    default=DEFAULT_DIFFICULTY)
     ap.add_argument("--clock", choices=["slow", "normal", "fast", "veryfast"])
     ap.add_argument("--shot", help="PNG 한 장을 찍고 끝낸다")
     ap.add_argument("--offscreen", action="store_true",

@@ -173,7 +173,30 @@ class NationBot:
             if self._send_attack(st, foe.pid):
                 return
 
+    def _should_attack(self, st: GameState, target: int | None) -> bool:
+        """`shouldAttack` — **낮은 난이도는 사람을 봐준다.**
+
+        중립·나라·봇은 언제나 친다. 사람만 난이도별로 걸러진다:
+        easy 는 네 번 중 세 번을 그냥 넘기고, medium 은 네 번 중 한 번을 넘긴다.
+        hard 이상은 봐주지 않는다.
+
+        **배신자는 난이도와 무관하게 친다** — 낙인이 붙은 동안은 사람도 예외가
+        아니다. 이게 없으면 easy 에서 배신에 아무 대가가 없다.
+        """
+        if target is None:
+            return True
+        foe = st.players.get(target)
+        if foe is None or foe.kind != "human" or st.is_traitor(target):
+            return True
+        if self.difficulty == "easy":
+            return self.rng.randrange(4) == 0
+        if self.difficulty == "medium":
+            return self.rng.randrange(4) != 0
+        return True
+
     def _send_attack(self, st: GameState, target: int | None) -> bool:
+        if not self._should_attack(st, target):
+            return False
         troops = self._attack_troops(st, target)
         if troops is None:
             return False
@@ -360,6 +383,11 @@ class NationBot:
                 if not foes:
                     return
                 biggest = max(foes, key=lambda q: st.tiles(q.pid))
+                # 핵에도 같은 봐주기가 걸린다(`NationNukeBehavior` 가
+                # `shouldAttack` 을 먼저 본다). 없으면 easy 에서 사람을 안 치면서
+                # 핵만 떨구는 이상한 AI 가 된다.
+                if not self._should_attack(st, biggest.pid):
+                    return
                 tiles = st.gmap.owned_refs(biggest.pid)
                 if len(tiles):
                     st.launch_nuke(self.pid, utype,
