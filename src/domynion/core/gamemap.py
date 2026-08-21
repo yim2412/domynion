@@ -35,6 +35,8 @@ _RESOURCES = Path(__file__).resolve().parents[3] / "resources" / "maps"
 # **크기 선택은 밸런스에 직접 영향을 준다.** 원본 공식이 전체 크기(육지 65만~234만)
 # 기준이라, 작은 지도에서는 상수항이 지배하고 핵 반경의 비중이 커진다(계획서 4.5절).
 SIZES = ("map16x", "map4x", "map")
+# 기본은 `map4x`. `map`(원본 크기)도 되지만 **시뮬레이션이 무겁다** — 렌더링이 아니라
+# 확장 처리 쪽이다. 실측: map4x 3.4ms/tick vs map 14.2ms/tick(10Hz 예산 100ms).
 DEFAULT_SIZE = "map4x"
 
 

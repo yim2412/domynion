@@ -42,7 +42,7 @@ pip install -e ".[dev,ui]"
 # 플레이 (기본 해상도 map4x = 1000×500, 육지 15.8만)
 python -m domynion.ui.app --map world --players 4 --difficulty hard
 
-# 해상도: map16x(1/16, 가볍다) · map4x(기본) · map(원본 크기, 무겁다)
+# 해상도: map16x(1/16) · map4x(기본, 1000×500) · map(원본 2000×1000, 시뮬이 무겁다)
 python -m domynion.ui.app --map world --size map
 
 # 창 없이 한 장 찍는다 (600초 시점)
@@ -59,6 +59,9 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q   # 변이 테스트는 캐�
 
 조작: **좌클릭** = 그 칸의 *소유자 전체*를 공격 · 우클릭 드래그/WASD = 이동 ·
 휠 또는 `+`/`-` = 확대 · `F` = 화면 맞추기 · Space = 일시정지 · `H` = 도움말.
+
+지도는 **가로로 순환한다** — 오른쪽으로 계속 가면 왼쪽이 나온다(화면만; 게임 규칙은
+원본대로 x 경계를 안 넘는다). 키 이동은 60Hz 로 가속·감속한다.
 
 커서를 얹으면 그 나라의 병력과 **상대/내가 보낼 병력 비**가 뜬다 — 원본 공식이
 `within(수비병력/공격병력, 0.6, 2)` 라 그 값이 판단의 전부다.

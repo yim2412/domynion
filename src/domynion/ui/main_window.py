@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self.help = QLabel(
             "<b>조작</b><br>"
             "좌클릭 — 그 칸의 <b>소유자 전체</b>를 공격<br>"
-            "우클릭 드래그 · WASD/화살표 — 이동<br>"
+            "우클릭 드래그 · WASD/화살표 — 이동 (가로로 계속 순환한다)<br>"
             "휠 · +/− — 확대 &nbsp;·&nbsp; F — 화면에 맞추기<br>"
             "Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
             self.map)

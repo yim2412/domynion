@@ -197,3 +197,125 @@ def test_palette_has_a_colour_for_every_terrain():
     for t in Terrain:
         assert t in P.TERRAIN_COLORS
     assert len(P.PLAYER_COLORS) >= 8
+
+
+# --- 순환 · LOD · 카메라 ------------------------------------------------------
+
+def test_map_wraps_horizontally_on_screen_only():
+    """오른쪽으로 계속 가면 왼쪽이 나온다.
+
+    ⚠ **화면만 순환한다.** 게임 규칙은 x 경계를 안 넘는다(원본 `neighbors4`).
+    여기를 규칙까지 순환시키면 이식이 깨진다 — 아래 두 번째 단언이 그것을 지킨다."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.ui.map_widget import MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    st = state()
+    w = MapWidget(st)
+    w.resize(600, 300)
+    w.ensure_zoom()
+    gm = st.gmap
+
+    # 지도 폭만큼 오른쪽으로 간 자리는 같은 타일을 가리킨다
+    left = w.tile_at(QPointF(w.offset.x() + 0.5 * w.zoom, w.offset.y() + 0.5 * w.zoom))
+    wrapped = w.tile_at(QPointF(w.offset.x() + w.world_w + 0.5 * w.zoom,
+                                w.offset.y() + 0.5 * w.zoom))
+    assert left == wrapped == gm.ref(0, 0)
+
+    # 규칙은 순환하지 않는다
+    right_edge = gm.ref(gm.width - 1, 0)
+    assert gm.ref(0, 0) not in gm.neighbors(right_edge), "게임 규칙이 순환해 버렸다"
+    app.processEvents()
+
+
+def test_wrapped_copies_cover_the_widget():
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.ui.map_widget import MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    w = MapWidget(state())
+    w.resize(800, 300)
+    w.ensure_zoom()
+    w.zoom = w.width() / w.state.gmap.width / 3      # 화면에 세 바퀴가 들어가게
+    xs = w._tiles_x()
+    assert len(xs) >= 3, f"화면을 못 덮는다: {xs}"
+    assert xs[0] <= 0 < xs[0] + w.world_w, "첫 사본이 화면 왼쪽을 못 덮는다"
+    assert xs[-1] < w.width() <= xs[-1] + w.world_w, "마지막 사본이 오른쪽을 못 덮는다"
+    app.processEvents()
+
+
+def test_lod_gets_coarser_as_you_zoom_out():
+    """줌 아웃하면 성기게 뽑는다 — 2000×1000 에서 17.0ms → 4.3ms(실측).
+
+    막지 않았으면: 원본 크기 지도가 17fps 로 떨어진다."""
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.ui.map_widget import MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    w = MapWidget(state())
+    w.zoom = 2.0
+    assert w._wanted_stride() == 1, "확대했는데 성기게 뽑는다"
+    w.zoom = 0.5
+    assert w._wanted_stride() == 2
+    w.zoom = 0.05
+    assert w._wanted_stride() <= 4, "무한정 성겨지면 안 된다"
+    app.processEvents()
+
+
+def test_owner_layer_shrinks_with_stride():
+    st = state()
+    fb = FrameBuilder(st.gmap)
+    full = fb.owner_rgba(1).shape
+    half = fb.owner_rgba(2).shape
+    assert half[0] * 2 >= full[0] and half[1] * 2 >= full[1]
+    assert half[0] < full[0] and half[1] < full[1]
+
+
+def test_camera_accelerates_and_decelerates():
+    """키를 누른 순간 최고 속도로 튀지 않고, 뗀 순간 멈추지도 않는다."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.ui.map_widget import PAN_SPEED, MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    w = MapWidget(state())
+    w.resize(600, 300)
+    w.ensure_zoom()
+
+    w._keys.add(Qt.Key.Key_D.value)
+    w._step_camera()
+    first = abs(w._vel.x())
+    assert 0 < first < PAN_SPEED, "한 프레임 만에 최고 속도가 됐다"
+    for _ in range(60):
+        w._step_camera()
+    assert abs(w._vel.x()) > first, "가속이 안 된다"
+
+    w._keys.clear()
+    w._step_camera()
+    assert abs(w._vel.x()) > 0, "키를 떼자마자 멈췄다"
+    for _ in range(120):
+        w._step_camera()
+    assert abs(w._vel.x()) < 1.0, "영원히 미끄러진다"
+    app.processEvents()
+
+
+def test_vertical_does_not_wrap():
+    """세로로 넘어가면 빈 화면만 남는다 — 가로만 순환한다."""
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QPointF
+
+    from domynion.ui.map_widget import MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    w = MapWidget(state())
+    w.resize(600, 300)
+    w.ensure_zoom()
+    w.offset = QPointF(w.offset.x(), 99_999)
+    w._clamp_vertical()
+    assert w.offset.y() <= max(0.0, 300 - w.state.gmap.height * w.zoom) + 1e-6
+    app.processEvents()
