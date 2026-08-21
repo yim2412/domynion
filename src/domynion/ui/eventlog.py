@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QPushButton,
+                             QVBoxLayout, QWidget)
 
+from ..core import constants as C
 from ..core.engine import GameState
 from ..core.events import Category, Event, EventKind
 from . import palette as P
@@ -136,11 +138,26 @@ class AttacksPanel(QWidget):
         self.title = QLabel("전투")
         self.title.setStyleSheet("font-weight: bold; opacity: .8;")
         box.addWidget(self.title)
-        self._rows = []
+        # 각 줄 = 설명 + 퇴각 버튼. **버튼은 내 공격에만 뜬다** — 남이 나를
+        # 치는 줄에 ❌ 가 붙으면 그걸 누르면 막히는 줄 알게 된다.
+        self._rows: list[tuple[QLabel, QPushButton]] = []
         for _ in range(6):
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(6)
             lbl = QLabel("")
-            box.addWidget(lbl)
-            self._rows.append(lbl)
+            btn = QPushButton("✕")
+            btn.setFixedSize(18, 16)
+            btn.setStyleSheet(
+                "QPushButton { background: rgba(255,255,255,20); border: none;"
+                " border-radius: 3px; color: #e08a7a; font-size: 10px; }"
+                "QPushButton:hover { background: rgba(224,138,122,90); }")
+            btn.hide()
+            line.addWidget(lbl)
+            line.addStretch(1)
+            line.addWidget(btn)
+            box.addLayout(line)
+            self._rows.append((lbl, btn))
 
     def refresh(self) -> None:
         st = self.state
@@ -148,23 +165,42 @@ class AttacksPanel(QWidget):
         for a in st.attacks:
             if a.attacker == self.me:
                 foe = st.players.get(a.target) if a.target is not None else None
-                lines.append(("→", foe.name if foe else "중립", a.troops, "#8fd6f0"))
+                mark = " (물러나는 중)" if a.retreating else ""
+                lines.append(("→", (foe.name if foe else "중립") + mark,
+                              a.troops, "#8fd6f0", a))
             elif a.target == self.me:
                 foe = st.players.get(a.attacker)
-                lines.append(("←", foe.name if foe else "?", a.troops, "#e08a7a"))
+                lines.append(("←", foe.name if foe else "?",
+                              a.troops, "#e08a7a", None))
         for b in st.boats:
             if b.owner == self.me:
-                lines.append(("⛵→", "상륙 중", b.troops, "#8fd6f0"))
+                lines.append(("⛵→", "상륙 중", b.troops, "#8fd6f0", None))
             elif b.target == self.me:
                 foe = st.players.get(b.owner)
-                lines.append(("⛵←", foe.name if foe else "?", b.troops, "#e08a7a"))
+                lines.append(("⛵←", foe.name if foe else "?",
+                              b.troops, "#e08a7a", None))
 
         lines = lines[:len(self._rows)]
-        for lbl, (arrow, who, troops, colour) in zip(self._rows, lines):
+        for (lbl, btn), (arrow, who, troops, colour, atk) in zip(self._rows,
+                                                                 lines):
             lbl.setText(f'<span style="color:{colour}">{arrow}</span> {who} '
                         f'<span style="opacity:.75">{troops:,.0f}</span>')
-        for lbl in self._rows[len(lines):]:
+            can = atk is not None and not atk.retreating
+            btn.setVisible(can)
+            if can:
+                lost = (atk.troops * C.RETREAT_MALUS
+                        if atk.target is not None else 0.0)
+                btn.setToolTip(f"퇴각 — {lost:,.0f} 손실" if lost
+                               else "퇴각 — 손실 없음")
+                try:
+                    btn.clicked.disconnect()
+                except TypeError:
+                    pass          # 연결이 없으면 그냥 넘어간다
+                btn.clicked.connect(
+                    lambda _=False, x=atk: st.order_retreat(self.me, x))
+        for lbl, btn in self._rows[len(lines):]:
             lbl.setText("")
+            btn.hide()
         self.setVisible(bool(lines))
 
 
