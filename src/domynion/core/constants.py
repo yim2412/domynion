@@ -245,6 +245,15 @@ MIRV_WARHEAD_COUNT = 350
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 TRADE_SPAWN_SIGMOID_MID = 400
 
+# 철도 (P4 마무리) — Config.ts :: trainStation*/trainGold/trainSpawnRate
+#
+# 역은 따로 짓는 게 아니라 **건물에 붙는다.** 사거리 15~110 안의 역끼리 이어진다 —
+# 너무 가까우면 골드 찍어내기가 되고, 너무 멀면 노선이 지도를 가로지른다.
+TRAIN_STATION_MIN_RANGE = 15
+TRAIN_STATION_MAX_RANGE = 110
+RAILROAD_MAX_SIZE = TRAIN_STATION_MAX_RANGE * 1.4142
+TRAIN_SPEED = 4.0                    # 우리 값 — 원본은 경로 그래프를 따라간다
+
 # 기부 — Config.ts :: donateCooldown()
 DONATE_COOLDOWN_TICKS = 10 * 10
 

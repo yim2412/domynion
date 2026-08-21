@@ -48,6 +48,31 @@ MIN_ATTACK_RATIO = 0.2
 BOAT_CHANCE_NO_ENEMY = 5      # `random.chance(5)` = 1/5
 BOAT_CHANCE_WITH_ENEMY = 10   # `random.chance(10)` = 1/10
 
+# 건설 가중치. **"가장 비싼 것"으로 고르면 안 된다** — 방어초소는 25만에서 상한이라
+# 무한 흡수구가 되어, 한 판에 41개를 짓고 도시(50만~100만)·사일로(100만)에 영영
+# 못 간다. 실측으로 그렇게 됐고 철도·핵이 판에서 아예 안 나왔다.
+# 원본 `NationStructureBehavior` 는 종류별 목적이 따로 있는데, 그 판단을 다 옮기기
+# 전까지는 가중 무작위로 종류가 골고루 나오게 한다.
+BUILD_WEIGHT = {
+    UnitType.CITY: 5.0,          # 병력 상한을 직접 올린다
+    UnitType.FACTORY: 3.0,       # 기차 — 육지 수입
+    UnitType.MISSILE_SILO: 3.0,  # 핵을 쏘려면 있어야 한다
+    UnitType.PORT: 2.0,          # 무역선 — 바다 수입
+    UnitType.SAM_LAUNCHER: 1.5,
+    UnitType.DEFENSE_POST: 0.6,
+}
+
+# ⚠ 아래는 **원본 값이 아니라 우리가 정한 것**이다.
+# 비용이 상한에 걸리는 종류(초소 25만·SAM 300만)는 그 뒤로 값이 안 오르므로,
+# 개수를 안 막으면 골드를 무한히 빨아들여 도시(100만)·사일로(100만)에 못 간다.
+# 실측: 초소 72개를 짓고 사일로가 0개였다. 영토 1,500칸당 하나로 묶는다.
+# 원본 `NationStructureBehavior` 를 옮기면 이 표는 사라진다.
+STRUCTURE_CAP_PER_TILES = {
+    UnitType.DEFENSE_POST: 1_500,
+    UnitType.SAM_LAUNCHER: 4_000,
+    UnitType.PORT: 3_000,
+}
+
 
 @dataclass
 class NationBot:
@@ -243,12 +268,16 @@ class NationBot:
         refs = st.gmap.owned_refs(self.pid)
         if not len(refs):
             return
-        order = (UnitType.CITY, UnitType.PORT, UnitType.MISSILE_SILO,
-                 UnitType.DEFENSE_POST, UnitType.SAM_LAUNCHER, UnitType.FACTORY)
-        affordable = [(p.units.cost(u), u) for u in order
-                      if p.gold >= p.units.cost(u)]
+        tiles = st.tiles(self.pid)
+        affordable = [
+            u for u in BUILD_WEIGHT
+            if p.gold >= p.units.cost(u)
+            and (u not in STRUCTURE_CAP_PER_TILES
+                 or p.units.owned(u) < max(1, tiles // STRUCTURE_CAP_PER_TILES[u]))
+        ]
         if affordable:
-            for _, utype in sorted(affordable, key=lambda pair: pair[0], reverse=True):
+            weights = [BUILD_WEIGHT[u] for u in affordable]
+            for utype in self.rng.choices(affordable, weights=weights, k=3):
                 near = int(self.rng.choice(refs.tolist()))
                 if st.build(self.pid, utype, near) is not None:
                     return

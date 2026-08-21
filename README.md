@@ -16,13 +16,13 @@
 ## 상태
 
 **P1~P6 이식 완료 — 원본의 규칙 계통이 전부 돈다.** 실제 openfront 지도 위에서
-영토 확장 · 골드 · 건물 · 동맹/배신 · 상륙 · 무역 · 전함 · 핵/낙진 · 둠스데이 클락이
-함께 작동한다. 테스트 133개.
+영토 확장 · 골드 · 건물 · 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 ·
+둠스데이 클락 · 원본 봇(난이도 4단계)이 함께 작동한다. 테스트 167개.
 
 | | |
 |---|---|
-| ✅ | P1 지도·전투 · P2 골드/건물 · P3 외교 · P4 해상 · P5 핵 · P6 클락 |
-| ⬜ | 철도/기차 · 원본 스폰 규칙 · **P7 증강형 테크트리** · UI |
+| ✅ | 지도·전투 · 골드/건물 · 외교 · 해상 · 철도 · 핵 · 클락 · 스폰 · 원본 봇 |
+| ⬜ | **P7 증강형 테크트리** · UI |
 
 진행 상황과 원본 공식은 [`docs/openfront-port.md`](docs/openfront-port.md).
 
@@ -35,9 +35,9 @@ pip install -e ".[dev,ui]"
 ## 실행
 
 ```bash
-# 헤드리스로 판을 돌려 밸런스를 잰다 (판당 약 16초 — 지도가 커서 느리다)
+# 헤드리스로 판을 돌려 밸런스를 잰다
 python -m domynion.cli.play --games 40 --map world --jobs 8
-python -m domynion.cli.play --games 240 --map world --jobs 8
+python -m domynion.cli.play --games 20 --map world --clock normal --difficulty hard
 
 # 판을 그림으로 찍는다 (창 없이)
 python -m domynion.cli.shot --seed 1 --map world --at 120 600 --tile 3 --out shots/
@@ -48,6 +48,10 @@ python -m pytest tests -q
 # 변이 테스트는 바이트코드 캐시를 꺼야 한다 (계획서 5.5절 참고)
 PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q
 ```
+
+`--clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도 지배
+승리도 없이 마지막 생존자가 남을 때까지 간다. `--ai nation|simple`,
+`--difficulty easy|medium|hard|impossible`.
 
 지도는 `world` `asia` `europe` `africa` 넷을 담아 뒀다 — 출처와 라이선스는
 [`resources/maps/ATTRIBUTION.md`](resources/maps/ATTRIBUTION.md).

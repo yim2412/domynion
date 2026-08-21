@@ -27,6 +27,8 @@ from .gamemap import GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     trade_gold, trade_spawn_rate, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
+from .rail import RailNetwork, Train, train_gold, train_spawn_rate
+from .spawn import place_players
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
@@ -61,6 +63,8 @@ class GameState:
     nukes: list[Nuke] = field(default_factory=list)
     fallout: Fallout | None = None
     clock: DoomsdayClock = field(default_factory=DoomsdayClock)
+    rail: RailNetwork = field(default_factory=RailNetwork)
+    trains: list[Train] = field(default_factory=list)
 
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
@@ -72,14 +76,16 @@ class GameState:
             map_name: str = "world", human: int = 0) -> "GameState":
         """`human` 은 사람이 잡는 pid. 헤드리스는 -1 을 줘서 전원 봇으로 만든다."""
         gmap = GameMap.load(map_name)
-        starts = gmap.place_starts(player_count, rng)
+        # 원본 `SpawnExecution` — 시작 영토는 1칸이 아니라 **반경 4의 원**이다.
+        # 1칸으로 시작하면 상한 공식(타일^0.6)의 바닥에서 출발해 초반이 지나치게
+        # 느리고, 첫 공격 한 번에 탈락할 수 있다.
+        spawns = place_players(gmap, player_count, rng)
         players = {}
-        for pid, tile in enumerate(starts):
+        for pid, (centre, tiles) in enumerate(spawns):
             players[pid] = PlayerState(pid=pid, name=f"P{pid}",
-                                       is_bot=(pid != human), start=tile)
-            gmap.owner[tile] = pid
+                                       is_bot=(pid != human), start=centre)
         st = cls(gmap=gmap, players=players, rng=rng)
-        st._counts = {pid: 1 for pid in players}
+        st._counts = {pid: len(tiles) for pid, (_, tiles) in enumerate(spawns)}
         st._posts = DefensePostIndex(gmap.size)
         st.fallout = Fallout(gmap.size)
         return st
@@ -476,6 +482,36 @@ class GameState:
                       if self._dist_sq(n.dst, b.tile) >= outer2]
         self._rebuild_posts()
 
+    # --- 철도 -------------------------------------------------------------
+
+    def _advance_rail(self) -> None:
+        """무역선이 바다로 벌듯 기차는 육지로 번다.
+
+        **남의 역에 닿는 것이 자기 역보다 2.5배 벌린다**(동맹 35,000 vs 자기 10,000).
+        그래서 철도를 깔면 이웃과 사이가 좋을 이유가 생긴다."""
+        self.rail.rebuild(self.alive)
+        for p in self.alive:
+            factories = p.units.owned(UnitType.FACTORY)
+            if not factories:
+                continue
+            if self.rng.randrange(max(1, train_spawn_rate(factories))) != 0:
+                continue
+            t = self.rail.dispatch(self.gmap, self.diplomacy, p.pid, self.rng)
+            if t is not None:
+                self.trains.append(t)
+
+        still: list[Train] = []
+        for t in self.trains:
+            owner = self.players.get(t.owner)
+            if owner is None or not owner.alive:
+                continue
+            t.advance()
+            if not t.arrived(self.gmap):
+                still.append(t)
+                continue
+            owner.gold += train_gold(t.rel, t.cities_visited)
+        self.trains = still
+
     # --- 기부 -------------------------------------------------------------
 
     def donate_gold(self, pid: int, to: int, gold: int) -> bool:
@@ -579,6 +615,7 @@ class GameState:
         self._advance_warships()
         self._advance_boats()
         self._advance_trade()
+        self._advance_rail()
         self._advance_attacks()
         self._tick_clock()
         self._check_end()
