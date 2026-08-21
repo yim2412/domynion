@@ -19,7 +19,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from ..ai import simple_ai
+from ..ai import nation, simple_ai
 from ..core import constants as C
 from ..core.engine import GameState
 
@@ -36,7 +36,8 @@ class MatchResult:
 
 
 def run_match(seed: int, players: int = 4, map_name: str = "world",
-              clock: str | None = None, max_seconds: float | None = None) -> MatchResult:
+              clock: str | None = None, max_seconds: float | None = None,
+              ai: str = "nation", difficulty: str = "medium") -> MatchResult:
     """`clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도
     지배 승리도 없이 마지막 생존자가 남을 때까지 간다."""
     t0 = time.perf_counter()
@@ -45,13 +46,20 @@ def run_match(seed: int, players: int = 4, map_name: str = "world",
     if clock:
         st.clock.cfg.enabled = True
         st.clock.cfg.speed = clock
-    bots = simple_ai.attach(st, rng)
+    if ai == "nation":
+        for p in st.players.values():
+            p.kind = "nation"
+            p.is_bot = False
+        bots = nation.attach(st, rng, difficulty)
+        step = lambda: [b.tick(st) for b in bots]
+    else:
+        bots = simple_ai.attach(st, rng)
+        step = lambda: [b.update(st, C.TICK_DT) for b in bots]
 
     cap = max_seconds if max_seconds is not None else float("inf")
     while not st.over and st.elapsed < cap:
         st.tick()
-        for b in bots:
-            b.update(st, C.TICK_DT)
+        step()
 
     return MatchResult(
         seed=seed,
@@ -98,11 +106,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="둠스데이 클락을 켠다 (원본 종료 규칙)")
     ap.add_argument("--max-seconds", type=float,
                     help="측정용 상한. 클락을 켜면 판이 길어질 수 있다")
+    ap.add_argument("--ai", choices=["nation", "simple"], default="nation",
+                    help="nation = 원본 봇 이식, simple = v0.1 자체 AI")
+    ap.add_argument("--difficulty", choices=list(C.DIFFICULTIES), default="medium")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
-    jobs = [(args.seed + i, args.players, args.map_name, args.clock, args.max_seconds)
-            for i in range(args.games)]
+    jobs = [(args.seed + i, args.players, args.map_name, args.clock, args.max_seconds,
+             args.ai, args.difficulty) for i in range(args.games)]
     t0 = time.perf_counter()
     results: list[MatchResult] = []
 
