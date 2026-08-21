@@ -321,3 +321,36 @@ def test_vertical_does_not_wrap():
     w._clamp_vertical()
     assert w.offset.y() <= max(0.0, 300 - w.state.gmap.height * w.zoom) + 1e-6
     app.processEvents()
+
+
+# --- 유닛 표시 ---------------------------------------------------------------
+
+def test_every_structure_has_a_glyph():
+    """건물은 **모양으로** 종류를 구분한다 — 색은 이미 소유자를 뜻한다.
+
+    글리프가 빠진 종류는 지도에서 통째로 안 보인다. 그게 "시뮬레이션 같다"의 원인이었다."""
+    from domynion.core.units import STRUCTURES
+    for ut in STRUCTURES:
+        assert ut.value in P.UNIT_GLYPH, f"{ut.value} 이 지도에 안 그려진다"
+
+
+def test_units_are_drawn_without_crashing():
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.core.units import Unit, UnitType
+    from domynion.ui.map_widget import MapWidget
+
+    app = QApplication.instance() or QApplication([])
+    st = state()
+    p0 = st.players[0]
+    for i, ut in enumerate((UnitType.CITY, UnitType.PORT, UnitType.FACTORY,
+                            UnitType.DEFENSE_POST, UnitType.MISSILE_SILO,
+                            UnitType.SAM_LAUNCHER)):
+        p0.units.units.append(Unit(ut, 0, tile=st.gmap.ref(5 + i * 3, 5), level=i + 1))
+    w = MapWidget(st)
+    w.resize(600, 300)
+    w.zoom = 3.0                      # UNIT_MIN_ZOOM 위여야 건물이 그려진다
+    w.refresh()
+    img = w.grab()
+    assert img.width() > 0
+    app.processEvents()

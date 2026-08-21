@@ -61,6 +61,7 @@ class GameState:
     # ⚠ P5 에서 핵이 육지를 바다로 만들면 **여기를 비워야 한다.**
     _path_cache: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
+    mirvs_launched: int = 0        # 판 전체. MIRV 값이 이 수에 따라 오른다
     fallout: Fallout | None = None
     clock: DoomsdayClock = field(default_factory=DoomsdayClock)
     rail: RailNetwork = field(default_factory=RailNetwork)
@@ -366,11 +367,13 @@ class GameState:
                  if not u.under_construction]
         if not silos:
             return None
-        cost = p.units.cost(utype)
+        cost = self.nuke_cost(pid, utype)
         if p.gold < cost:
             return None
         p.gold -= cost
         p.units.record_constructed(utype)
+        if utype is UnitType.MIRV:
+            self.mirvs_launched += 1
         src = min(silos, key=lambda u: self._dist_sq(u.tile, dst)).tile
         n = Nuke(owner=pid, utype=utype, src=src, dst=dst)
         self.nukes.append(n)
@@ -390,6 +393,13 @@ class GameState:
             y = min(self.gmap.height - 1, max(0, cy + self.rng.randint(-spread, spread)))
             self._detonate(Nuke(owner=n.owner, utype=UnitType.MIRV_WARHEAD,
                                 src=n.dst, dst=y * w + x))
+
+    def nuke_cost(self, pid: int, utype: UnitType) -> int:
+        """핵 값. MIRV 만 **판 전체 발사 수**를 쓴다(원본 `numMirvsLaunched`)."""
+        p = self.players[pid]
+        if utype is UnitType.MIRV:
+            return p.units.cost(UnitType.MIRV, extra=self.mirvs_launched)
+        return p.units.cost(utype)
 
     def _dist_sq(self, a: TileRef, b: TileRef) -> int:
         w = self.gmap.width

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
 from ..ai import nation
 from ..core import constants as C
 from ..core.engine import GameState
+from .actions import root_items
 from .hud import ControlBar, Scoreboard
 from .map_widget import MapWidget
 
@@ -64,7 +65,8 @@ class MainWindow(QMainWindow):
 
         self.help = QLabel(
             "<b>조작</b><br>"
-            "좌클릭 — 그 칸의 <b>소유자 전체</b>를 공격<br>"
+            "<b>좌클릭 — 메뉴</b> (공격 · 건설 · 상륙 · 외교)<br>"
+            "&nbsp;&nbsp;가운데 = 뒤로 · 바깥 = 닫기 · 회색 항목엔 이유가 붙는다<br>"
             "우클릭 드래그 · WASD/화살표 — 이동 (가로로 계속 순환한다)<br>"
             "휠 · +/− — 확대 &nbsp;·&nbsp; F — 화면에 맞추기<br>"
             "Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
@@ -176,25 +178,27 @@ class MainWindow(QMainWindow):
             p.attack_ratio = ratio
 
     def _map_release(self, e) -> None:
-        """좌클릭 = 그 칸의 **소유자 전체**를 공격. 원본과 같다.
+        """좌클릭 = **방사형 메뉴**를 연다. 원본과 같은 조작이다(MainRadialMenu).
 
-        바다를 클릭하면 상륙이 아니라 아무 일도 안 한다 — 상륙은 목표 육지를
-        직접 찍어야 한다(그쪽이 오조작이 적다)."""
+        처음엔 좌클릭을 즉시 공격으로 뒀는데, 그러면 사람이 할 수 있는 게 공격
+        하나뿐이라 골드를 쓸 수도 외교를 할 수도 없었다."""
         if e.button() == Qt.MouseButton.RightButton:
             MapWidget.mouseReleaseEvent(self.map, e)
             return
+
+        if self.map.menu is not None:
+            if self.map.menu.activate(e.position()):
+                self.map.close_menu()
+            else:
+                self.map.update()
+            return
+
         tile = self.map.tile_at(e.position())
         if tile is None or self.state.over:
             return
-        gm = self.state.gmap
-        if not gm.passable(tile):
+        if not self.state.gmap.passable(tile):
+            self._flash("바다다 — 육지를 찍어야 한다")
             return
-        owner = int(gm.owner[tile])
-        target = None if owner < 0 else owner
-        if target == self.human:
-            return
-        self.map.ping(tile)              # 눌렸다는 표시를 먼저 남긴다
-        if self.state.launch_attack(self.human, target) is None:
-            # 육지로 못 닿으면 배로 간다
-            if self.state.send_boat(self.human, tile) is None:
-                self._flash("닿지 않는다 — 국경이나 해안 쪽을 노려 보세요")
+        self.map.ping(tile)
+        self.map.open_menu(e.position(), tile,
+                           root_items(self.state, self.human, tile, self._flash))

@@ -33,6 +33,7 @@ from ..core.constants import Terrain
 from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
+from .radial import RadialMenu
 
 
 def ui_font(size: int, bold: bool = True) -> QFont:
@@ -82,6 +83,8 @@ class MapWidget(QWidget):
         self.hovered_tile: int | None = None
         self.hovered_owner: int | None = None
         self._pings: list[tuple[int, int, float]] = []
+        # 열려 있는 방사형 메뉴. 원본의 조작 방식이다(MainRadialMenu).
+        self.menu: RadialMenu | None = None
 
         # 카메라 — 게임 tick 과 분리한다. 10Hz 에 얹으면 이동이 뚝뚝 끊긴다.
         self._keys: set[int] = set()
@@ -212,8 +215,11 @@ class MapWidget(QWidget):
                         self._overlay_img)           # 알파 합성은 Qt 가 한다
             self._draw_borders(p, x)
             self._draw_hover(p, x)
+            self._draw_units(p, x)
             self._draw_labels(p, x)
         self._draw_pings(p)
+        if self.menu is not None:
+            self.menu.draw(p, lambda size, bold: ui_font(size, bold))
         p.end()
 
     def _draw_borders(self, p: QPainter, ox: float) -> None:
@@ -281,6 +287,78 @@ class MapWidget(QWidget):
                 p.drawText(int(px + dx), int(py + dy), text)
             p.setPen(QPen(QColor(*P.LABEL_COLOR)))
             p.drawText(int(px), int(py), text)
+
+    def _draw_units(self, p: QPainter, ox: float) -> None:
+        """건물·배·핵을 그린다.
+
+        **이게 없으면 화면이 색칠 지도일 뿐이다.** 도시를 지어도, 배가 떠도, 핵이
+        날아가도 아무것도 안 보이면 무슨 일이 일어나는지 알 수 없다.
+
+        건물은 **모양**으로 종류를 구분한다 — 색은 이미 소유자를 뜻한다."""
+        z, oy = self.zoom, self.offset.y()
+        gm = self.state.gmap
+        st = self.state
+
+        def on_screen(tile: int) -> tuple[float, float] | None:
+            cx = ox + (tile % gm.width + 0.5) * z
+            cy = oy + (tile // gm.width + 0.5) * z
+            if -30 < cx < self.width() + 30 and -30 < cy < self.height() + 30:
+                return cx, cy
+            return None
+
+        # --- 이동체는 줌과 무관하게 항상 보여야 한다 (작아도 위치를 알아야 한다)
+        for boat in st.boats:
+            pos = on_screen(boat.tile)
+            if pos:
+                self._dot(p, pos, max(2.5, z * 0.9), P.BOAT_COLOR)
+        for w in st.warships:
+            pos = on_screen(w.tile)
+            if pos:
+                self._dot(p, pos, max(3.0, z * 1.1), P.WARSHIP_COLOR)
+        for t in st.trade_ships:
+            pos = on_screen(t.tile)
+            if pos:
+                self._dot(p, pos, max(2.0, z * 0.7), P.TRADE_COLOR)
+        for n in st.nukes:
+            pos = on_screen(n.tile(gm))
+            if pos:
+                self._dot(p, pos, max(4.0, z * 1.4), P.NUKE_COLOR)
+
+        # --- 건물은 확대했을 때만. 축소 상태에서 점을 뿌리면 지저분하다
+        if z < P.UNIT_MIN_ZOOM:
+            return
+        size = int(max(9, min(30, z * 1.6)))
+        font = ui_font(size)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        for player in st.alive:
+            for u in player.units.units:
+                if not u.active:
+                    continue
+                glyph = P.UNIT_GLYPH.get(u.utype.value)
+                if glyph is None:
+                    continue
+                pos = on_screen(u.tile)
+                if not pos:
+                    continue
+                text = glyph if u.level <= 1 else f"{glyph}{u.level}"
+                w = fm.horizontalAdvance(text)
+                x, y = pos[0] - w / 2, pos[1] + fm.height() / 4
+                dim = 110 if u.under_construction else 255
+                p.setPen(QPen(QColor(*P.UNIT_OUTLINE)))
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    p.drawText(int(x + dx), int(y + dy), text)
+                c = QColor(*P.UNIT_FILL)
+                c.setAlpha(dim)
+                p.setPen(QPen(c))
+                p.drawText(int(x), int(y), text)
+
+    @staticmethod
+    def _dot(p: QPainter, pos: tuple[float, float], r: float, rgb) -> None:
+        p.setPen(QPen(QColor(*P.UNIT_OUTLINE), 1.0))
+        p.setBrush(QColor(*rgb))
+        p.drawEllipse(QPointF(*pos), r, r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
 
     def ping(self, tile: int) -> None:
         """클릭한 자리에 잠깐 표시를 남긴다. 없으면 눌렸는지조차 알 수 없다."""
@@ -364,6 +442,9 @@ class MapWidget(QWidget):
         if e.isAutoRepeat():
             return
         key = e.key()
+        if key == Qt.Key.Key_Escape and self.menu is not None:
+            self.close_menu()
+            return
         if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_at(QPointF(self.width() / 2, self.height() / 2), 1.25)
             return
@@ -386,14 +467,31 @@ class MapWidget(QWidget):
         super().focusOutEvent(e)
 
     def wheelEvent(self, e: QWheelEvent) -> None:
+        if self.menu is not None:
+            return                      # 메뉴가 떠 있는 동안 확대하면 좌표가 어긋난다
         self.zoom_at(e.position(), 1.15 ** (e.angleDelta().y() / 120))
+
+    def open_menu(self, pos: QPointF, tile: int, items) -> None:
+        self.menu = RadialMenu(centre=pos, items=items, tile=tile)
+        self.update()
+
+    def close_menu(self) -> None:
+        if self.menu is not None:
+            self.menu = None
+            self.update()
 
     def mousePressEvent(self, e) -> None:
         self.setFocus()
+        if self.menu is not None and e.button() == Qt.MouseButton.LeftButton:
+            return                      # 메뉴가 떠 있으면 놓을 때 처리한다
         if e.button() == Qt.MouseButton.RightButton:
             self._drag_from = e.position()
 
     def mouseMoveEvent(self, e) -> None:
+        if self.menu is not None and self._drag_from is None:
+            if self.menu.hover(e.position()):
+                self.update()
+            return
         if self._drag_from is not None:
             d = e.position() - self._drag_from
             self.offset += d

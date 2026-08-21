@@ -87,6 +87,10 @@ UNIT_INFO: dict[UnitType, UnitInfo] = {
     UnitType.SHELL: UnitInfo(lambda n: 0),
     UnitType.SAM_MISSILE: UnitInfo(lambda n: 0),
     UnitType.TRADE_SHIP: UnitInfo(lambda n: 0),
+    # MIRV 는 **판 전체의 발사 수**에 따라 값이 오른다(`25e6 + 발사수 × 15e6`).
+    # 그 수는 플레이어가 아니라 게임이 들고 있으므로, `extra` 로 받아 계산한다 —
+    # `GameState.launch_nuke` 가 전역 카운터를 넘긴다.
+    UnitType.MIRV: UnitInfo(lambda n: 25_000_000 + n * 15_000_000),
     UnitType.MIRV_WARHEAD: UnitInfo(lambda n: 0),
     UnitType.TRAIN: UnitInfo(lambda n: 0),
 }
@@ -141,8 +145,13 @@ class UnitStore:
                    if u.utype is UnitType.CITY and u.active and not u.under_construction)
 
     def cost(self, utype: UnitType, extra: int = 0) -> int:
-        """`costWrapper` — 비용을 공유하는 종류는 합쳐 센다."""
+        """`costWrapper` — 비용을 공유하는 종류는 합쳐 센다.
+
+        **MIRV 만 예외다.** 원본이 플레이어의 보유량이 아니라 `game.stats()
+        .numMirvsLaunched()`(판 전체 발사 수)를 쓰므로, 그 수를 `extra` 로 받는다."""
         info = UNIT_INFO[utype]
+        if utype is UnitType.MIRV:
+            return int(info.cost_fn(extra))
         n = extra
         for t in (utype, *info.shares_cost_with):
             n += min(self.owned(t), self.constructed(t))

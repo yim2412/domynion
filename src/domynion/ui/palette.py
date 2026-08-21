@@ -48,6 +48,26 @@ LABEL_SHADOW: RGB = (0, 0, 0)
 UI_FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕", "Noto Sans KR",
                     "Segoe UI", "Arial")
 
+# 유닛 표시. 건물은 **모양으로** 구분한다 — 색은 이미 소유자를 뜻하므로
+# 색으로 종류까지 나타내면 둘 다 안 읽힌다.
+UNIT_GLYPH = {
+    "City": "◉",
+    "Port": "⚓",
+    "Factory": "▦",
+    "Defense Post": "◈",
+    "Missile Silo": "▲",
+    "SAM Launcher": "◮",
+}
+UNIT_OUTLINE: RGB = (12, 12, 16)
+UNIT_FILL: RGB = (250, 250, 252)
+UNIT_MIN_ZOOM = 0.45      # 이보다 작으면 아이콘이 점이 돼 오히려 지저분하다
+
+BOAT_COLOR: RGB = (240, 240, 245)
+WARSHIP_COLOR: RGB = (255, 220, 140)
+TRADE_COLOR: RGB = (150, 230, 255)
+NUKE_COLOR: RGB = (255, 120, 90)
+FALLOUT_COLOR: RGB = (190, 255, 120)
+
 TEXTURE_AMP = 0.16      # 지형 질감의 세기. 크면 타일 경계가 도로 보인다
 TEXTURE_PERIOD = 24     # 타일 몇 개마다 한 주기인가. **1 이면 체크무늬가 된다**
                         # 지도가 커져서(500x250) v0.1 의 6 보다 크게 잡아야 한다
