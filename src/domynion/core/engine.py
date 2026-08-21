@@ -24,8 +24,8 @@ from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
 from .gamemap import GameMap, TileRef
-from .naval import (TradeShip, TransportShip, Warship, best_spawn, trade_gold,
-                    trade_spawn_rate, water_path)
+from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
+                    trade_gold, trade_spawn_rate, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
@@ -258,6 +258,91 @@ class GameState:
                                           path=path))
         return True
 
+    # --- 전함 -------------------------------------------------------------
+
+    def build_warship(self, pid: int, tile: TileRef) -> Warship | None:
+        """항구 근처 바다에 띄운다. 골드로 사는 유닛이라 비용 계산은 건물과 같다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive:
+            return None
+        if self.gmap.terrain[tile] != Terrain.OCEAN:
+            return None
+        cost = p.units.cost(UnitType.WARSHIP)
+        if p.gold < cost:
+            return None
+        p.gold -= cost
+        p.units.record_constructed(UnitType.WARSHIP)
+        w = Warship(owner=pid, tile=tile)
+        self.warships.append(w)
+        return w
+
+    def _advance_warships(self) -> None:
+        """표적 우선순위: **수송선 → 적 전함 → 무역선**(원본 `WarshipExecution`).
+
+        수송선이 첫째인 이유는 그게 상륙을 막는 유일한 수단이기 때문이다."""
+        r2 = C.WARSHIP_TARGETTING_RANGE ** 2
+        alive_ships: list[Warship] = []
+        for w in self.warships:
+            p = self.players.get(w.owner)
+            if p is None or not p.alive or w.sunk:
+                continue
+            self._heal_warship(w, p)
+            if w.cooldown > 0:
+                w.cooldown -= 1
+                alive_ships.append(w)
+                continue
+
+            target = self._pick_naval_target(w, r2)
+            if target is not None:
+                w.cooldown = C.WARSHIP_SHELL_ATTACK_RATE
+                self._fire_shell(w, target)
+            alive_ships.append(w)
+        self.warships = [w for w in alive_ships if not w.sunk]
+
+    def _pick_naval_target(self, w: Warship, r2: int):
+        def hostile(pid: int) -> bool:
+            return pid != w.owner and not self.diplomacy.is_friendly(w.owner, pid)
+
+        for b in self.boats:
+            if hostile(b.owner) and self._dist_sq(w.tile, b.tile) <= r2:
+                return b
+        for o in self.warships:
+            if o is not w and not o.sunk and hostile(o.owner)                     and self._dist_sq(w.tile, o.tile) <= r2:
+                return o
+        for t in self.trade_ships:
+            if hostile(t.owner) and self._dist_sq(w.tile, t.tile) <= r2:
+                return t
+        return None
+
+    def _fire_shell(self, w: Warship, target) -> None:
+        dmg = shell_damage(self.rng, w.veterancy)
+        if isinstance(target, Warship):
+            target.health -= dmg
+            if target.sunk:
+                w.veterancy += 1
+        elif isinstance(target, TransportShip):
+            # 수송선은 체력이 없다 — 원본은 포탄 한 방에 격침시킨다
+            if target in self.boats:
+                self.boats.remove(target)
+                w.veterancy += 1
+        elif isinstance(target, TradeShip):
+            if target in self.trade_ships:
+                self.trade_ships.remove(target)
+
+    def _heal_warship(self, w: Warship, p: PlayerState) -> None:
+        """항구 사거리 안이면 tick 당 1 회복. **클락에 표시된 쪽은 회복 못 한다** —
+        그래야 클락의 유출이 실제로 배를 가라앉힌다(원본 주석 그대로)."""
+        if w.owner in self.clock.marked_at:
+            return
+        if w.health >= C.WARSHIP_MAX_HEALTH:
+            return
+        r2 = C.WARSHIP_PASSIVE_HEALING_RANGE ** 2
+        for port in p.units.of(UnitType.PORT):
+            if self._dist_sq(w.tile, port.tile) <= r2:
+                w.health = min(C.WARSHIP_MAX_HEALTH,
+                               w.health + C.WARSHIP_PASSIVE_HEALING)
+                return
+
     # --- 핵 ---------------------------------------------------------------
 
     def launch_nuke(self, pid: int, utype: UnitType, dst: TileRef) -> Nuke | None:
@@ -281,6 +366,21 @@ class GameState:
         self.nukes.append(n)
         return n
 
+    def _split_mirv(self, n: Nuke) -> None:
+        """MIRV 는 스스로 터지지 않고 **탄두 여러 개로 갈라진다**(원본 350발).
+
+        우리 지도는 원본의 1/16 면적이라 350발이면 지도가 통째로 날아간다.
+        `MIRV_WARHEAD_COUNT` 를 면적 비로 줄여 같은 *비중*이 되게 한다."""
+        count = max(1, int(C.MIRV_WARHEAD_COUNT * self.gmap.land_count / 2_000_000))
+        w = self.gmap.width
+        cx, cy = n.dst % w, n.dst // w
+        spread = NUKE_MAGNITUDES[UnitType.MIRV_WARHEAD][1] * 3
+        for _ in range(count):
+            x = min(self.gmap.width - 1, max(0, cx + self.rng.randint(-spread, spread)))
+            y = min(self.gmap.height - 1, max(0, cy + self.rng.randint(-spread, spread)))
+            self._detonate(Nuke(owner=n.owner, utype=UnitType.MIRV_WARHEAD,
+                                src=n.dst, dst=y * w + x))
+
     def _dist_sq(self, a: TileRef, b: TileRef) -> int:
         w = self.gmap.width
         return (a % w - b % w) ** 2 + (a // w - b // w) ** 2
@@ -292,7 +392,10 @@ class GameState:
             if self._sam_intercepts(n):
                 continue
             if n.arrived(self.gmap):
-                self._detonate(n)
+                if n.utype is UnitType.MIRV:
+                    self._split_mirv(n)
+                else:
+                    self._detonate(n)
             else:
                 still.append(n)
         self.nukes = still
@@ -473,6 +576,7 @@ class GameState:
         self._grow()
         self._advance_construction()
         self._advance_nukes()
+        self._advance_warships()
         self._advance_boats()
         self._advance_trade()
         self._advance_attacks()

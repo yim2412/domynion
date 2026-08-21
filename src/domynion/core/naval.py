@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import math
+import random
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -126,19 +127,42 @@ class TransportShip:
             self.step_i += 1
 
 
+def shell_damage(rng: random.Random, veterancy: int = 0) -> int:
+    """`ShellExecution` — 굴림 1~5 로 200~300. 격침 경험이 있으면 더 아프다.
+
+        피해 = (250/250) × ((굴림 − 1) × 25 + 200) × (100 + 격침수 × 20)/100
+
+    체력 1000 인 전함이 4~5발을 견딘다는 뜻이다. 고정 250 으로 두면 정확히 4발이
+    되어 교전이 전부 같은 모양이 된다."""
+    roll = rng.randint(C.SHELL_ROLL_MIN, C.SHELL_ROLL_MAX)
+    mult = (roll - 1) * C.SHELL_ROLL_STEP + C.SHELL_ROLL_BASE
+    if veterancy:
+        mult = (mult * (100 + veterancy * C.WARSHIP_VETERANCY_SHELL_BONUS)) // 100
+    return round(C.SHELL_DAMAGE / 250 * mult)
+
+
 @dataclass
 class Warship:
-    """순찰하며 사거리 안의 적 배를 포격한다. 포탄은 250 피해."""
+    """순찰하며 사거리 안의 적 배를 포격한다.
+
+    **표적 우선순위가 정해져 있다**(원본 `WarshipExecution`):
+    수송선 → 적 전함 → 무역선. 수송선을 먼저 치는 이유는 그게 상륙을 막는 유일한
+    수단이기 때문이다."""
 
     owner: int
     tile: TileRef
-    health: int = 1000
+    health: int = C.WARSHIP_MAX_HEALTH
     patrol_origin: TileRef | None = None
     cooldown: int = 0
+    veterancy: int = 0            # 격침 횟수. 포탄 피해에 실린다
 
     def __post_init__(self) -> None:
         if self.patrol_origin is None:
             self.patrol_origin = self.tile
+
+    @property
+    def sunk(self) -> bool:
+        return self.health <= 0
 
 
 @dataclass

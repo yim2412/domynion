@@ -194,3 +194,32 @@ def test_tick_is_ten_hz():
     st = make_state(["..", ".."], {0: (0, 0)})
     st.tick()
     assert st.elapsed == pytest.approx(0.1)
+
+
+# --- 플레이어 종류 ----------------------------------------------------------
+
+def test_three_player_kinds_have_different_multipliers():
+    """원본은 Human · Nation · Bot 셋을 구분한다. **봇은 난이도를 안 탄다** —
+    난이도는 Nation 에만 붙는다. 하나로 합치면 난이도 설정이 조용히 무의미해진다."""
+    human = PlayerState(pid=0, name="H", kind="human")
+    bot = PlayerState(pid=1, name="B", kind="bot")
+    easy = PlayerState(pid=2, name="N", kind="nation", difficulty="easy")
+    imp = PlayerState(pid=3, name="N", kind="nation", difficulty="impossible")
+
+    assert bot.max_troops(500) == pytest.approx(human.max_troops(500) / C.BOT_MAX_TROOPS_DIV)
+    assert easy.max_troops(500) == pytest.approx(human.max_troops(500) * 0.5)
+    assert imp.max_troops(500) == pytest.approx(human.max_troops(500) * 1.25)
+    assert easy.max_troops(500) < imp.max_troops(500)
+
+
+def test_starting_troops_differ_by_kind():
+    assert PlayerState(pid=0, name="H", kind="human").troops == C.START_TROOPS_HUMAN
+    assert PlayerState(pid=1, name="B", kind="bot").troops == C.START_TROOPS_BOT
+    assert (PlayerState(pid=2, name="N", kind="nation", difficulty="easy").troops
+            == C.NATION_START_TROOPS["easy"])
+
+
+def test_is_bot_flag_still_works_for_old_callers():
+    """`is_bot=True` 만 주던 호출부가 조용히 human 으로 바뀌면 안 된다."""
+    p = PlayerState(pid=0, name="B", is_bot=True)
+    assert p.kind == "bot" and p.is_bot

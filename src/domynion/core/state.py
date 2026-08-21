@@ -22,6 +22,10 @@ class PlayerState:
     pid: int
     name: str
     is_bot: bool = False
+    # "bot" · "nation" · "human". 원본은 셋을 구분하고 배율이 전부 다르다 —
+    # 봇은 난이도와 무관하게 늘 약하고, Nation 만 난이도를 탄다.
+    kind: str = "human"
+    difficulty: str = "medium"
     troops: float = 0.0
     gold: int = 0                      # P2 에서 쓴다
     start: TileRef | None = None
@@ -39,9 +43,15 @@ class PlayerState:
         return self.units.city_levels()
 
     def __post_init__(self) -> None:
+        if self.is_bot and self.kind == "human":
+            self.kind = "bot"          # 옛 호출부 호환: is_bot 만 주면 봇으로 본다
+        self.is_bot = self.kind == "bot"
         if self.troops <= 0.0:
-            self.troops = (C.START_TROOPS_BOT if self.is_bot
-                           else C.START_TROOPS_HUMAN)
+            self.troops = {
+                "bot": C.START_TROOPS_BOT,
+                "nation": C.NATION_START_TROOPS.get(self.difficulty,
+                                                    C.START_TROOPS_HUMAN),
+            }.get(self.kind, C.START_TROOPS_HUMAN)
         if self.attack_ratio is None:
             self.attack_ratio = (C.ATTACK_RATIO_BOT if self.is_bot
                                  else C.ATTACK_RATIO_HUMAN)
@@ -57,7 +67,11 @@ class PlayerState:
             tile_count ** C.MAX_TROOPS_TILE_EXP * C.MAX_TROOPS_TILE_MULT
             + C.MAX_TROOPS_BASE
         ) + self.units.city_levels() * C.CITY_TROOP_INCREASE
-        return base / C.BOT_MAX_TROOPS_DIV if self.is_bot else base
+        if self.kind == "bot":
+            return base / C.BOT_MAX_TROOPS_DIV
+        if self.kind == "nation":
+            return base * C.NATION_MAX_TROOPS_MULT.get(self.difficulty, 1.0)
+        return base
 
     def troop_increase(self, tile_count: int) -> float:
         """이번 **tick** 에 늘어날 병력. 상한을 넘지 않게 잘라서 돌려준다.
@@ -67,8 +81,10 @@ class PlayerState:
         cap = self.max_troops(tile_count)
         add = C.TROOP_GROWTH_FLAT + self.troops ** C.TROOP_GROWTH_EXP / C.TROOP_GROWTH_DIV
         add *= 1.0 - self.troops / cap if cap > 0 else 0.0
-        if self.is_bot:
+        if self.kind == "bot":
             add *= C.BOT_GROWTH_MULT
+        elif self.kind == "nation":
+            add *= C.NATION_GROWTH_MULT.get(self.difficulty, 1.0)
         return min(self.troops + add, cap) - self.troops
 
     def attack_troops(self) -> float:

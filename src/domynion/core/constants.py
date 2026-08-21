@@ -107,6 +107,15 @@ BOAT_ATTACK_RATIO = 1 / 5          # boatAttackAmount()
 BOT_MAX_TROOPS_DIV = 3.0
 BOT_GROWTH_MULT = 0.5
 
+# Nation(난이도가 붙는 AI 국가) 배율 — Config.ts :: maxTroops/troopIncreaseRate/startManpower
+# 플레이어 종류가 셋이다: Human · Nation · Bot. 봇은 난이도와 무관하게 항상 약하고,
+# Nation 만 난이도를 탄다.
+DIFFICULTIES = ("easy", "medium", "hard", "impossible")
+NATION_MAX_TROOPS_MULT = {"easy": 0.5, "medium": 0.75, "hard": 1.0, "impossible": 1.25}
+NATION_GROWTH_MULT = {"easy": 0.9, "medium": 0.95, "hard": 1.0, "impossible": 1.05}
+NATION_START_TROOPS = {"easy": 12_500.0, "medium": 18_750.0,
+                       "hard": 25_000.0, "impossible": 25_000.0}
+
 
 # --- 전투 -----------------------------------------------------------------
 #
@@ -217,9 +226,21 @@ WARSHIP_PATROL_RANGE = 100
 WARSHIP_TARGETTING_RANGE = 130
 WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
 WARSHIP_DOCKING_RANGE = 5
+WARSHIP_PASSIVE_HEALING = 1          # 항구 근처면 tick 당 이만큼 회복
+WARSHIP_PASSIVE_HEALING_RANGE = 150
+WARSHIP_VETERANCY_SHELL_BONUS = 20   # 격침 1회당 포탄 피해 +20%
 WARSHIP_MAX_HEALTH = 1000
+# 포탄 피해 = 250/250 × ((굴림−1)×25 + 200), 굴림은 1~5.
+# 그래서 한 발이 200~300 이고, 체력 1000 인 전함은 4~5발을 견딘다.
 SHELL_DAMAGE = 250
 SHELL_LIFETIME = 50
+SHELL_ROLL_MIN = 1
+SHELL_ROLL_MAX = 5
+SHELL_ROLL_STEP = 25
+SHELL_ROLL_BASE = 200
+
+# MIRV — MIRVExecution.warheadCount
+MIRV_WARHEAD_COUNT = 350
 
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 TRADE_SPAWN_SIGMOID_MID = 400
