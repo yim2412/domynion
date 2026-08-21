@@ -22,6 +22,7 @@ from ..core.engine import GameState
 from ..core.relations import RELATION_COLOUR, RELATION_LABEL
 from .actions import EMOJI_OPEN, root_items
 from .emojitable import EmojiTable
+from .endmodal import EndModal
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
 from .map_widget import MapWidget
@@ -55,6 +56,9 @@ class MainWindow(QMainWindow):
         # 이모지는 장식이 아니다 — 🖕 하나가 상대 관계를 −100 움직인다.
         self.emoji = EmojiTable(state, human, self.map)
         self.emoji.picked.connect(self._send_emoji)
+
+        # 탈락하면 판이 안 끝나도 그 자리에서 뜬다 — 없을 때는 내가 죽은 줄도 몰랐다.
+        self.end = EndModal(state, human, self.map)
 
         # 커서가 얹힌 대상 정보. 무엇을 치는지 모르면 클릭이 도박이 된다.
         self.inspect = QLabel("", self.map)
@@ -163,6 +167,7 @@ class MainWindow(QMainWindow):
         self.controls.refresh()
         self.immunity.refresh()
         self.emoji.refresh()
+        self.end.check()
         self._refresh_inspect()
         self.events.refresh()
         self.attacks.refresh()
