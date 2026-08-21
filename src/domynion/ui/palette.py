@@ -17,11 +17,11 @@ RGB = tuple[int, int, int]
 # 지형끼리는 **명도**로 갈라 둔다. 소유자 색을 위에 섞으면 색상(hue)은 거의 지워지고
 # 명도만 남기 때문이다 — 색상으로만 구분하면 영토 안에서 지형이 안 보인다.
 TERRAIN_COLORS: dict[Terrain, RGB] = {
-    Terrain.WATER:     (26, 48, 70),
-    Terrain.PLAINS:    (186, 184, 138),   # 가장 밝게
-    Terrain.FOREST:    (86, 112, 76),     # 가장 어둡게
-    Terrain.HILLS:     (152, 132, 96),
-    Terrain.MOUNTAINS: (176, 176, 180),   # 밝지만 무채색
+    Terrain.OCEAN:      (26, 48, 70),
+    Terrain.PLAINS:     (168, 176, 124),
+    Terrain.HIGHLAND:   (150, 130, 94),
+    Terrain.MOUNTAIN:   (178, 178, 182),
+    Terrain.IMPASSABLE: (52, 52, 56),
 }
 
 # 8명까지. 인접한 두 나라가 헷갈리지 않게 색상환에서 떨어뜨렸고, 명도는 비슷하게
@@ -44,7 +44,8 @@ LABEL_COLOR: RGB = (255, 255, 255)
 LABEL_SHADOW: RGB = (0, 0, 0)
 
 TEXTURE_AMP = 0.16      # 지형 질감의 세기. 크면 타일 경계가 도로 보인다
-TEXTURE_PERIOD = 6      # 타일 몇 개마다 한 주기인가. **1 이면 체크무늬가 된다**
+TEXTURE_PERIOD = 24     # 타일 몇 개마다 한 주기인가. **1 이면 체크무늬가 된다**
+                        # 지도가 커져서(500x250) v0.1 의 6 보다 크게 잡아야 한다
 
 
 def player_color(pid: int) -> RGB:

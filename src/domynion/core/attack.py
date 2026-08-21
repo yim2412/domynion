@@ -1,129 +1,208 @@
-"""공격 부대 — 연속 확장.
+"""공격 — openfront 의 `attackLogic()` 과 `AttackExecution` 그대로.
 
-타일을 클릭하면 **그 칸이 아니라 그 칸의 소유자 전체**가 대상이 된다. 병력의 일부를
-떼어 국경에 붙이면 부대가 프론티어를 따라 번지며 타일을 하나씩 사들이고, 병력이
-떨어지는 지점에서 저절로 멈춘다. 한 칸씩 수동으로 편입하는 게 아니다.
+v0.1 과 **정반대로 바뀐 것 두 가지**를 먼저 적어 둔다. 되돌리지 말 것:
 
-프론티어는 BFS 큐다. 그래서 확장이 국경에 접한 곳에서 바깥으로 자라고, 먼 곳이
-갑자기 뚫리지 않는다.
+1. **프론티어는 FIFO 가 아니라 우선순위 힙이다.** 싼 지형과 내 영토에 많이 접한 칸을
+   먼저 먹는다. v0.1 은 "막힌 칸을 큐 앞에 되돌려" 산을 못 피하게 했는데, 원본은
+   반대로 **비켜 갈 수 있게** 만들어 뒀다.
+2. **예산과 병력이 다른 축이다.** tick 마다 `attackTilesPerTick()` 으로 예산을 받고,
+   칸마다 `tilesPerTickUsed` 만큼 예산을 쓰고 `attackerTroopLoss` 만큼 병력을 쓴다.
+   v0.1 은 병력 하나로 둘 다 했다.
+
+원본: `Config.ts :: attackLogic() / attackTilesPerTick()`,
+      `AttackExecution.ts :: tick() / addNeighbors()`
 """
 
 from __future__ import annotations
 
-from collections import deque
+import heapq
+import math
+import random
 from dataclasses import dataclass, field
 
 from . import constants as C
-from .gamemap import Coord, GameMap
+from .constants import Terrain
+from .gamemap import GameMap, TileRef
 from .state import PlayerState
 
 
-def reach(gmap: GameMap, pos: Coord, naval_range: int) -> list[Coord]:
-    """이 칸에서 부대가 다음으로 번질 수 있는 칸들.
+def within(value: float, lo: float, hi: float) -> float:
+    """원본 `Util.ts :: within`. 이름을 그대로 둬서 공식을 눈으로 대조할 수 있게."""
+    return min(max(value, lo), hi)
 
-    항해술이 없으면 육지 인접 4방향뿐이다. 있으면 그만큼 바다 건너까지 닿는다 —
-    그게 이 증강이 하는 일 전부이고, 계수가 아닌 유일한 증강인 이유다."""
-    if naval_range <= 0:
-        return gmap.neighbors(pos)
-    return gmap.within(pos, naval_range + 1)
+
+def sigmoid(value: float, decay_rate: float, midpoint: float) -> float:
+    return 1.0 / (1.0 + math.exp(-decay_rate * (value - midpoint)))
+
+
+@dataclass
+class AttackResult:
+    attacker_loss: float
+    defender_loss: float
+    tiles_used: float
+
+
+def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
+                 attacker: PlayerState, defender: PlayerState | None,
+                 defender_tiles: int, attacker_tiles: int) -> AttackResult:
+    """한 칸을 먹을 때의 손실과 예산 소모. `defender is None` 이면 중립이다.
+
+    중립과 플레이어는 **완전히 다른 분기**다. 하나로 합치지 말 것 — 원본이 그렇게
+    나눠 놓았고, 중립 쪽은 수비 병력이라는 개념 자체가 없다."""
+    terrain = gmap.terrain_at(tile)
+    mag = C.TERRAIN_MAG[terrain]
+    speed = C.TERRAIN_SPEED[terrain]
+
+    # 방어초소·낙진·팀 규칙은 P2/P5 에서 이 자리에 들어간다.
+
+    if defender is None:
+        div = C.NEUTRAL_LOSS_DIV_BOT if attacker.is_bot else C.NEUTRAL_LOSS_DIV_HUMAN
+        return AttackResult(
+            attacker_loss=mag / div,
+            defender_loss=0.0,
+            tiles_used=within(
+                C.NEUTRAL_TILES_USED_NUM * max(C.NEUTRAL_TILES_USED_SPEED_FLOOR, speed)
+                / max(attack_troops, 1e-9),
+                *C.NEUTRAL_TILES_USED_CLAMP),
+        )
+
+    if attacker.is_bot is False and defender.is_bot:
+        mag *= C.ATTACK_VS_BOT_MAG_MULT
+
+    defense_sig = 1.0 - sigmoid(defender_tiles,
+                                C.DEFENSE_DEBUFF_DECAY_RATE,
+                                C.DEFENSE_DEBUFF_MIDPOINT)
+    large_defender = C.DEFENDER_DEBUFF_FLOOR + C.DEFENDER_DEBUFF_SPAN * defense_sig
+
+    large_attack_bonus = 1.0
+    large_speed_bonus = 1.0
+    if attacker_tiles > C.LARGE_PLAYER_TILES:
+        ratio = C.LARGE_PLAYER_TILES / attacker_tiles
+        large_attack_bonus = math.sqrt(ratio) ** C.LARGE_ATTACK_BONUS_EXP
+        large_speed_bonus = ratio ** C.LARGE_SPEED_BONUS_EXP
+
+    # 수비측은 **타일당 병력**을 잃는다. v0.1 은 이 값을 *비용*에 써서 교착을 만들었지만,
+    # 원본은 *손실*에만 쓴다. 같은 수식이 다른 자리에 있는 것이라 헷갈리지 말 것.
+    defender_loss = defender.troops / max(defender_tiles, 1)
+
+    a = (within(defender.troops / max(attack_troops, 1e-9), *C.ATTACKER_LOSS_A_CLAMP)
+         * mag * C.ATTACKER_LOSS_A_MULT * large_defender * large_attack_bonus)
+    b = C.ATTACKER_LOSS_B_MULT * defender_loss * (mag / C.ATTACKER_LOSS_B_MAG_DIV)
+
+    return AttackResult(
+        attacker_loss=C.ATTACKER_LOSS_A_WEIGHT * a + C.ATTACKER_LOSS_B_WEIGHT * b,
+        defender_loss=defender_loss,
+        tiles_used=within(
+            defender.troops / (C.TILES_USED_TROOP_MULT * max(attack_troops, 1e-9)),
+            *C.TILES_USED_CLAMP) * speed * large_defender * large_speed_bonus,
+    )
+
+
+def tiles_per_tick(attack_troops: float, defender: PlayerState | None,
+                   border_size: int) -> float:
+    """이번 tick 의 예산. **국경이 넓을수록 많이 번진다** — v0.1 에 없던 축이다."""
+    if defender is None:
+        return border_size * C.BUDGET_VS_NEUTRAL_BORDER_MULT
+    return (within((C.TILES_USED_TROOP_MULT * attack_troops
+                    / max(defender.troops, 1e-9)) * C.BUDGET_VS_PLAYER_MULT,
+                   *C.BUDGET_VS_PLAYER_CLAMP)
+            * border_size * C.BUDGET_VS_PLAYER_BORDER_MULT)
 
 
 @dataclass
 class Attack:
-    """진행 중인 하나의 공격.
-
-    `target` 은 타일이 아니라 **소유자**다. None 이면 중립 지대를 먹는 중이다."""
+    """진행 중인 공격 하나. `target` 은 타일이 아니라 **소유자**다 (None = 중립)."""
 
     attacker: int
     target: int | None
     troops: float
-    naval_range: int = 0
-    frontier: deque[Coord] = field(default_factory=deque)
-    seen: set[Coord] = field(default_factory=set)
-
-    # 확장 속도가 초당 6.3칸이면 20Hz tick 하나에 0.315칸이다. 버리면 느린 부대가
-    # 영원히 한 칸도 못 먹는다 — 소수를 누적해서 1을 넘을 때 한 칸 먹는다.
-    _carry: float = 0.0
-
-    # 직전 step 에서 이 부대가 쓴 병력. 방어측 손실이 여기 비례하므로 engine 이 읽는다.
-    last_spent: float = 0.0
+    heap: list[tuple[float, TileRef]] = field(default_factory=list)
+    seen: set[TileRef] = field(default_factory=set)
+    retreated: bool = False
 
     @classmethod
     def launch(cls, gmap: GameMap, attacker: int, target: int | None,
-               troops: float, naval_range: int = 0) -> "Attack | None":
-        """국경에서 target 소유 타일에 붙는다. 붙을 곳이 없으면 None."""
-        if troops < C.MIN_ATTACK_TROOPS:
-            return None
-        seeds: dict[Coord, None] = {}
-        for tile in gmap.owned_by(attacker):
-            for n in reach(gmap, tile.pos, naval_range):
-                t = gmap[n]
-                if t.owner == target and t.passable:
-                    seeds[n] = None
-        if not seeds:
-            return None
-        return cls(attacker=attacker, target=target, troops=troops,
-                   naval_range=naval_range,
-                   frontier=deque(seeds), seen=set(seeds))
+               troops: float, rng: random.Random, tick: int = 0) -> "Attack | None":
+        """내 국경에서 target 소유 타일에 붙는다. 붙을 곳이 없으면 None."""
+        atk = cls(attacker=attacker, target=target, troops=troops)
+        want = -1 if target is None else target
+        mine = gmap.owned_refs(attacker)
+        for t in mine.tolist():
+            for n in gmap.neighbors(t):
+                if gmap.owner[n] == want and gmap.passable(n) and n not in atk.seen:
+                    atk._push(gmap, n, rng, tick)
+        return atk if atk.heap else None
 
-    # --- 진행 -------------------------------------------------------------
+    # --- 힙 ---------------------------------------------------------------
 
-    def tile_cost(self, gmap: GameMap, pos: Coord,
-                  atk: PlayerState, def_factor: float) -> float:
-        """이 한 칸을 사들이는 데 드는 병력."""
-        tile = gmap[pos]
-        vs_player = self.target is not None
-        return (C.CONQUER_COST_BASE
-                * tile.defense
-                * def_factor
-                * atk.cost_mult(tile.terrain, vs_player))
+    def _push(self, gmap: GameMap, tile: TileRef,
+              rng: random.Random, tick: int) -> None:
+        """`AttackExecution.addNeighbors()` 의 우선순위 공식 그대로.
 
-    def budget(self, atk: PlayerState, dt: float) -> int:
-        """이번 tick 에 시도할 칸 수. 병력이 많을수록 넓게 번진다."""
-        per_sec = min(
-            C.EXPAND_TILES_PER_SEC_MAX,
-            C.EXPAND_TILES_PER_SEC_BASE + self.troops * C.EXPAND_TILES_PER_SEC_PER_TROOP,
-        ) * atk.expand_speed_mult()
-        self._carry += per_sec * dt
-        n = int(self._carry)
-        self._carry -= n
-        return n
+            priority = (rand(0,7) + 10) × (1 − 내이웃수 × 0.5 + mag/2) + 현재tick
 
-    def step(self, gmap: GameMap, dt: float,
-             atk: PlayerState, def_factor: float) -> list[Coord]:
-        """이번 tick 에 정복한 칸들을 돌려준다. 빈 리스트여도 부대는 살아 있을 수 있다."""
-        taken: list[Coord] = []
-        self.last_spent = 0.0
-        for _ in range(self.budget(atk, dt)):
-            if not self.frontier or self.troops < C.ATTACK_ABANDON_TROOPS:
-                break
-            pos = self.frontier.popleft()
-            tile = gmap[pos]
-            # 큐에 들어간 뒤 상황이 바뀌었을 수 있다 — 다른 부대가 먼저 먹었거나,
-            # 대상이 그 사이 그 칸을 잃었거나.
-            if tile.owner != self.target or not tile.passable:
-                continue
-            cost = self.tile_cost(gmap, pos, atk, def_factor)
-            if cost > self.troops:
-                # 감당 못 하는 칸은 **큐 앞에 되돌린다.** 뒤로 보내면 부대가 산을
-                # 피해 평야만 골라 먹으며 지형 방어가 무의미해진다.
-                self.frontier.appendleft(pos)
-                break
-            self.troops -= cost
-            self.last_spent += cost
-            tile.owner = self.attacker
-            taken.append(pos)
-            for n in reach(gmap, pos, self.naval_range):
-                t = gmap[n]
-                if n not in self.seen and t.owner == self.target and t.passable:
-                    self.seen.add(n)
-                    self.frontier.append(n)
-        return taken
+        낮은 값을 먼저 꺼낸다. `+ tick` 이 있어서 나중에 들어온 칸은 뒤로 밀린다 —
+        완전한 최단경로가 아니라 FIFO 성질을 일부 남긴 형태다."""
+        self.seen.add(tile)
+        owned_by_me = sum(1 for n in gmap.neighbors(tile)
+                          if gmap.owner[n] == self.attacker)
+        terrain = gmap.terrain_at(tile)
+        mag = C.PRIORITY_MAG.get(terrain, 0.0)
+        priority = ((rng.randrange(C.PRIORITY_NOISE_MAX) + C.PRIORITY_BASE)
+                    * (1.0 - owned_by_me * C.PRIORITY_NEIGHBOR_WEIGHT + mag / 2.0)
+                    + tick)
+        heapq.heappush(self.heap, (priority, tile))
 
-    def defender_loss(self, atk: PlayerState) -> float:
-        """직전 step 에서 방어측이 함께 잃은 병력. 공격측이 쏟은 만큼 상대도 깎인다."""
-        return self.last_spent * C.DEFENDER_LOSS_RATIO * atk.defender_loss_mult()
+    @property
+    def border_size(self) -> int:
+        return len(self.heap)
 
     @property
     def finished(self) -> bool:
-        return not self.frontier or self.troops < C.ATTACK_ABANDON_TROOPS
+        return self.retreated or not self.heap or self.troops < C.ATTACK_MIN_TROOPS
+
+    # --- 진행 -------------------------------------------------------------
+
+    def step(self, gmap: GameMap, attacker: PlayerState,
+             defender: PlayerState | None, defender_tiles: int,
+             attacker_tiles: int, rng: random.Random,
+             tick: int) -> list[TileRef]:
+        """`AttackExecution.tick()`. 이번 tick 에 정복한 칸들을 돌려준다."""
+        want = -1 if self.target is None else self.target
+        budget = tiles_per_tick(
+            self.troops, defender,
+            self.border_size + rng.randrange(C.BUDGET_BORDER_NOISE_MAX))
+        taken: list[TileRef] = []
+
+        while budget > 0:
+            if self.troops < C.ATTACK_MIN_TROOPS:
+                self.troops = 0.0        # 소멸 — 퇴각이 아니라서 병력이 안 돌아온다
+                self.heap.clear()
+                return taken
+            if not self.heap:
+                self.retreated = True    # 퇴각 — 남은 병력은 엔진이 본국에 돌려준다
+                return taken
+
+            _, tile = heapq.heappop(self.heap)
+
+            # 큐에 들어간 뒤 상황이 바뀌었을 수 있다. 원본과 같이 **재큐하지 않고
+            # 버린다** — 되돌리면 부대가 같은 칸에서 영원히 맴돈다.
+            if gmap.owner[tile] != want or not gmap.passable(tile):
+                continue
+            if not any(gmap.owner[n] == self.attacker for n in gmap.neighbors(tile)):
+                continue                 # 내 영토에 더 이상 안 접한다
+
+            for n in gmap.neighbors(tile):
+                if n not in self.seen and gmap.owner[n] == want and gmap.passable(n):
+                    self._push(gmap, n, rng, tick)
+
+            r = attack_logic(gmap, tile, self.troops, attacker, defender,
+                             defender_tiles, attacker_tiles)
+            budget -= r.tiles_used
+            self.troops -= r.attacker_loss
+            if defender is not None:
+                defender.troops = max(0.0, defender.troops - r.defender_loss)
+            gmap.owner[tile] = self.attacker
+            taken.append(tile)
+
+        return taken

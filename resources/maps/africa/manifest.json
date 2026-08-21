@@ -1,0 +1,9 @@
+{
+  "id": "Africa",
+  "name": "Africa",
+  "map16x": {
+    "height": 508,
+    "num_land_tiles": 130741,
+    "width": 487
+  }
+}

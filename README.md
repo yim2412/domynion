@@ -15,18 +15,15 @@
 
 ## 상태
 
-**규칙이 돌아간다. 화면이 없다.** 판을 처음부터 끝까지 시뮬레이션할 수 있고, 밸런스를
-수치로 잴 수 있다. 사람이 앉아서 할 수는 아직 없다.
+**P1 완료 — 영토 코어가 원본 공식으로 돈다.** 실제 openfront 지도(World 37,575칸 ~
+Europe 134,751칸) 위에서 판이 끝까지 돌아간다. 테스트 42개.
 
 | | |
 |---|---|
-| ✅ | `core/` 전부 · `ai/simple_ai.py` · `cli/play.py` · `tests/` |
-| ⬜ | `ui/` (PyQt6) |
+| ✅ | P1 지도·병력·전투·우선순위 힙·10Hz tick |
+| ⬜ | P2 골드·건물 · P3 동맹 · P4 보트/전함 · P5 핵 · P6 스폰/난이도 · **P7 증강** |
 
-**밸런스를 한 번 손봤고 아직 덜 됐다.** AI 튜닝으로 시간 종료가 51.2%→41.7%,
-판 길이 중앙이 900→619초가 됐다(240판). 남은 구조적 결함은 **충전율 포화** —
-후반에 모두의 병력이 상한에 박혀 방어 계수가 상수가 된다. 수치와 다음 손댈 곳은
-[`docs/design.md`](docs/design.md) 6.5·7절에 있다.
+진행 상황과 원본 공식은 [`docs/openfront-port.md`](docs/openfront-port.md).
 
 ## 설치
 
@@ -37,31 +34,22 @@ pip install -e ".[dev,ui]"
 ## 실행
 
 ```bash
-# 헤드리스로 판을 돌려 밸런스를 잰다 (240판 약 75초)
-python -m domynion.cli.play --games 40 --players 4
-python -m domynion.cli.play --games 240 --players 4 --seed 1000
+# 헤드리스로 판을 돌려 밸런스를 잰다 (판당 약 16초 — 지도가 커서 느리다)
+python -m domynion.cli.play --games 40 --map world --jobs 8
+python -m domynion.cli.play --games 240 --map world --jobs 8
+
+# 판을 그림으로 찍는다 (창 없이)
+python -m domynion.cli.shot --seed 1 --map world --at 120 600 --tile 3 --out shots/
 
 # 테스트
 python -m pytest tests -q
+
+# 변이 테스트는 바이트코드 캐시를 꺼야 한다 (계획서 5.5절 참고)
+PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q
 ```
 
-40판은 방향을 보는 용도이고, **채택 판단은 240판**으로 본다. 판당 노이즈가 크다.
-
-## 지도만 보기
-
-```bash
-# 대륙 생성 결과를 ASCII 로 본다
-python -c "
-import random
-from domynion.core.gamemap import GameMap
-from domynion.core.constants import Terrain
-CH = {Terrain.WATER:'~', Terrain.PLAINS:'.', Terrain.FOREST:'f',
-      Terrain.HILLS:'n', Terrain.MOUNTAINS:'A'}
-m = GameMap.generate(4, random.Random(7))
-for y in range(0, m.height, 2):
-    print(''.join(CH[m[(x,y)].terrain] for x in range(m.width)))
-print(f'육지 {len(m.land_tiles())}/{m.width*m.height}')"
-```
+지도는 `world` `asia` `europe` `africa` 넷을 담아 뒀다 — 출처와 라이선스는
+[`resources/maps/ATTRIBUTION.md`](resources/maps/ATTRIBUTION.md).
 
 ## 구조
 

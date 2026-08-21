@@ -1,0 +1,9 @@
+{
+  "id": "Europe",
+  "name": "Europe",
+  "map16x": {
+    "height": 418,
+    "num_land_tiles": 134751,
+    "width": 726
+  }
+}

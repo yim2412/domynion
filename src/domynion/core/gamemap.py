@@ -1,300 +1,195 @@
-"""맵 생성과 타일 정의.
+"""지도 — 평탄 numpy 배열. 타일 객체는 없다.
 
-인접 판정은 `neighbors()` 하나만 사용한다. 헥스 전환 시 이 함수만 교체하면 된다.
+**타일 하나가 파이썬 객체이면 안 된다.** 원본 지도는 육지가 3.7만~13만 칸이고
+(축소판 map16x 기준), 그만큼의 dataclass 를 만들면 생성 시간도 메모리도 감당이 안 된다.
+지형과 소유자를 각각 배열 하나로 두고, 타일은 **정수 인덱스**로 가리킨다.
 
-지형은 타일마다 독립 추첨하지 않는다. 그렇게 만들면 바다가 한 칸씩 흩어지고 산이
-점점이 박혀, 격자선을 지워도 화면이 "타일 게임"으로 읽힌다. 대신 노이즈 높이맵을
-만들고 해수면으로 잘라 대륙을 얻는다.
+    t = y * width + x
+
+이건 원본의 `TileRef` 와 같은 표현이다. 좌표 튜플로 바꾸지 말 것 — 힙에 수만 개가
+들어가는데 튜플이면 그만큼 객체가 생긴다.
+
+지도는 생성하지 않고 **OpenFront 의 원본 파일을 그대로 읽는다.** 실제 지형이라
+밸런스를 원본과 같은 조건에서 잴 수 있고, 노이즈 생성기·임계값 튜닝이 통째로 사라진다.
+포맷과 라이선스는 `resources/maps/ATTRIBUTION.md`.
 """
 
 from __future__ import annotations
 
-import math
+import json
 import random
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-if TYPE_CHECKING:
-    from .constants import TerrainSpec
+import numpy as np
 
-from .constants import (
-    BASE_TILES_PER_PLAYER,
-    EDGE_FALLOFF,
-    FOREST_RATIO,
-    HILL_RATIO,
-    MAP_ASPECT,
-    MAX_LAND_RATIO,
-    MIN_LAND_RATIO,
-    MIN_TILES_PER_START,
-    MOUNTAIN_RATIO,
-    NOISE_OCTAVES,
-    NOISE_SCALE,
-    SEA_LEVEL,
-    Terrain,
-    spec_for,
-)
+from . import constants as C
+from .constants import Terrain
 
-Coord = tuple[int, int]
+TileRef = int
+
+_RESOURCES = Path(__file__).resolve().parents[3] / "resources" / "maps"
 
 
-@dataclass
-class Tile:
-    pos: Coord
-    terrain: Terrain
-    owner: int | None = None          # 플레이어 id, None = 중립
-
-    @property
-    def spec(self) -> "TerrainSpec":
-        return spec_for(self.terrain)
-
-    @property
-    def passable(self) -> bool:
-        return self.spec.passable
-
-    @property
-    def defense(self) -> float:
-        """이 타일을 먹는 데 드는 병력의 지형 배율."""
-        return self.spec.defense
+def available_maps(root: Path | None = None) -> list[str]:
+    base = root or _RESOURCES
+    if not base.is_dir():
+        return []
+    return sorted(p.name for p in base.iterdir() if (p / "map16x.bin").is_file())
 
 
 class GameMap:
-    def __init__(self, width: int, height: int, tiles: dict[Coord, Tile]):
+    """지형은 읽기 전용, 소유자만 바뀐다.
+
+    `terrain` 은 원본 바이트를 **그대로** 들고 있고, 지형 종류는 필요할 때 뽑는다.
+    미리 변환해 두지 않는 이유: 해안선·대양 비트가 나중에(보트·항구) 필요하고,
+    원본 바이트를 남겨 둬야 우리가 잘못 변환했는지 대조할 수 있기 때문이다.
+    """
+
+    __slots__ = ("width", "height", "size", "raw", "owner",
+                 "terrain", "land_count", "name")
+
+    def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
+        if raw.size != width * height:
+            raise ValueError(f"{width}x{height} 인데 바이트가 {raw.size}개다")
         self.width = width
         self.height = height
-        self.tiles = tiles
+        self.size = width * height
+        self.name = name
+        self.raw = raw
+        self.terrain = _terrain_from_raw(raw)
+        self.owner = np.full(self.size, -1, dtype=np.int16)   # -1 = 중립
+        self.land_count = int(self.passable_mask().sum())
 
-    # --- 생성 -------------------------------------------------------------
-
-    @staticmethod
-    def dims_for(player_count: int) -> tuple[int, int]:
-        """가로×세로. 총 칸 수는 유지하고 화면 비율로 편다."""
-        total = BASE_TILES_PER_PLAYER * player_count
-        h = math.ceil(math.sqrt(total / MAP_ASPECT))
-        return math.ceil(h * MAP_ASPECT), h
+    # --- 적재 -------------------------------------------------------------
 
     @classmethod
-    def generate(cls, player_count: int, rng: random.Random) -> "GameMap":
-        width, height = cls.dims_for(player_count)
-        salt = rng.randrange(1 << 30)
+    def load(cls, name: str = "world", root: Path | None = None) -> "GameMap":
+        base = (root or _RESOURCES) / name
+        meta = json.loads((base / "manifest.json").read_text(encoding="utf-8"))["map16x"]
+        raw = np.frombuffer((base / "map16x.bin").read_bytes(), dtype=np.uint8)
+        gm = cls(meta["width"], meta["height"], raw, name=name)
+        declared = meta.get("num_land_tiles")
+        if declared is not None and int((gm.raw & C.LAND_BIT).astype(bool).sum()) != declared:
+            # 조용히 어긋나면 이후 모든 측정이 무의미해진다. 여기서 죽는 편이 낫다.
+            raise ValueError(f"{name}: 육지 수가 manifest 와 다르다")
+        return gm
 
-        # 해수면을 조금씩 낮춰 가며 육지 비율을 맞춘다. 노이즈만 믿으면 판마다
-        # "거의 다 바다"인 맵이 나와 시작조차 못 하는 경우가 생긴다.
-        sea = SEA_LEVEL
-        heights = {
-            (x, y): _height_at(x, y, width, height, salt)
-            for y in range(height) for x in range(width)
-        }
-        for _ in range(24):
-            land = sum(1 for h in heights.values() if h >= sea)
-            ratio = land / (width * height)
-            if ratio < MIN_LAND_RATIO:
-                sea -= 0.03
-            elif ratio > MAX_LAND_RATIO:
-                sea += 0.03
-            else:
-                break
-
-        # 고지대·숲은 백분위로 가른다. 절대 임계값을 쓰면 fBm 값이 중앙에 몰려
-        # 있어 산악이 한 칸도 안 나오는 판이 생긴다.
-        land_pos = [pos for pos, h in heights.items() if h >= sea]
-        moisture = {
-            pos: _fbm(pos[0] * NOISE_SCALE * 1.7, pos[1] * NOISE_SCALE * 1.7,
-                      salt ^ 0x5EED, octaves=3)
-            for pos in land_pos
-        }
-        mtn_cut = _percentile([heights[p] for p in land_pos], 1.0 - MOUNTAIN_RATIO)
-        hill_cut = _percentile([heights[p] for p in land_pos],
-                               1.0 - MOUNTAIN_RATIO - HILL_RATIO)
-        lowland = [p for p in land_pos if heights[p] < hill_cut]
-        forest_cut = _percentile([moisture[p] for p in lowland], 1.0 - FOREST_RATIO)
-
-        tiles: dict[Coord, Tile] = {}
-        for y in range(height):
-            for x in range(width):
-                pos = (x, y)
-                h = heights[pos]
-                if h < sea:
-                    terrain = Terrain.WATER
-                elif h >= mtn_cut:
-                    terrain = Terrain.MOUNTAINS
-                elif h >= hill_cut:
-                    terrain = Terrain.HILLS
-                elif moisture[pos] >= forest_cut:
-                    terrain = Terrain.FOREST
+    @classmethod
+    def from_rows(cls, rows: list[str], name: str = "test") -> "GameMap":
+        """테스트용. `~`바다 `.`평야 `n`구릉 `A`산악 `#`통행불가."""
+        mag = {"~": 0, ".": 0, "n": 12, "A": 22, "#": C.IMPASSABLE_MAGNITUDE}
+        w, h = len(rows[0]), len(rows)
+        raw = np.zeros(w * h, dtype=np.uint8)
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                b = mag[ch]
+                if ch != "~":
+                    b |= C.LAND_BIT
                 else:
-                    terrain = Terrain.PLAINS
-                tiles[pos] = Tile(pos=pos, terrain=terrain)
-        return cls(width, height, tiles)
+                    b |= C.OCEAN_BIT
+                raw[y * w + x] = b
+        return cls(w, h, raw, name=name)
 
-    # --- 조회 -------------------------------------------------------------
+    # --- 지형 -------------------------------------------------------------
 
-    def __getitem__(self, pos: Coord) -> Tile:
-        return self.tiles[pos]
+    def is_land(self, t: TileRef) -> bool:
+        return bool(self.raw[t] & C.LAND_BIT)
 
-    def in_bounds(self, pos: Coord) -> bool:
-        x, y = pos
-        return 0 <= x < self.width and 0 <= y < self.height
+    def magnitude(self, t: TileRef) -> int:
+        return int(self.raw[t] & C.MAGNITUDE_MASK)
 
-    def neighbors(self, pos: Coord) -> list[Coord]:
-        """4방향 인접(대각선 제외). 헥스 전환 시 여기만 교체."""
-        x, y = pos
-        cand = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
-        return [c for c in cand if self.in_bounds(c)]
+    def is_impassable(self, t: TileRef) -> bool:
+        return (bool(self.raw[t] & C.LAND_BIT)
+                and (self.raw[t] & C.MAGNITUDE_MASK) >= C.IMPASSABLE_MAGNITUDE)
 
-    def within(self, pos: Coord, radius: int) -> list[Coord]:
-        """맨해튼 거리 radius 이내. 항해술이 바다 건너를 볼 때 쓴다."""
-        x, y = pos
+    def is_shoreline(self, t: TileRef) -> bool:
+        return bool(self.raw[t] & C.SHORELINE_BIT)
+
+    def is_ocean(self, t: TileRef) -> bool:
+        return bool(self.raw[t] & C.OCEAN_BIT)
+
+    def terrain_at(self, t: TileRef) -> Terrain:
+        return Terrain(int(self.terrain[t]))
+
+    def passable(self, t: TileRef) -> bool:
+        """공격이 지나갈 수 있는가. 바다도 통행불가 육지도 아니어야 한다."""
+        return C.Terrain.PLAINS <= self.terrain[t] <= C.Terrain.MOUNTAIN
+
+    def passable_mask(self) -> np.ndarray:
+        return (self.terrain >= Terrain.PLAINS) & (self.terrain <= Terrain.MOUNTAIN)
+
+    # --- 이웃 -------------------------------------------------------------
+
+    def neighbors(self, t: TileRef) -> tuple[TileRef, ...]:
+        """4방향. 지도 가장자리에서 반대편으로 새지 않게 x 를 확인한다.
+
+        리스트가 아니라 튜플을 돌려주는 이유는 하나다 — 이 함수가 확장 루프의
+        가장 안쪽에서 수만 번 불린다."""
+        x = t % self.width
         out = []
-        for dy in range(-radius, radius + 1):
-            span = radius - abs(dy)
-            for dx in range(-span, span + 1):
-                c = (x + dx, y + dy)
-                if c != pos and self.in_bounds(c):
-                    out.append(c)
-        return out
+        if x > 0:
+            out.append(t - 1)
+        if x < self.width - 1:
+            out.append(t + 1)
+        if t >= self.width:
+            out.append(t - self.width)
+        if t + self.width < self.size:
+            out.append(t + self.width)
+        return tuple(out)
 
-    def all_tiles(self):
-        return self.tiles.values()
+    def xy(self, t: TileRef) -> tuple[int, int]:
+        return t % self.width, t // self.width
 
-    def owned_by(self, player_id: int) -> list[Tile]:
-        return [t for t in self.tiles.values() if t.owner == player_id]
+    def ref(self, x: int, y: int) -> TileRef:
+        return y * self.width + x
 
-    def land_tiles(self) -> list[Tile]:
-        return [t for t in self.tiles.values() if t.passable]
+    # --- 소유 -------------------------------------------------------------
 
-    def frontier(self, player_id: int, naval_range: int = 0) -> list[Tile]:
-        """내 영토에서 닿을 수 있는, 내 소유가 아닌 통행 가능 타일.
+    def tile_counts(self, num_players: int) -> np.ndarray:
+        """전수 순회. **런타임에는 쓰지 않는다** — 엔진이 증분으로 센다.
+        테스트가 증분 값과 대조할 때만 쓴다."""
+        owned = self.owner[self.owner >= 0]
+        return np.bincount(owned, minlength=num_players)
 
-        naval_range 가 0 이면 육지로 붙어 있는 곳만이다. 항해술이 있으면 그만큼
-        바다 건너까지 닿는다 — 그게 이 증강이 하는 일 전부다."""
-        seen: dict[Coord, Tile] = {}
-        reach = max(1, naval_range + 1)
-        for tile in self.owned_by(player_id):
-            cand = (self.neighbors(tile.pos) if naval_range <= 0
-                    else self.within(tile.pos, reach))
-            for n in cand:
-                t = self.tiles[n]
-                if t.owner != player_id and t.passable:
-                    seen[n] = t
-        return list(seen.values())
+    def owned_refs(self, pid: int) -> np.ndarray:
+        return np.flatnonzero(self.owner == pid)
 
-    def border_targets(self, player_id: int, naval_range: int = 0) -> set[int | None]:
-        """닿을 수 있는 상대들. None 은 중립 지대를 뜻한다."""
-        return {t.owner for t in self.frontier(player_id, naval_range)}
+    # --- 시작 위치 --------------------------------------------------------
 
-    # --- 대륙 -------------------------------------------------------------
+    def place_starts(self, count: int, rng: random.Random,
+                     attempts: int = 400) -> list[TileRef]:
+        """서로 멀리 떨어진 육지 칸을 고른다.
 
-    def landmasses(self) -> list[list[Coord]]:
-        """연결된 육지 덩어리들. 큰 것부터 정렬해 돌려준다."""
-        unseen = {t.pos for t in self.tiles.values() if t.passable}
-        out: list[list[Coord]] = []
-        while unseen:
-            start = unseen.pop()
-            blob = [start]
-            stack = [start]
-            while stack:
-                cur = stack.pop()
-                for n in self.neighbors(cur):
-                    if n in unseen:
-                        unseen.discard(n)
-                        blob.append(n)
-                        stack.append(n)
-            out.append(blob)
-        out.sort(key=len, reverse=True)
-        return out
-
-    def place_starts(self, player_count: int, rng: random.Random) -> list[Coord]:
-        """시작 위치. 수도 타일 같은 특별한 칸은 두지 않는다 — 한 칸에서 시작해
-        번져 나갈 뿐이다.
-
-        전원을 **같은 대륙**에 놓는다. 한 명이라도 작은 섬에서 시작하면 그 판은
-        시작하자마자 끝난 것이나 마찬가지다 — 확장할 곳이 없어 병력 상한이 낮게
-        묶이고, 항해술을 뽑기 전까지는 바다를 건널 수도 없다."""
-        masses = self.landmasses()
-        if not masses:  # pragma: no cover - 해수면 보정이 실패한 극단적 경우
-            raise RuntimeError("육지가 없는 맵이 생성되었다")
-
-        pool = list(masses[0])
-        for extra in masses[1:]:
-            if len(pool) >= player_count * MIN_TILES_PER_START:
-                break
-            pool.extend(extra)
-
-        min_dist = min(self.width, self.height) / 2.0
-        picked: list[Coord] = []
-        for _ in range(400):
-            picked = []
-            shuffled = pool[:]
-            rng.shuffle(shuffled)
-            for pos in shuffled:
-                if all(_manhattan(pos, q) >= min_dist for q in picked):
-                    picked.append(pos)
-                if len(picked) == player_count:
+        원본의 스폰 규칙(`SpawnExecution`)은 P6 에서 옮긴다. 지금은 측정을 돌릴 수
+        있을 만큼만 — **가장 큰 대륙 안에서** 최대한 떨어뜨린다. 한 명이 섬에서
+        시작하면 그 판은 시작과 동시에 끝난 것이나 같다."""
+        land = np.flatnonzero(self.passable_mask())
+        if len(land) < count:
+            raise ValueError("육지가 인원보다 적다")
+        picks: list[TileRef] = []
+        for _ in range(count):
+            best, best_d = None, -1.0
+            for _ in range(attempts):
+                cand = int(rng.choice(land))
+                if not picks:
+                    best = cand
                     break
-            if len(picked) == player_count:
-                break
-            min_dist *= 0.92      # 좁은 대륙이면 조건을 점점 완화한다
-        if len(picked) < player_count:  # pragma: no cover
-            picked = pool[:player_count]
-
-        for pid, pos in enumerate(picked):
-            self.tiles[pos].owner = pid
-        return picked
+                cx, cy = self.xy(cand)
+                d = min((cx - self.xy(p)[0]) ** 2 + (cy - self.xy(p)[1]) ** 2
+                        for p in picks)
+                if d > best_d:
+                    best, best_d = cand, d
+            picks.append(int(best))
+        return picks
 
 
-# --- 노이즈 ---------------------------------------------------------------
-
-
-def _hash2(x: int, y: int, salt: int) -> float:
-    h = (x * 73856093) ^ (y * 19349663) ^ (salt * 83492791)
-    h = (h ^ (h >> 13)) & 0x7FFFFFFF
-    h = (h * 1274126177) & 0x7FFFFFFF
-    return (h % 65521) / 65521.0
-
-
-def _value_noise(fx: float, fy: float, salt: int) -> float:
-    x0, y0 = math.floor(fx), math.floor(fy)
-    tx, ty = fx - x0, fy - y0
-    sx = tx * tx * (3 - 2 * tx)
-    sy = ty * ty * (3 - 2 * ty)
-    x0, y0 = int(x0), int(y0)
-    v00 = _hash2(x0, y0, salt)
-    v10 = _hash2(x0 + 1, y0, salt)
-    v01 = _hash2(x0, y0 + 1, salt)
-    v11 = _hash2(x0 + 1, y0 + 1, salt)
-    return (v00 * (1 - sx) + v10 * sx) * (1 - sy) + (v01 * (1 - sx) + v11 * sx) * sy
-
-
-def _fbm(fx: float, fy: float, salt: int, octaves: int = NOISE_OCTAVES) -> float:
-    """옥타브를 겹쳐 큰 지형과 잔 지형을 함께 만든다."""
-    total = amp = 0.0
-    amp, freq, norm = 1.0, 1.0, 0.0
-    for _ in range(octaves):
-        total += _value_noise(fx * freq, fy * freq, salt) * amp
-        norm += amp
-        amp *= 0.5
-        freq *= 2.0
-    return total / norm
-
-
-def _height_at(x: int, y: int, width: int, height: int, salt: int) -> float:
-    """높이 = 노이즈 − 가장자리 감쇠. 감쇠가 없으면 대륙이 맵 밖으로 잘려 나가
-    직선 해안선이 생기고, 그 순간 절차 생성이라는 티가 난다."""
-    h = _fbm(x * NOISE_SCALE, y * NOISE_SCALE, salt)
-    nx = (x / (width - 1)) * 2 - 1 if width > 1 else 0.0
-    ny = (y / (height - 1)) * 2 - 1 if height > 1 else 0.0
-    dist = math.sqrt(nx * nx + ny * ny) / math.sqrt(2)
-    return h - (dist ** 2.1) * EDGE_FALLOFF
-
-
-def _percentile(values: list[float], q: float) -> float:
-    """values 의 q 분위값. 빈 리스트면 아무도 넘지 못할 값을 돌려준다."""
-    if not values:
-        return float("inf")
-    ordered = sorted(values)
-    idx = min(len(ordered) - 1, max(0, int(round(q * (len(ordered) - 1)))))
-    return ordered[idx]
-
-
-def _manhattan(a: Coord, b: Coord) -> int:
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+def _terrain_from_raw(raw: np.ndarray) -> np.ndarray:
+    """원본 바이트 → 지형 코드. GameMap.ts :: terrainType() 과 같은 순서다."""
+    mag = raw & C.MAGNITUDE_MASK
+    land = (raw & C.LAND_BIT) != 0
+    out = np.full(raw.size, Terrain.OCEAN, dtype=np.uint8)
+    out[land] = Terrain.PLAINS
+    out[land & (mag >= C.HIGHLAND_MAGNITUDE)] = Terrain.HIGHLAND
+    out[land & (mag >= C.MOUNTAIN_MAGNITUDE)] = Terrain.MOUNTAIN
+    out[land & (mag >= C.IMPASSABLE_MAGNITUDE)] = Terrain.IMPASSABLE
+    return out

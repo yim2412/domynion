@@ -1,0 +1,9 @@
+{
+  "id": "World",
+  "name": "World",
+  "map16x": {
+    "height": 250,
+    "num_land_tiles": 37575,
+    "width": 500
+  }
+}

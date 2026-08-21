@@ -1,0 +1,9 @@
+{
+  "id": "Asia",
+  "name": "Asia",
+  "map16x": {
+    "height": 300,
+    "num_land_tiles": 64809,
+    "width": 500
+  }
+}

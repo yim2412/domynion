@@ -1,11 +1,11 @@
-"""플레이어 상태와 증강이 반영된 파생 수치.
+"""플레이어 상태 — openfront 의 병력 공식 그대로.
 
-액션·AI·UI 는 원시 상수를 직접 읽지 않고 **여기 계산 결과만** 참조한다. 그래야
-증강 계수가 한 군데서만 적용되고, "이 상황에서 증강이 먹었나"를 의심할 일이 없다.
+원본 `Config.ts :: maxTroops() / troopIncreaseRate()`.
 
-영토 수는 여기 두지 않는다. 소유는 타일이 갖고 있고(`Tile.owner`), 그것을 복제해
-두면 반드시 어긋난다 — 확장이 초당 수십 칸씩 일어나므로 동기화 지점이 너무 많다.
-대신 `GameState` 가 증분으로 세어 넘겨 준다.
+**성장은 초당이 아니라 tick 당이다.** `troopIncreaseRate()` 가 매 tick 불려서 그 값을
+그대로 더한다. 초당으로 바꿔 두면 tick 길이를 바꿀 때 조용히 어긋난다.
+
+영토 수는 여기 두지 않는다. 소유는 지도 배열이 갖고 있고 엔진이 증분으로 세어 넘긴다.
 """
 
 from __future__ import annotations
@@ -13,92 +13,60 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import constants as C
-from .augments import Modifiers
-from .constants import Terrain
-from .gamemap import Coord
+from .gamemap import TileRef
 
 
 @dataclass
 class PlayerState:
     pid: int
     name: str
-    is_ai: bool = False
-    troops: float = C.TROOPS_START
-    attack_ratio: float = C.DEFAULT_ATTACK_RATIO   # 공격에 투입할 병력 비율
-    start: Coord | None = None
+    is_bot: bool = False
+    troops: float = 0.0
+    gold: int = 0                      # P2 에서 쓴다
+    start: TileRef | None = None
     alive: bool = True
 
-    augments: dict[str, int] = field(default_factory=dict)   # key -> level
-    pending_picks: int = 0        # 아직 고르지 않은 증강 수
+    # 도시 레벨 합. P2 에서 실제 유닛으로 바뀐다 — 지금은 상한 공식이 이 값을 읽는
+    # 자리만 열어 둔다(원본 공식에 들어 있으므로 빼면 공식이 달라진다).
+    city_levels: int = 0
 
-    # --- 증강 계수 --------------------------------------------------------
+    # 사람이 슬라이더로 조절하는 값. 기본은 원본의 attackAmount().
+    attack_ratio: float | None = None
 
-    @property
-    def mods(self) -> Modifiers:
-        return Modifiers.from_augments(self.augments)
+    augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
 
-    @property
-    def naval_range(self) -> int:
-        return int(self.mods.get("naval_range"))
+    def __post_init__(self) -> None:
+        if self.troops <= 0.0:
+            self.troops = (C.START_TROOPS_BOT if self.is_bot
+                           else C.START_TROOPS_HUMAN)
+        if self.attack_ratio is None:
+            self.attack_ratio = (C.ATTACK_RATIO_BOT if self.is_bot
+                                 else C.ATTACK_RATIO_HUMAN)
 
     # --- 병력 -------------------------------------------------------------
 
     def max_troops(self, tile_count: int) -> float:
-        """병력 상한. 영토가 곧 인구 부양력이다."""
-        base = C.TROOPS_CAP_BASE + tile_count * C.TROOPS_CAP_PER_TILE
-        return base * self.mods.mult("troops_cap_pct")
+        """`2 × (타일^0.6 × 1000 + 50000) + Σ도시레벨 × 250000`, 봇은 ÷3.
 
-    def growth_per_sec(self, tile_count: int) -> float:
-        """로지스틱 성장 — 상한에 가까울수록 느려진다. 그래서 큰 나라라고 해서
-        무한히 병력이 불지 않고, 쓰지 않고 쌓아 두는 전략에 천장이 생긴다."""
+        상수항 50000 이 크다는 점을 기억할 것 — 작은 지도에서는 이게 지배해서
+        영토를 넓혀도 상한이 거의 안 오른다(계획서 4.5절)."""
+        base = C.MAX_TROOPS_MULT * (
+            tile_count ** C.MAX_TROOPS_TILE_EXP * C.MAX_TROOPS_TILE_MULT
+            + C.MAX_TROOPS_BASE
+        ) + self.city_levels * C.CITY_TROOP_INCREASE
+        return base / C.BOT_MAX_TROOPS_DIV if self.is_bot else base
+
+    def troop_increase(self, tile_count: int) -> float:
+        """이번 **tick** 에 늘어날 병력. 상한을 넘지 않게 잘라서 돌려준다.
+
+        증가량이 상한이 아니라 **현재 병력**에 붙는다(`병력^0.73`). 그래서 병력이
+        적을 때는 회복이 느리고, 많을수록 빨라지다가 상한 근처에서 다시 눌린다."""
         cap = self.max_troops(tile_count)
-        if self.troops >= cap:
-            return 0.0
-        headroom = 1.0 - self.troops / cap
-        raw = max(C.TROOPS_GROWTH_FLOOR, cap * C.TROOPS_GROWTH_RATE * headroom)
-        return raw * self.mods.mult("troops_growth_pct")
-
-    def fill_ratio(self, tile_count: int) -> float:
-        """병력이 상한의 몇 %인가(0~1). 방어 비용에 실리는 값이라 '얼마나 두껍게
-        지키는가'가 된다.
-
-        타일당 병력(절대값)을 쓰면 안 된다 — 그 값은 상한까지 커져 비용이 십수 배로
-        뛰고, 서로를 아무도 못 뚫어 판이 교착된다."""
-        cap = self.max_troops(tile_count)
-        return min(1.0, self.troops / cap) if cap > 0 else 0.0
+        add = C.TROOP_GROWTH_FLAT + self.troops ** C.TROOP_GROWTH_EXP / C.TROOP_GROWTH_DIV
+        add *= 1.0 - self.troops / cap if cap > 0 else 0.0
+        if self.is_bot:
+            add *= C.BOT_GROWTH_MULT
+        return min(self.troops + add, cap) - self.troops
 
     def attack_troops(self) -> float:
         return self.troops * self.attack_ratio
-
-    # --- 정복 계수 --------------------------------------------------------
-
-    def cost_mult(self, terrain: Terrain, vs_player: bool) -> float:
-        """이 플레이어가 이 지형을 칠 때의 비용 배율.
-
-        지형 특화와 대상별 할인은 **더해서** 한 번에 적용한다. 각각 곱하면 두 장을
-        겹쳤을 때 배율이 0 에 붙어 공짜 확장이 된다."""
-        m = self.mods
-        pct = m.get("cost_vs_player_pct" if vs_player else "cost_vs_neutral_pct")
-        if terrain in C.HIGHLAND:
-            pct += m.get("cost_highland_pct")
-        elif terrain in C.WOODLAND:
-            pct += m.get("cost_woodland_pct")
-        return max(0.2, 1.0 + pct)
-
-    def expand_speed_mult(self) -> float:
-        return self.mods.mult("expand_speed_pct")
-
-    def defense_mult(self) -> float:
-        """남이 내 땅을 먹을 때 붙는 배율."""
-        return self.mods.mult("defense_pct")
-
-    def defense_factor(self, tile_count: int) -> float:
-        """남이 내 땅 한 칸을 먹을 때 비용에 곱해지는 값 전부.
-
-        '얼마나 두껍게 지키고 있는가'(충전율)와 방어 증강을 합친 것이다. 공격 쪽
-        비용 공식이 이 한 값만 보게 해서, 방어 판정이 두 군데로 갈라지지 않게 한다."""
-        return (1.0 + self.fill_ratio(tile_count) * C.DEFENDER_FILL_MULT) * self.defense_mult()
-
-    def defender_loss_mult(self) -> float:
-        """내가 뺏을 때 상대가 잃는 병력에 붙는 배율."""
-        return self.mods.mult("defender_loss_pct")

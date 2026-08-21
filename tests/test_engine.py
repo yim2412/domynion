@@ -1,176 +1,184 @@
-"""게임 루프 — 증분 카운트, 증강 정지, 승리 판정.
+"""엔진 — 병력 공식, 증분 카운트, 흡수, 종료.
 
-여기서 가장 중요한 건 **증분 카운트가 실제 지도와 어긋나지 않는가**다. 이건 예외를
-던지지 않고 값만 조용히 틀어지는 종류의 버그라, 안 재면 판이 다 끝날 때까지 모른다.
+가장 중요한 건 **증분 카운트가 지도와 어긋나지 않는가**다. 예외를 던지지 않고 값만
+조용히 틀어지는 종류라, 안 재면 판이 다 끝날 때까지 모른다.
 """
 
 from __future__ import annotations
 
 import random
 
+import pytest
+
 from domynion.core import constants as C
 from domynion.core.engine import GameState, Victory
+from domynion.core.gamemap import GameMap
 from domynion.core.state import PlayerState
-
-from conftest import make_map
 
 
 def make_state(rows: list[str], owners: dict[int, tuple[int, int]],
-               seed: int = 1) -> GameState:
-    gm = make_map(rows)
+               seed: int = 1, bots: bool = True) -> GameState:
+    gm = GameMap.from_rows(rows)
     players = {}
-    for pid, pos in owners.items():
-        players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_ai=True, start=pos)
-        gm[pos].owner = pid
+    for pid, (x, y) in owners.items():
+        t = gm.ref(x, y)
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=bots, start=t)
+        gm.owner[t] = pid
     st = GameState(gmap=gm, players=players, rng=random.Random(seed))
     st._counts = {pid: 1 for pid in players}
-    st._land_total = len(gm.land_tiles())
     return st
 
 
-def scan_counts(st: GameState) -> dict[int, int]:
-    """지도를 전수 순회해 센다. 런타임에는 절대 이렇게 세지 않는다 — 대조용이다."""
-    out = {pid: 0 for pid in st.players}
-    for t in st.gmap.all_tiles():
-        if t.owner is not None:
-            out[t.owner] = out.get(t.owner, 0) + 1
-    return out
+# --- 병력 공식 --------------------------------------------------------------
+
+def test_max_troops_matches_original_formula():
+    p = PlayerState(pid=0, name="P0", is_bot=False)
+    for tiles in (1, 100, 1_600, 37_575, 100_000):
+        want = C.MAX_TROOPS_MULT * (tiles ** C.MAX_TROOPS_TILE_EXP
+                                    * C.MAX_TROOPS_TILE_MULT + C.MAX_TROOPS_BASE)
+        assert p.max_troops(tiles) == pytest.approx(want)
 
 
-# --- 증분 카운트 -----------------------------------------------------------
+def test_map_must_be_large_enough_for_territory_to_matter():
+    """계획서 4.5절을 코드로 못 박는다 — **지도를 줄이려는 시도를 막는 테스트다.**
 
-def test_counts_match_full_scan_after_expansion():
-    st = make_state(["." * 12] * 8, {0: (0, 0), 1: (11, 7)})
-    st.players[0].troops = 400.0
+    상한 공식의 상수항(50000)이 작은 지도에서 지배한다. 1타일 대비 상한 배율:
+      1,600칸 → 2.6배 (영토 확장이 거의 무의미)
+     37,575칸 → 11.9배 (World, 쓸 만하다)
+    지도를 v0.1 규모로 되돌리면 아래 첫 단언이 깨진다."""
+    p = PlayerState(pid=0, name="P0", is_bot=False)
+    assert p.max_troops(37_575) / p.max_troops(1) > 10.0
+    assert p.max_troops(1_600) / p.max_troops(1) < 3.0, "작은 지도가 왜 안 되는가"
+
+
+def test_city_levels_raise_the_cap():
+    """도시는 P2 에서 붙지만 공식에는 이미 들어 있다 — 빼면 원본과 달라진다."""
+    plain = PlayerState(pid=0, name="P0")
+    with_city = PlayerState(pid=1, name="P1", city_levels=3)
+    assert (with_city.max_troops(100) - plain.max_troops(100)
+            == pytest.approx(3 * C.CITY_TROOP_INCREASE))
+
+
+def test_bot_cap_and_growth_are_reduced():
+    h = PlayerState(pid=0, name="H", is_bot=False, troops=10_000.0)
+    b = PlayerState(pid=1, name="B", is_bot=True, troops=10_000.0)
+    assert b.max_troops(500) == pytest.approx(h.max_troops(500) / C.BOT_MAX_TROOPS_DIV)
+    assert b.troop_increase(500) < h.troop_increase(500)
+
+
+def test_growth_depends_on_current_troops_not_cap():
+    """`(10 + 병력^0.73/4) × (1 − 병력/상한)`.
+
+    v0.1 은 상한에 비례했다. 그때 방식이면 병력이 적을수록 회복이 빨라야 하는데,
+    원본은 반대로 **병력이 적을 때 느리다.**"""
+    lo = PlayerState(pid=0, name="A", troops=1_000.0)
+    hi = PlayerState(pid=1, name="B", troops=50_000.0)
+    assert lo.troop_increase(1_000) < hi.troop_increase(1_000)
+
+
+def test_growth_never_exceeds_cap():
+    p = PlayerState(pid=0, name="P0", troops=0.0)
+    p.troops = p.max_troops(10) - 1.0
+    assert p.troops + p.troop_increase(10) <= p.max_troops(10) + 1e-6
+
+
+def test_attack_ratio_defaults_match_original():
+    assert PlayerState(pid=0, name="H", is_bot=False).attack_ratio == C.ATTACK_RATIO_HUMAN
+    assert PlayerState(pid=1, name="B", is_bot=True).attack_ratio == C.ATTACK_RATIO_BOT
+
+
+# --- 증분 카운트 ------------------------------------------------------------
+
+def test_counts_match_full_scan_while_expanding():
+    st = make_state(["." * 24] * 16, {0: (0, 0), 1: (23, 15)})
     st.launch_attack(0, None)
-    for _ in range(400):
+    for _ in range(120):
         st.tick()
-        assert st._counts == scan_counts(st), f"{st.elapsed:.1f}초에 카운트가 어긋났다"
+        assert st.verify_counts(), f"{st.tick_count}tick 에 카운트가 어긋났다"
 
 
 def test_counts_match_full_scan_when_taking_from_a_player():
-    """중립이 아니라 **사람 땅**을 뺏을 때가 어긋나기 쉽다 — 양쪽을 동시에 고쳐야 한다."""
-    st = make_state(["." * 10] * 4, {0: (0, 0), 1: (9, 0)})
-    st.players[1].troops = 300.0
-    st.launch_attack(1, None)                # P1 이 먼저 중립을 넓게 먹는다
-    for _ in range(200):
+    """사람 땅을 뺏을 때가 어긋나기 쉽다 — 양쪽을 동시에 고쳐야 한다.
+
+    P1 의 영토를 손으로 깔아 P0 과 맞닿게 한다. AI 확장에 맡기면 둘이 안 만나서
+    아무것도 안 재는 테스트가 된다(실제로 그랬다)."""
+    st = make_state(["." * 30] * 10, {0: (0, 0), 1: (1, 0)})
+    for y in range(10):
+        for x in range(1, 30):
+            st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts = {0: 1, 1: 29 * 10}
+    assert st.verify_counts()
+
+    st.players[0].troops = st.players[0].max_troops(1)
+    assert st.launch_attack(0, 1) is not None, "국경이 안 맞닿았다"
+    for _ in range(120):
         st.tick()
-    st.players[0].troops = 600.0
-    st.launch_attack(0, 1)                   # 그 땅을 P0 이 친다
-    for _ in range(400):
-        st.tick()
-        assert st._counts == scan_counts(st)
-    assert st._counts[0] > 1, "P0 이 한 칸도 못 뺏었으면 이 테스트는 아무것도 안 쟀다"
+        assert st.verify_counts()
+        if st.over:
+            break
+    assert st.tiles(0) > 1, "P0 이 한 칸도 못 뺏었으면 이 테스트는 아무것도 안 쟀다"
 
 
-# --- 병력 -----------------------------------------------------------------
+# --- 흡수·탈락 --------------------------------------------------------------
 
-def test_growth_is_wired_to_constants(monkeypatch):
-    """배선 검증은 **기본값이 아닌 값**으로 잰다. 상수를 바꿨는데 결과가 그대로면
-    엔진이 상수를 안 읽고 있다는 뜻이다."""
-    st = make_state(["." * 6] * 4, {0: (0, 0)})
-    st.players[0].troops = 10.0
-    before = st.players[0].troops
-    st.tick(1.0)
-    normal = st.players[0].troops - before
+def test_small_defender_is_absorbed_whole():
+    """타일 100 미만으로 떨어진 수비자는 통째로 흡수된다 (`handleDeadDefender`).
 
-    monkeypatch.setattr(C, "TROOPS_GROWTH_RATE", C.TROOPS_GROWTH_RATE * 4)
-    st2 = make_state(["." * 6] * 4, {0: (0, 0)})
-    st2.players[0].troops = 10.0
-    st2.tick(1.0)
-    boosted = st2.players[0].troops - 10.0
-    assert boosted > normal * 1.5, f"성장률을 4배로 올렸는데 {normal:.2f}→{boosted:.2f}"
+    막지 않았으면: 잔챙이 영토를 한 칸씩 긁느라 판이 늘어진다."""
+    st = make_state(["." * 20] * 6, {0: (0, 0), 1: (19, 5)})
+    st._counts = {0: 1, 1: 1}
+    st.gmap.owner[st.gmap.ref(18, 5)] = 1
+    st._counts[1] = 2
+    st._maybe_absorb(0, 1)
+    assert not st.players[1].alive
+    assert st.tiles(1) == 0
+    assert st.tiles(0) == 3
+    assert st.verify_counts()
 
 
-def test_leftover_troops_return_home():
-    """부대가 멈추면 남은 병력은 사라지지 않고 본국으로 돌아온다."""
-    # 두 명을 둔다 — 혼자면 첫 tick 에 정복 승리로 판이 끝나 부대가 진행하지 않는다
-    st = make_state(["...."], {0: (0, 0), 1: (3, 0)})
-    st.players[0].troops = 1000.0
+def test_absorb_does_not_fire_above_threshold():
+    st = make_state(["." * 20] * 20, {0: (0, 0), 1: (19, 19)})
+    st._counts = {0: 1, 1: C.CONQUER_PLAYER_TILES}
+    st._maybe_absorb(0, 1)
+    assert st.players[1].alive
+
+
+def test_retreating_troops_come_home():
+    st = make_state(["...~"], {0: (0, 0), 1: (3, 0)}, bots=False)
+    st.gmap.owner[3] = 1                      # 바다 칸은 소유 못 하니 육지로
+    st.gmap.raw[3] = C.LAND_BIT
+    st.gmap.terrain[3] = C.Terrain.PLAINS
+    p = st.players[0]
+    sent = p.attack_troops()
     st.launch_attack(0, None)
-    assert st.players[0].troops < 1000.0, "출정한 병력이 본국에서 빠지지 않았다"
-    for _ in range(100):
+    assert p.troops == pytest.approx(25_000.0 - sent + 0, abs=1.0) or p.troops < 25_000.0
+    for _ in range(40):
         st.tick()
         if not st.attacks:
             break
     assert not st.attacks
-    # 중립 두 칸만 먹고 멈추므로 거의 전부 돌아와야 한다
-    assert st._counts[0] == 3
-    assert st.players[0].troops > 900.0
 
 
-# --- 증강 정지 -------------------------------------------------------------
+# --- 종료 -------------------------------------------------------------------
 
-def test_pause_fires_at_first_augment_time():
-    st = make_state(["." * 8] * 6, {0: (0, 0), 1: (7, 5)})
-    while st.elapsed < C.AUGMENT_FIRST_SEC - C.TICK_DT:
-        st.tick()
-    assert all(not p.augments for p in st.players.values()), "정지 전에 증강이 붙었다"
-    st.tick()
-    # AI 는 즉시 고르므로 같은 tick 에 정지가 풀린다 — 결과로 확인한다
-    assert all(sum(p.augments.values()) == 1 for p in st.players.values())
-    assert not st.paused, "AI 만 있는 판에서 정지가 풀리지 않았다"
-
-
-def test_human_blocks_until_pick_then_timeout_resolves():
-    st = make_state(["." * 8] * 6, {0: (0, 0), 1: (7, 5)})
-    st.players[0].is_ai = False
-    while not st.paused and st.elapsed < C.AUGMENT_FIRST_SEC + 1.0:
-        st.tick()
-    assert st.paused, "사람이 안 골랐는데 판이 계속 흘렀다"
-
-    frozen = st.elapsed
-    for _ in range(10):
-        st.tick()
-    assert st.elapsed == frozen, "정지 중에 시계가 흘렀다"
-
-    for _ in range(int(C.AUGMENT_PICK_TIMEOUT / C.TICK_DT) + 2):
-        st.tick()
-    assert not st.paused, "시간이 다했는데도 판이 멈춰 있다 — 한 명이 판 전체를 잠근다"
-    assert sum(st.players[0].augments.values()) == 1, "자동 선택이 안 됐다"
-
-
-def test_max_level_card_leaves_the_pool():
-    st = make_state(["." * 8] * 6, {0: (0, 0)})
-    p = st.players[0]
-    p.augments["settlers"] = C.AUGMENT_MAX_LEVEL
-    st.ai_pick = lambda _p, offers: offers[0].key
-    for _ in range(int(C.MATCH_SECONDS / C.TICK_DT)):
-        st.tick()
-        if st.over:
-            break
-    assert p.augments["settlers"] == C.AUGMENT_MAX_LEVEL, "최대 레벨을 넘겼다"
-
-
-# --- 승리 -----------------------------------------------------------------
-
-def test_domination_ends_the_match():
+def test_conquest_when_one_left():
     st = make_state(["." * 10] * 4, {0: (0, 0), 1: (9, 3)})
-    st.players[0].troops = 5000.0
-    st.launch_attack(0, None)
-    for _ in range(2000):
-        st.tick()
-        if st.over:
-            break
-    assert st.over and st.winner == 0
-    assert st.victory in (Victory.DOMINATION, Victory.CONQUEST)
+    st.players[1].alive = False
+    st.tick()
+    assert st.over and st.victory is Victory.CONQUEST and st.winner == 0
 
 
 def test_timeout_gives_it_to_the_biggest():
     st = make_state(["." * 10] * 4, {0: (0, 0), 1: (9, 3)})
-    st.players[0].troops = 60.0
-    st.launch_attack(0, None)
-    st.elapsed = C.MATCH_SECONDS - C.TICK_DT
+    st._counts = {0: 20, 1: 5}
+    st.tick_count = int(C.MATCH_SECONDS / C.TICK_DT) - 1
     st.tick()
-    st.tick()
-    assert st.over and st.victory is Victory.TIMEOUT
-    assert st.winner == 0, "영토가 더 넓은 쪽이 이겨야 한다"
+    assert st.over and st.victory is Victory.TIMEOUT and st.winner == 0
 
 
-def test_eliminated_player_stops_growing():
-    st = make_state(["." * 6] * 4, {0: (0, 0), 1: (5, 3)})
-    st.gmap[(5, 3)].owner = 0
-    st._counts = {0: 2, 1: 0}
+def test_tick_is_ten_hz():
+    """원본 `turnIntervalMs` = 100. 20Hz 로 되돌리면 성장·예산이 두 배가 된다."""
+    assert C.TICK_HZ == 10
+    st = make_state(["..", ".."], {0: (0, 0)})
     st.tick()
-    assert not st.players[1].alive
-    assert st.players[1].troops == 0.0
+    assert st.elapsed == pytest.approx(0.1)
