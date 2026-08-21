@@ -1,0 +1,109 @@
+"""규칙 기반 AI — 언제 / 누구를 / 얼마로 치는가.
+
+핵심은 **반응 주기**다. 매 tick 판단하게 두면 20Hz 로 공격을 쏟아 내 부대가 잘게
+쪼개지고, 사람은 절대 흉내 낼 수 없는 손놀림이 된다. 사람과 비슷한 간격으로만
+결정하게 묶는다.
+
+`core` 를 읽기만 하고 고치지 않는다 — 상태 변경은 전부 `GameState` 의 행동 메서드를
+거친다. 그래야 AI 가 규칙 밖의 일을 할 수 없다.
+"""
+
+from __future__ import annotations
+
+import random
+
+from ..core.augments import Augment
+from ..core.engine import GameState
+from ..core.state import PlayerState
+
+# --- AI 튜닝 (게임 밸런스가 아니라 '행동'이라 constants.py 와 분리한다) ---------
+
+REACT_SEC = 1.0            # 이 간격으로만 판단한다
+LAUNCH_FILL = 0.55         # 병력이 상한의 이만큼 차면 공격한다
+NEUTRAL_BIAS = 1.6         # 중립을 사람보다 이만큼 선호 (싸움보다 개척이 싸다)
+MAX_CONCURRENT = 1         # 동시에 굴리는 부대 수. 늘리면 병력이 잘게 쪼개진다
+
+# 증강 선호 가중치. 뽑히는 카드가 무작위라 '선호'는 순위가 아니라 저울이다.
+AUGMENT_WEIGHT: dict[str, float] = {
+    "fertile": 1.2,
+    "conscript": 1.3,
+    "elite": 1.0,
+    "settlers": 1.2,
+    "forced_march": 1.0,
+    "ramparts": 0.9,
+    "mountaineers": 0.7,
+    "rangers": 0.7,
+    "scorched": 0.8,
+    "seafaring": 0.6,
+}
+
+
+class SimpleAI:
+    """플레이어 한 명을 조종한다. 상태를 갖는 이유는 반응 주기 하나 때문이다."""
+
+    def __init__(self, pid: int, rng: random.Random):
+        self.pid = pid
+        self.rng = rng
+        self._cooldown = rng.uniform(0.0, REACT_SEC)   # 전원이 같은 tick 에 움직이지 않게
+
+    # --- 공격 -------------------------------------------------------------
+
+    def update(self, st: GameState, dt: float) -> None:
+        self._cooldown -= dt
+        if self._cooldown > 0.0:
+            return
+        self._cooldown += REACT_SEC
+
+        p = st.players[self.pid]
+        if not p.alive or st.paused or st.over:
+            return
+        if sum(1 for a in st.attacks if a.attacker == self.pid) >= MAX_CONCURRENT:
+            return
+        if p.fill_ratio(st.tiles(self.pid)) < LAUNCH_FILL:
+            return
+
+        target = self.choose_target(st)
+        if target is not False:
+            st.launch_attack(self.pid, target)
+
+    def choose_target(self, st: GameState) -> "int | None | bool":
+        """칠 상대. 닿는 곳이 없으면 False 를 돌려준다 (None 은 '중립'이라 못 쓴다)."""
+        p = st.players[self.pid]
+        reachable = st.gmap.border_targets(self.pid, p.naval_range)
+        best, best_score = False, -1.0
+        for owner in reachable:
+            if owner == self.pid:
+                continue
+            if owner is None:
+                score = NEUTRAL_BIAS
+            else:
+                d = st.players.get(owner)
+                if d is None or not d.alive:
+                    continue
+                # 약한 쪽을 먼저 친다. 병력이 두꺼운 쪽은 칸값 자체가 비싸다.
+                score = 1.0 / (1.0 + d.fill_ratio(st.tiles(owner)) * 2.0)
+            if score > best_score:
+                best, best_score = owner, score
+        return best
+
+    # --- 증강 -------------------------------------------------------------
+
+    def pick(self, player: PlayerState, offers: list[Augment]) -> str:
+        """가중 무작위. 항상 최선을 고르면 모든 AI 가 같은 빌드로 수렴해 판이 똑같아진다."""
+        weights = [AUGMENT_WEIGHT.get(a.key, 1.0) for a in offers]
+        return self.rng.choices(offers, weights=weights, k=1)[0].key
+
+
+def attach(st: GameState, rng: random.Random,
+           pids: list[int] | None = None) -> "list[SimpleAI]":
+    """AI 들을 만들어 붙인다. 증강 선택기도 여기서 배선한다."""
+    targets = pids if pids is not None else [p.pid for p in st.players.values() if p.is_ai]
+    bots = [SimpleAI(pid, rng) for pid in targets]
+    by_pid = {b.pid: b for b in bots}
+
+    def pick(player: PlayerState, offers: list[Augment]) -> str:
+        bot = by_pid.get(player.pid)
+        return bot.pick(player, offers) if bot else rng.choice(offers).key
+
+    st.ai_pick = pick
+    return bots

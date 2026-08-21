@@ -10,14 +10,17 @@
 
 ## 상태
 
-**설계 단계.** 코어의 절반이 서 있고 나머지는 아직 없다.
+**규칙이 돌아간다. 화면이 없다.** 판을 처음부터 끝까지 시뮬레이션할 수 있고, 밸런스를
+수치로 잴 수 있다. 사람이 앉아서 할 수는 아직 없다.
 
 | | |
 |---|---|
-| ✅ | `core/constants.py` `gamemap.py` `augments.py` `state.py` |
-| ⬜ | `core/attack.py` `engine.py` · `ai/` · `ui/` · `cli/` · `tests/` |
+| ✅ | `core/` 전부 · `ai/simple_ai.py` · `cli/play.py` · `tests/` |
+| ⬜ | `ui/` (PyQt6) |
 
-아직 **플레이할 수 없다.** 실행 방법은 게임 루프(`engine.py`)가 서면 여기에 적는다.
+**밸런스는 아직 나쁘다.** 240판 기준선에서 절반(51%)이 시간 종료로 끝난다 —
+서로 못 뚫고 중립만 먹는 모양이다. 자세한 수치와 다음 손댈 곳은
+[`docs/design.md`](docs/design.md) 6·7절에 있다.
 
 ## 설치
 
@@ -25,7 +28,20 @@
 pip install -e ".[dev,ui]"
 ```
 
-## 지금 확인할 수 있는 것
+## 실행
+
+```bash
+# 헤드리스로 판을 돌려 밸런스를 잰다 (240판 약 75초)
+python -m domynion.cli.play --games 40 --players 4
+python -m domynion.cli.play --games 240 --players 4 --seed 1000
+
+# 테스트
+python -m pytest tests -q
+```
+
+40판은 방향을 보는 용도이고, **채택 판단은 240판**으로 본다. 판당 노이즈가 크다.
+
+## 지도만 보기
 
 ```bash
 # 대륙 생성 결과를 ASCII 로 본다
@@ -50,11 +66,13 @@ src/domynion/
     gamemap.py     대륙 생성(노이즈 높이맵), 타일, 인접, 시작 배치
     augments.py    증강 카드·레벨·계수 합산·드래프트
     state.py       플레이어 상태 + 증강이 반영된 파생 수치
-    attack.py      (예정) 공격 부대와 연속 확장
-    engine.py      (예정) tick(state, dt), 증강 정지, 승리 판정
-  ai/            (예정) 규칙 기반 AI
+    attack.py      공격 부대와 연속 확장 (프론티어 BFS 큐)
+    engine.py      tick(dt), 증강 정지, 탈락, 승리 판정
+  ai/
+    simple_ai.py   규칙 기반 AI — 반응 주기로 묶여 있다
   ui/            (예정) PyQt6 — 전체화면 지도 + 오버레이 HUD
-  cli/           (예정) 헤드리스 시뮬레이션 (밸런스 측정)
+  cli/
+    play.py        헤드리스 시뮬레이션 (밸런스 측정)
 ```
 
 계층 규칙: `core` 는 아무것도 import 하지 않는다. UI 와 AI 는 `core` 위에 나란히

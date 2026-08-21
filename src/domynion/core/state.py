@@ -92,6 +92,13 @@ class PlayerState:
         """남이 내 땅을 먹을 때 붙는 배율."""
         return self.mods.mult("defense_pct")
 
+    def defense_factor(self, tile_count: int) -> float:
+        """남이 내 땅 한 칸을 먹을 때 비용에 곱해지는 값 전부.
+
+        '얼마나 두껍게 지키고 있는가'(충전율)와 방어 증강을 합친 것이다. 공격 쪽
+        비용 공식이 이 한 값만 보게 해서, 방어 판정이 두 군데로 갈라지지 않게 한다."""
+        return (1.0 + self.fill_ratio(tile_count) * C.DEFENDER_FILL_MULT) * self.defense_mult()
+
     def defender_loss_mult(self) -> float:
         """내가 뺏을 때 상대가 잃는 병력에 붙는 배율."""
         return self.mods.mult("defender_loss_pct")
