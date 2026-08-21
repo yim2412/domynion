@@ -19,14 +19,20 @@ from ..core import constants as C
 from ..core.engine import GameState
 from ..core.gamemap import DEFAULT_SIZE, SIZES
 
+# 원본 싱글플레이 기본 구성(`SinglePlayerModal :: DEFAULT_OPTIONS`).
+# 지도가 빽빽한 것이 이 게임의 기본 상태다 — 몇 명만 두면 전혀 다른 게임이 된다.
+DEFAULT_BOTS = 400
+DEFAULT_NATIONS = 72        # world manifest 의 나라 수
+
 
 def build_state(seed: int, players: int, map_name: str, human: int,
-                clock: str | None, size: str) -> tuple[GameState, random.Random]:
+                clock: str | None, size: str,
+                bots: int = 0) -> tuple[GameState, random.Random]:
     rng = random.Random(seed)
-    st = GameState.new(players, rng, map_name=map_name, human=human, size=size)
-    for p in st.players.values():
-        p.kind = "human" if p.pid == human else "nation"
-        p.is_bot = False
+    # ⚠ 여기서 `kind` 를 덮어쓰면 안 된다. `new()` 가 나라·봇·사람을 이미 나눠
+    # 놓는데, 전부 nation 으로 밀면 봇의 성격(동맹 다 받기·건물 지우기)이 사라진다.
+    st = GameState.new(players, rng, map_name=map_name, human=human,
+                       size=size, bots=bots)
     if clock:
         st.clock.cfg.enabled = True
         st.clock.cfg.speed = clock
@@ -39,7 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--size", choices=list(SIZES), default=DEFAULT_SIZE,
                     help="지도 해상도. map16x=1/16 · map4x=1/4 · map=원본. "
                          "클수록 원본 밸런스에 가깝지만 무겁다")
-    ap.add_argument("--players", type=int, default=4)
+    ap.add_argument("--players", type=int, default=DEFAULT_NATIONS,
+                    help="나라 수 (지도 manifest 의 실제 국가부터 채운다)")
+    ap.add_argument("--bots", type=int, default=DEFAULT_BOTS,
+                    help="부족(봇) 수. 원본 싱글 기본이 400 이다")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--human", type=int, default=0, help="사람이 잡을 pid")
     ap.add_argument("--difficulty", choices=list(C.DIFFICULTIES), default="medium")
@@ -60,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     from .main_window import MainWindow
 
     st, rng = build_state(args.seed, args.players, args.map_name,
-                          args.human, args.clock, args.size)
+                          args.human, args.clock, args.size, args.bots)
     app = QApplication(sys.argv[:1])
     # 전역 폰트를 먼저 정한다 — 위젯이 만들어진 뒤에 바꾸면 이미 잰 크기가 안 맞는다
     from PyQt6.QtGui import QFont

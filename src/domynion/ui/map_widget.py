@@ -53,6 +53,11 @@ PAN_SPEED = 900.0        # 초당 픽셀
 PAN_ACCEL = 12.0         # 목표 속도로 당기는 세기 (클수록 즉각적)
 MAX_BORDER_LINES = 40_000
 
+# 이름을 그릴 최소 픽셀. `cullThreshold` 에 해당한다 — **이보다 작으면 버린다.**
+# 원본은 정규화 좌표 0.008 을 쓰는데, 우리는 픽셀이라 읽을 수 있는 하한으로 잡았다.
+# 커서가 얹힌 나라만 예외다(원본도 `isHighlighted` 는 컷을 건너뛴다).
+LABEL_MIN_PX = 11
+
 
 class MapWidget(QWidget):
     """지도를 그린다. 가로로 순환하고, 휠·키로 이동/확대한다."""
@@ -276,7 +281,13 @@ class MapWidget(QWidget):
             text = f"{player.name} {self.state.share(pid) * 100:.0f}%"
             # 폰트는 **영토가 실제로 차지한 폭**에서 뽑는다. 타일 비례로 잡으면
             # 큰 나라 이름이 화면을 덮고, 고정하면 작은 나라 위에서 넘친다.
-            size = int(min(48, max(9, span * z / max(len(text), 3) * 0.9)))
+            size = int(min(48, span * z / max(len(text), 3) * 0.9))
+            # ⚠ **작으면 하한으로 끌어올리지 말고 아예 안 그린다.**
+            # 원본도 화면 크기가 `cullThreshold` 미만이면 버린다. 하한을 두면
+            # 400개 부족 이름이 전부 9px 로 그려져 지도가 글자로 덮인다.
+            if size < LABEL_MIN_PX and pid != self.hovered_owner:
+                continue
+            size = max(size, LABEL_MIN_PX)
             font = ui_font(size)
             p.setFont(font)
             fm = QFontMetrics(font)

@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.map.mouseReleaseEvent = self._map_release      # 좌클릭 = 공격
 
         self.scoreboard = Scoreboard(state, self.map)
+        self.scoreboard.me = human
         self.scoreboard.move(12, 12)
         self.scoreboard.adjustSize()
 

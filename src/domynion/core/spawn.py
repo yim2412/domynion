@@ -27,6 +27,11 @@ SPAWN_RADIUS = 4
 MIN_DISTANCE_BETWEEN_PLAYERS = 30
 
 
+# 나라 자리가 막혔을 때 몇 칸까지 밀어낼 것인가. **우리 값이다** — 원본은 나라를
+# 서버가 배치하므로 이 문제가 없다. 너무 크면 나라가 엉뚱한 대륙으로 넘어간다.
+NATION_NUDGE_MAX = 25
+
+
 def spawn_tiles(gmap: GameMap, centre: TileRef,
                 require_all_valid: bool = True) -> list[TileRef] | None:
     """`getSpawnTiles` — 중심에서 유클리드 반경 4 안의 칸들.
@@ -92,6 +97,35 @@ def pick_spawn(gmap: GameMap, rng: random.Random,
         tiles = spawn_tiles(gmap, centre, require_all_valid=True)
         if tiles:
             return centre, tiles
+    return None
+
+
+def place_at(gmap: GameMap, pid: int, want: TileRef,
+             rng: random.Random) -> tuple[TileRef, list[TileRef]] | None:
+    """정해진 자리 근처에 앉힌다 — 나라는 manifest 좌표가 정해져 있다.
+
+    그 자리가 이미 찼거나 물이면 **가까운 순으로 밀어낸다.** 못 앉히면 None 이고,
+    호출부가 무작위 배치로 넘긴다 — 나라 하나 때문에 판이 안 열리면 안 된다.
+    """
+    w = gmap.width
+    cx, cy = want % w, want // w
+    for r in range(0, NATION_NUDGE_MAX + 1):
+        # 반지름 r 의 정사각 링만 본다. 안쪽은 이미 이전 r 에서 봤다.
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if r and max(abs(dx), abs(dy)) != r:
+                    continue
+                x, y = cx + dx, cy + dy
+                if not (0 <= x < w and 0 <= y < gmap.height):
+                    continue
+                t = y * w + x
+                if int(gmap.owner[t]) >= 0:
+                    continue
+                tiles = spawn_tiles(gmap, t, require_all_valid=True)
+                if tiles:
+                    for u in tiles:
+                        gmap.owner[u] = pid
+                    return t, tiles
     return None
 
 

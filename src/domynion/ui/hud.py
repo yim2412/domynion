@@ -16,6 +16,10 @@ from ..core import constants as C
 from ..core.engine import GameState
 from . import palette as P
 
+# 순위표에 몇 줄을 보여줄 것인가. 원본 기본 구성이 472명이라 전부 쓰면 화면을 덮는다.
+# 마지막 한 줄은 상위권 밖일 때 **내 자리**로 쓴다.
+SCOREBOARD_ROWS = 12
+
 _PANEL = """
 QWidget#panel { background: rgba(16, 20, 28, 200); border-radius: 6px; }
 QLabel { color: #e8e8ec; }
@@ -43,10 +47,13 @@ class Scoreboard(QWidget):
         self.clock_label = QLabel()
         self.clock_label.setStyleSheet("font-weight: bold;")
         box.addWidget(self.clock_label)
-        for _ in state.players:
+        # ⚠ **줄 수를 플레이어 수로 잡으면 안 된다.** 원본 기본 구성이 472명이라
+        # 순위표가 화면 왼쪽 전체를 덮는다. 상위 몇 명 + 내 줄만 보여준다.
+        for _ in range(SCOREBOARD_ROWS):
             lbl = QLabel()
             box.addWidget(lbl)
             self._rows.append(lbl)
+        self.me: int | None = None
 
     def refresh(self) -> None:
         st = self.state
@@ -57,16 +64,27 @@ class Scoreboard(QWidget):
         self.clock_label.setText(f"{int(st.elapsed) // 60:02d}:{int(st.elapsed) % 60:02d}{bar}")
 
         order = sorted(st.players.values(), key=lambda p: -st.tiles(p.pid))
-        for lbl, p in zip(self._rows, order):
+        # 상위권 밖이면 **내 줄을 맨 아래에 끼워 넣는다.** 안 그러면 판이 커진 뒤
+        # 내가 몇 등인지 화면 어디에도 안 나온다.
+        shown = order[:len(self._rows)]
+        if self.me is not None and self.me in st.players:
+            if all(p.pid != self.me for p in shown):
+                shown = shown[:-1] + [st.players[self.me]]
+        # 남는 줄을 비우는 코드는 두지 않는다 — `st.players` 는 판 중에 줄지 않고
+        # QLabel 초기값이 이미 빈 문자열이라, 돌연변이로도 안 잡히는 죽은 줄이 된다.
+        for lbl, p in zip(self._rows, shown):
+            rank = order.index(p) + 1
             share = st.share(p.pid) * 100
             doomed = p.pid in st.clock.marked_at
             mark = " ☠" if doomed else ""
             colour = _swatch(p.pid)
             dim = "" if p.alive else "opacity: 0.4;"
+            mine = " style=\"font-weight:bold\"" if p.pid == self.me else ""
             lbl.setText(
+                f'<span{mine}><span style="opacity:.5">{rank}.</span> '
                 f'<span style="color:{colour}">■</span> {p.name}{mark} '
                 f'&nbsp;{share:4.1f}%&nbsp; <span style="opacity:.7">'
-                f'{p.troops:,.0f}</span>')
+                f'{p.troops:,.0f}</span></span>')
             lbl.setStyleSheet(dim)
 
 

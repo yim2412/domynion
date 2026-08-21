@@ -52,6 +52,26 @@ def available_sizes(name: str, root: Path | None = None) -> list[str]:
     return [s for s in SIZES if (base / f"{s}.bin").is_file()]
 
 
+def _load_nations(base: Path, w: int, h: int) -> list[tuple[str, "TileRef"]]:
+    """manifest 의 나라 좌표를 이 해상도의 TileRef 로 옮긴다.
+
+    저장된 좌표는 **원본(가장 큰) 해상도 기준**이라 축소본에서는 나눠야 한다.
+    `nation_coord_space` 가 없으면(옛 manifest) 나라 없이 간다 — 여기서 죽으면
+    지도 하나 때문에 판 전체가 안 열린다."""
+    meta = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
+    space = meta.get("nation_coord_space")
+    if not space or not meta.get("nations"):
+        return []
+    sw, sh = space
+    out: list[tuple[str, TileRef]] = []
+    for n in meta["nations"]:
+        cx, cy = n["coordinates"]
+        x = min(w - 1, max(0, int(cx * w / sw)))
+        y = min(h - 1, max(0, int(cy * h / sh)))
+        out.append((n.get("name", "?"), y * w + x))
+    return out
+
+
 class GameMap:
     """지형은 읽기 전용, 소유자만 바뀐다.
 
@@ -61,7 +81,7 @@ class GameMap:
     """
 
     __slots__ = ("width", "height", "size", "raw", "owner",
-                 "terrain", "land_count", "name", "_ocean_cc")
+                 "terrain", "land_count", "name", "_ocean_cc", "nations")
 
     def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
         if raw.size != width * height:
@@ -69,6 +89,7 @@ class GameMap:
         self.width = width
         self.height = height
         self.size = width * height
+        self.nations: list[tuple[str, TileRef]] = []   # manifest 의 실제 국가들
         self.name = name
         self.raw = raw
         self.terrain = _terrain_from_raw(raw)
@@ -96,6 +117,9 @@ class GameMap:
         # 테스트가 못 잡았던 이유: `from_rows` 는 쓰기 가능한 배열을 만든다.
         raw = np.frombuffer((base / f"{size}.bin").read_bytes(), dtype=np.uint8).copy()
         gm = cls(meta["width"], meta["height"], raw, name=f"{name}/{size}")
+        # 나라 좌표는 **원본 해상도 기준**으로 저장돼 있다(`nation_coord_space`).
+        # 여기서 이 해상도로 옮긴다 — 저장할 때 미리 나누면 어느 기준이었는지 잊는다.
+        gm.nations = _load_nations(base, gm.width, gm.height)
         declared = meta.get("num_land_tiles")
         if declared is not None and int((gm.raw & C.LAND_BIT).astype(bool).sum()) != declared:
             # 조용히 어긋나면 이후 모든 측정이 무의미해진다. 여기서 죽는 편이 낫다.

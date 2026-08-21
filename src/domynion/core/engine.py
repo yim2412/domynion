@@ -29,7 +29,7 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     trade_gold, trade_spawn_rate, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
-from .spawn import spawn_tiles, place_players
+from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
 from .emoji import Emojis
 from .emoji import relation_delta as emoji_relation_delta
@@ -94,7 +94,7 @@ class GameState:
     @classmethod
     def new(cls, player_count: int, rng: random.Random,
             map_name: str = "world", human: int = 0,
-            size: str = DEFAULT_SIZE) -> "GameState":
+            size: str = DEFAULT_SIZE, bots: int = 0) -> "GameState":
         """`human` 은 사람이 잡는 pid. 헤드리스는 -1 을 줘서 전원 봇으로 만든다.
 
         `size` 는 지도 해상도(`map16x`/`map4x`/`map`). **밸런스에 직접 영향을 준다** —
@@ -103,13 +103,58 @@ class GameState:
         # 원본 `SpawnExecution` — 시작 영토는 1칸이 아니라 **반경 4의 원**이다.
         # 1칸으로 시작하면 상한 공식(타일^0.6)의 바닥에서 출발해 초반이 지나치게
         # 느리고, 첫 공격 한 번에 탈락할 수 있다.
-        spawns = place_players(gmap, player_count, rng)
-        players = {}
-        for pid, (centre, tiles) in enumerate(spawns):
-            players[pid] = PlayerState(pid=pid, name=f"P{pid}",
-                                       is_bot=(pid != human), start=centre)
+        #
+        # `player_count` 는 **나라 수**다. 봇은 `bots` 로 따로 센다 — 원본 싱글의
+        # 기본 구성이 72개 나라 + 봇 400개라, 지도를 채우는 것은 사실 봇 쪽이다.
+        players: dict[int, PlayerState] = {}
+        counts: dict[int, int] = {}
+        pid = 0
+
+        # 1) 나라는 manifest 좌표에 앉힌다. 아메리카가 아메리카에 있어야 한다.
+        for name, want in gmap.nations[:player_count]:
+            got = place_at(gmap, pid, want, rng)
+            if got is None:
+                continue
+            centre, tiles = got
+            players[pid] = PlayerState(pid=pid, name=name, kind="nation",
+                                       start=centre)
+            counts[pid] = len(tiles)
+            pid += 1
+
+        # 2) 좌표가 모자라면(나라가 적은 지도) 무작위로 채운다.
+        while pid < player_count:
+            got = pick_spawn(gmap, rng, [p.start for p in players.values()])
+            if got is None:
+                break
+            centre, tiles = got
+            for t in tiles:
+                gmap.owner[t] = pid
+            players[pid] = PlayerState(pid=pid, name=f"나라 {pid}",
+                                       kind="nation", start=centre)
+            counts[pid] = len(tiles)
+            pid += 1
+
+        # 3) 봇으로 빈 곳을 메운다. 자리를 못 찾으면 **거기서 멈춘다** —
+        #    작은 지도에서 400개를 다 넣으려다 배치가 몇 분씩 걸린다.
+        for _ in range(bots):
+            got = pick_spawn(gmap, rng, [])
+            if got is None:
+                break
+            centre, tiles = got
+            for t in tiles:
+                gmap.owner[t] = pid
+            players[pid] = PlayerState(pid=pid, name=f"부족 {pid}", kind="bot",
+                                       start=centre)
+            counts[pid] = len(tiles)
+            pid += 1
+
+        # 4) 사람은 마지막에. 앞에서 만든 나라 하나를 사람으로 바꾼다.
+        if human in players:
+            players[human].kind = "human"
+            players[human].is_bot = False
+
         st = cls(gmap=gmap, players=players, rng=rng)
-        st._counts = {pid: len(tiles) for pid, (_, tiles) in enumerate(spawns)}
+        st._counts = counts
         st._posts = DefensePostIndex(gmap.size)
         st.fallout = Fallout(gmap.size)
         # 사람이 없으면(헤드리스) 고를 사람도 없다 — 그냥 시작한다.

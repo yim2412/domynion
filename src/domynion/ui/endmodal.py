@@ -42,6 +42,9 @@ COLUMNS: tuple[tuple[str, str], ...] = (
     ("사일로", "silos"), ("동맹", "allies"), ("배신", "betrayals"),
 )
 
+# 표에 몇 줄을 쓸 것인가. 마지막 한 줄은 상위권 밖일 때 **내 자리**로 쓴다.
+TABLE_ROWS = 15
+
 _UNIT_OF = {"cities": UnitType.CITY, "ports": UnitType.PORT,
             "silos": UnitType.MISSILE_SILO}
 
@@ -157,12 +160,17 @@ class EndModal(QWidget):
             self.grid.takeAt(0).widget().deleteLater()
         st = self.state
         order = sorted(st.players, key=lambda pid: -st.tiles(pid))
+        # ⚠ **전원을 그리면 안 된다.** 원본 기본 구성이 472명이라 표가 화면을 덮는다.
+        # 상위권 + 내 줄만 남긴다 — 내가 몇 등이었는지가 이 화면의 요점이다.
+        shown = order[:TABLE_ROWS]
+        if self.me in st.players and self.me not in shown:
+            shown = shown[:-1] + [self.me]
 
         for c, (head, _) in enumerate(COLUMNS):
             self.grid.addWidget(QLabel(head, objectName="head"), 0, c)
-        for r, pid in enumerate(order, start=1):
+        for r, pid in enumerate(shown, start=1):
             for c, (_, key) in enumerate(COLUMNS):
-                lbl = QLabel(_cell(st, pid, key, r))
+                lbl = QLabel(_cell(st, pid, key, order.index(pid) + 1))
                 if pid == self.me:
                     lbl.setStyleSheet("font-weight: bold;")
                 elif not st.players[pid].alive:

@@ -368,12 +368,22 @@ class NationBot:
 
 
 def attach(st: GameState, rng: random.Random,
-           difficulty: str = "medium") -> list[NationBot]:
-    """모든 AI 플레이어에 Nation 봇을 붙인다."""
-    bots = []
+           difficulty: str = "medium") -> list:
+    """AI 를 붙인다. **나라와 봇은 다른 AI 다.**
+
+    원본은 `NationExecution` 과 `TribeExecution` 을 따로 돌린다 — 봇은 동맹을 다
+    받아 주고 건물을 지운다. 전부 Nation 으로 돌리면 그 성격이 사라진다.
+    """
+    from .tribe import TribeBot          # 순환 import 를 피한다
+
+    st.difficulty = difficulty
+    out: list = []
     for p in st.players.values():
         if p.kind == "human":
             continue
         p.difficulty = difficulty
-        bots.append(NationBot(pid=p.pid, rng=rng, difficulty=difficulty))
-    return bots
+        if p.kind == "bot":
+            out.append(TribeBot(pid=p.pid, rng=rng))
+        else:
+            out.append(NationBot(pid=p.pid, rng=rng, difficulty=difficulty))
+    return out

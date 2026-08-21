@@ -20,7 +20,8 @@ from domynion.core.buildings import DefensePostIndex              # noqa: E402
 from domynion.core.engine import GameState, Victory               # noqa: E402
 from domynion.core.gamemap import GameMap                         # noqa: E402
 from domynion.core.state import PlayerState                       # noqa: E402
-from domynion.ui.endmodal import COLUMNS, EndModal                 # noqa: E402
+from domynion.ui.endmodal import (COLUMNS, TABLE_ROWS,            # noqa: E402
+                                  EndModal)
 
 
 @pytest.fixture(scope="module")
@@ -29,7 +30,8 @@ def qapp():
 
 
 def state(n: int = 3) -> GameState:
-    gm = GameMap.from_rows(["." * 40] * 4)
+    # 지도는 인원에 맞춰 넓힌다 — 좁으면 뒷사람 자리가 지도 밖으로 나간다.
+    gm = GameMap.from_rows(["." * (max(40, n * 5 + 5))] * 4)
     players = {}
     for pid in range(n):
         for x in range(pid * 5, pid * 5 + 5):
@@ -169,3 +171,46 @@ def test_betrayals_are_counted(qapp):
     rows = [m.grid.itemAtPosition(r, col).widget().text()
             for r in range(1, len(st.players) + 1)]
     assert "1" in rows, f"배신 1회가 표에 없다: {rows} (내 줄 {mine})"
+
+
+# --- 원본 규모(472명)에서도 읽히는가 ----------------------------------------
+
+def test_the_table_is_capped_so_it_does_not_cover_the_screen(qapp):
+    """원본 기본 구성이 472명이다. 전원을 그리면 표가 화면을 덮는다."""
+    st = state(60)
+    m = EndModal(st, 0)
+    st.over = True
+    st.winner = 1
+    m.check()
+    assert m.grid.rowCount() == TABLE_ROWS + 1, "헤더 + 상한"
+
+
+def test_my_row_survives_the_cap(qapp):
+    """막지 않았으면: 판이 커진 뒤 내가 몇 등인지 화면 어디에도 안 나온다."""
+    st = state(60)
+    # 나를 꼴찌로 만든다 — 상위권 밖이어도 보여야 한다
+    for pid in range(1, 60):
+        st._counts[pid] = 100 + pid
+    st._counts[0] = 1
+    m = EndModal(st, 0)
+    st.over = True
+    st.winner = 59
+    m.check()
+    names = [m.grid.itemAtPosition(r, 1).widget().text()
+             for r in range(1, TABLE_ROWS + 1)]
+    assert any("P0" in n for n in names), f"내 줄이 없다: {names}"
+
+
+def test_the_rank_column_shows_the_real_rank_not_the_row_number(qapp):
+    """꼴찌인데 15등으로 적히면 거짓말이 된다."""
+    st = state(60)
+    for pid in range(1, 60):
+        st._counts[pid] = 100 + pid
+    st._counts[0] = 1
+    m = EndModal(st, 0)
+    st.over = True
+    st.winner = 59
+    m.check()
+    col = [k for _, k in COLUMNS].index("rank")
+    last = m.grid.itemAtPosition(TABLE_ROWS, col).widget().text()
+    assert last == "60.", f"진짜 등수가 아니라 줄 번호를 썼다: {last}"
