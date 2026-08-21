@@ -106,6 +106,12 @@ START_TROOPS_BOT = 10_000.0
 
 # Config.ts :: attackAmount() — 사람은 UI 슬라이더로 조절, 이건 기본값
 ATTACK_RATIO_HUMAN = 1 / 5
+
+# 공격 비율 슬라이더 — ControlPanel.ts / UserSettings.ts
+#
+# 1% 밑으로는 못 내린다. 0% 면 아무 일도 안 일어나는데 왜 안 되는지 알 수 없다.
+ATTACK_RATIO_MIN = 0.01
+ATTACK_RATIO_STEP = 0.10           # attackRatioIncrement 기본 10%p — 키 T/Y
 ATTACK_RATIO_BOT = 1 / 20
 BOAT_ATTACK_RATIO = 1 / 5          # boatAttackAmount()
 

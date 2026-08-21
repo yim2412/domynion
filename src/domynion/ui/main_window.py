@@ -21,7 +21,7 @@ from ..core import constants as C
 from ..core.engine import GameState
 from .actions import root_items
 from .eventlog import AlertBanner, AttacksPanel, EventList
-from .hud import ControlBar, Scoreboard
+from .hud import ControlBar, ImmunityBar, Scoreboard
 from .map_widget import MapWidget
 
 
@@ -47,6 +47,9 @@ class MainWindow(QMainWindow):
         self.controls = ControlBar(state, human, self.map)
         self.controls.ratio_changed.connect(self._set_ratio)
 
+        # 면역은 규칙에만 넣으면 안 된다 — 왜 공격이 안 되는지 항상 보여야 한다.
+        self.immunity = ImmunityBar(state, human, self.map)
+
         # 커서가 얹힌 대상 정보. 무엇을 치는지 모르면 클릭이 도박이 된다.
         self.inspect = QLabel("", self.map)
         self.inspect.setStyleSheet(
@@ -69,6 +72,11 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Space"), self, self.toggle_pause)
         QShortcut(QKeySequence("Escape"), self, self.close)
         QShortcut(QKeySequence("H"), self, self.toggle_help)
+        # 원본 기본 키바인딩: T 내림 / Y 올림, 10%p 씩(`attackRatioIncrement`)
+        QShortcut(QKeySequence("T"), self,
+                  lambda: self.controls.nudge_ratio(-C.ATTACK_RATIO_STEP))
+        QShortcut(QKeySequence("Y"), self,
+                  lambda: self.controls.nudge_ratio(+C.ATTACK_RATIO_STEP))
 
         self.help = QLabel(
             "<b>조작</b><br>"
@@ -76,7 +84,7 @@ class MainWindow(QMainWindow):
             "&nbsp;&nbsp;가운데 = 뒤로 · 바깥 = 닫기 · 회색 항목엔 이유가 붙는다<br>"
             "우클릭 드래그 · WASD/화살표 — 이동 (가로로 계속 순환한다)<br>"
             "휠 · +/− — 확대 &nbsp;·&nbsp; F — 화면에 맞추기<br>"
-            "Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
+            "T/Y — 공격 비율 ∓10%p &nbsp;·&nbsp; Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
             self.map)
         self.help.setStyleSheet(
             "color:#e8e8ec; background: rgba(16,20,28,225); padding: 12px 16px;"
@@ -96,6 +104,7 @@ class MainWindow(QMainWindow):
         self.controls.adjustSize()
         self.controls.setFixedWidth(self.map.width() - 24)
         self.controls.move(12, self.map.height() - self.controls.height() - 12)
+        self.immunity.setGeometry(0, 0, self.map.width(), ImmunityBar.HEIGHT)
         self.banner.adjustSize()
         self.banner.move((self.map.width() - self.banner.width()) // 2,
                          self.map.height() // 2 - 40)
@@ -146,6 +155,7 @@ class MainWindow(QMainWindow):
         self.scoreboard.refresh()
         self.scoreboard.adjustSize()
         self.controls.refresh()
+        self.immunity.refresh()
         self._refresh_inspect()
         self.events.refresh()
         self.attacks.refresh()

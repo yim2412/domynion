@@ -90,7 +90,7 @@ class ControlBar(QWidget):
         row.addWidget(self.troops_label)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(1, 100)
+        self.slider.setRange(round(C.ATTACK_RATIO_MIN * 100), 100)
         self.slider.setValue(int(C.ATTACK_RATIO_HUMAN * 100))
         self.slider.setFixedWidth(240)
         self.slider.valueChanged.connect(self._on_slider)
@@ -106,8 +106,26 @@ class ControlBar(QWidget):
         self._on_slider(self.slider.value())
 
     def _on_slider(self, value: int) -> None:
-        self.ratio_label.setText(f"공격 {value}%")
         self.ratio_changed.emit(value / 100)
+        self._label_ratio(value)
+
+    def _label_ratio(self, value: int) -> None:
+        """% 만 보여주면 그게 몇 명인지 모른다 — 원본도 실제 병력 수를 같이 쓴다."""
+        p = self.state.players.get(self.pid)
+        n = p.troops * value / 100 if p else 0.0
+        self.ratio_label.setText(f"공격 {value}% <b>{n:,.0f}</b>")
+
+    def nudge_ratio(self, delta: float) -> None:
+        """T/Y 로 10%p 씩. 1% 에서 올릴 때는 11% 가 아니라 10% 로 붙인다.
+
+        원본 주석 그대로 — 최저값에서 한 칸 올리면 눈금과 어긋나기 때문이다."""
+        cur = self.slider.value() / 100
+        new = cur + delta
+        # 상·하한은 슬라이더 범위가 이미 잡는다(`setValue` 가 클램프한다).
+        # 여기서 또 막으면 돌연변이로도 안 잡히는 죽은 코드가 된다.
+        if abs(new - 0.11) < 1e-9 and abs(cur - C.ATTACK_RATIO_MIN) < 1e-9:
+            new = 0.10
+        self.slider.setValue(round(new * 100))
 
     def refresh(self) -> None:
         p = self.state.players.get(self.pid)
@@ -118,3 +136,40 @@ class ControlBar(QWidget):
         self.troops_label.setText(
             f"병력 <b>{p.troops:,.0f}</b> / {cap:,.0f} ({pct:.0f}%)")
         self.gold_label.setText(f"골드 <b>{p.gold:,}</b>")
+        self._label_ratio(self.slider.value())
+
+
+class ImmunityBar(QWidget):
+    """화면 맨 위 7px 진행바 — 스폰 면역이 얼마나 남았는지.
+
+    원본 `ImmunityTimer.ts` 도 같은 자리·같은 두께다. 면역을 규칙에만 넣고 화면에
+    안 보이면, 공격이 왜 거부되는지 알 방법이 없다 — 방사형 메뉴의 회색 항목은
+    타일을 눌러야 보이지만 이건 항상 보인다.
+    """
+
+    HEIGHT = 7
+
+    def __init__(self, state: GameState, pid: int, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.state = state
+        self.pid = pid
+        self.ratio = 0.0
+        self.setFixedHeight(self.HEIGHT)
+
+    def refresh(self) -> None:
+        left = C.SPAWN_IMMUNITY_TICKS - self.state.tick_count
+        if left <= 0 or not self.state.is_immune(self.pid):
+            self.hide()
+            return
+        self.ratio = left / C.SPAWN_IMMUNITY_TICKS
+        self.show()
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        from PyQt6.QtGui import QColor, QPainter
+        q = QPainter(self)
+        q.fillRect(self.rect(), QColor(16, 20, 28, 160))
+        q.fillRect(0, 0, int(self.width() * self.ratio), self.height(),
+                   QColor(96, 200, 255))
+        q.end()
