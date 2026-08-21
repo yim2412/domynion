@@ -106,6 +106,14 @@ REL_ALLIANCE_ACCEPTED = 100.0      # AllianceRequestExecution (양쪽 다)
 REL_ALLIANCE_BROKEN = -100.0       # BreakAllianceExecution (당한 쪽 → 깬 쪽)
 REL_ALLIANCE_BROKEN_NEIGHBOUR = -40.0   # 이웃들도 배신을 본다
 REL_TARGETED = -40.0               # TargetPlayerExecution
+REL_ASSIST_COST = -20.0            # 동맹의 부탁을 들어준 대가(AiAttackBehavior)
+
+# 표적 지정 — Config.ts :: targetDuration / targetCooldown
+#
+# 동맹에게 "저놈을 쳐 달라"고 찍는 것이다. 이게 없으면 동맹은 서로 안 친다는
+# 소극적 약속일 뿐이고, **함께 싸우는 수단이 없다.**
+TARGET_DURATION_TICKS = 10 * 10    # 표적으로 남는 시간
+TARGET_COOLDOWN_TICKS = 15 * 10    # 다음 표적을 찍기까지
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
 REL_TROOP_DONATION = 50.0          # DonateTroopExecution

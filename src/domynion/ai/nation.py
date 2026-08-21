@@ -153,6 +153,11 @@ class NationBot:
         others.sort(key=lambda q: q.troops)
         enemies = [q for q in others if not st.diplomacy.is_friendly(self.pid, q.pid)]
 
+        # 동맹의 부탁이 먼저다 — 중립 확장보다 우선한다. 안 그러면 부탁이
+        # 10초 안에 만료돼 아무도 도와주지 않는다.
+        if self._assist_allies(st):
+            return
+
         if has_neutral and self._send_attack(st, None):
             return
 
@@ -166,6 +171,38 @@ class NationBot:
             self._alliance_requests(st, enemies)
 
         self._attack_best(st, enemies)
+
+    def _assist_allies(self, st: GameState) -> bool:
+        """`assistAllies` — 동맹이 찍은 표적을 대신 친다.
+
+        **이게 동맹의 실질적 효용이다.** 없으면 동맹은 "서로 안 친다"는 소극적
+        약속일 뿐이고 함께 싸우는 수단이 없다.
+
+        거절할 때도 말을 남긴다 — 왜 안 도와주는지 모르면 사람은 동맹을 관리할
+        수 없다. 사이가 덜 좋으면 🥱, 표적이 나면 🥺, 표적이 내 동맹이면 🕊️.
+        """
+        for ally in st.diplomacy.allies_of(self.pid):
+            asked = st.targets_of(ally)
+            if not asked:
+                continue
+            if st.relation_of(self.pid, ally) < Relation.FRIENDLY:
+                st.ai_emoji(self.pid, ally, emoji.ASSIST_RELATION_TOO_LOW)
+                continue
+            for foe in asked:
+                if foe == self.pid:
+                    st.ai_emoji(self.pid, ally, emoji.ASSIST_TARGET_ME)
+                    continue
+                if st.diplomacy.is_friendly(self.pid, foe):
+                    st.ai_emoji(self.pid, ally, emoji.ASSIST_TARGET_ALLY)
+                    continue
+                if not self._send_attack(st, foe):
+                    continue
+                # 도와준 대가로 부탁한 쪽을 조금 낮춰 본다 — 계속 부려먹으면
+                # 결국 사이가 나빠져 더는 안 도와준다.
+                st.relate(self.pid, ally, C.REL_ASSIST_COST)
+                st.ai_emoji(self.pid, ally, emoji.ASSIST_ACCEPT)
+                return True
+        return False
 
     def _attack_best(self, st: GameState, enemies: list) -> None:
         """가장 약한 적부터 시도한다. `sendAttack` 이 여유를 보고 알아서 거른다."""

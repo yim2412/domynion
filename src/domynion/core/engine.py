@@ -73,6 +73,10 @@ class GameState:
     rail: RailNetwork = field(default_factory=RailNetwork)
     log: EventLog = field(default_factory=EventLog)
     emojis: Emojis = field(default_factory=Emojis)
+    # 누가 누구를 표적으로 찍었나: (찍은 사람, 찍힌 사람) → 찍은 tick.
+    # 동맹에게 보내는 부탁이라 **시간이 지나면 사라진다** — 안 그러면 판 내내
+    # 옛 부탁이 남아 AI 가 엉뚱한 상대를 계속 친다.
+    targets: dict[tuple[int, int], int] = field(default_factory=dict)
     trains: list[Train] = field(default_factory=list)
 
     # 관계 변화량이 난이도를 탄다(`AttackExecution` 의 relationChange).
@@ -750,6 +754,43 @@ class GameState:
         p.start = centre
         return True
 
+    # --- 표적 -------------------------------------------------------------
+
+    def can_target(self, pid: int, other: int) -> bool:
+        """`canTarget` — 친한 상대는 못 찍고, 15초에 한 번만 찍을 수 있다."""
+        if pid == other or other not in self.players:
+            return False
+        if self.diplomacy.is_friendly(pid, other):
+            return False
+        for (a, _b), tick in self.targets.items():
+            if a == pid and self.tick_count - tick < C.TARGET_COOLDOWN_TICKS:
+                return False
+        return True
+
+    def target_player(self, pid: int, other: int) -> bool:
+        """동맹에게 "저놈을 쳐 달라"고 찍는다. 찍힌 쪽은 나를 −40 으로 본다."""
+        if not self.can_target(pid, other):
+            return False
+        self.targets[(pid, other)] = self.tick_count
+        self.relate(other, pid, C.REL_TARGETED)
+        return True
+
+    def targets_of(self, pid: int) -> list[int]:
+        """`targets()` — 아직 살아 있는 부탁만. 10초가 지나면 잊는다."""
+        return [b for (a, b), tick in self.targets.items()
+                if a == pid
+                and self.tick_count - tick < C.TARGET_DURATION_TICKS
+                and b in self.players and self.players[b].alive]
+
+    def _expire_targets(self) -> None:
+        cut = self.tick_count - C.TARGET_DURATION_TICKS
+        # 쿨다운이 지속시간보다 길어서(15초 vs 10초) **바로 지우면 안 된다** —
+        # `can_target` 이 쿨다운을 재는 데 같은 기록을 쓴다.
+        keep = self.tick_count - C.TARGET_COOLDOWN_TICKS
+        if cut <= 0:
+            return
+        self.targets = {k: t for k, t in self.targets.items() if t > keep}
+
     # --- 이모지 -----------------------------------------------------------
 
     def send_emoji(self, pid: int, to: int, emoji: str) -> bool:
@@ -923,6 +964,7 @@ class GameState:
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.a, other=gone.b)
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)
         self._decay_relations()
+        self._expire_targets()
         self._apply_embargo_relations()
         self._grow()
         self._advance_construction()

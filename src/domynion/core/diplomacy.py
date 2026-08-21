@@ -61,6 +61,11 @@ class Diplomacy:
     def allied(self, a: int, b: int) -> bool:
         return any(al.involves(a) and al.involves(b) for al in self.alliances)
 
+    def allies_of(self, pid: int) -> list[int]:
+        """이 사람과 동맹인 상대들. **팀은 포함하지 않는다** — 원본 `allies()` 도
+        동맹만 본다(팀은 `isFriendly` 쪽에서 따로 걸린다)."""
+        return [al.other(pid) for al in self.alliances if al.involves(pid)]
+
     def same_team(self, a: int, b: int) -> bool:
         if a == b:
             return False

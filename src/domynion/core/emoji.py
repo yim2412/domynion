@@ -48,6 +48,12 @@ DONATION_OK = ("👍",)
 DONATION_TOO_SMALL = ("❓", "🥱")
 OVERWHELMED = ("💀", "🆘", "😱", "🥺", "😭", "😞", "🫡", "👋")
 
+# 표적 요청에 대한 답. **거절에도 말이 있어야** 왜 안 도와주는지 안다.
+ASSIST_ACCEPT = ("👍", "🤝", "🎯")
+ASSIST_RELATION_TOO_LOW = ("🥱", "🤦")
+ASSIST_TARGET_ME = ("🥺", "💀")
+ASSIST_TARGET_ALLY = ("🕊️", "👎")
+
 # 사람이 보낸 이모지에 관계가 얼마나 움직이는가.
 INSULT = "🖕"
 CLOWN = "🤡"
