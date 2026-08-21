@@ -23,6 +23,7 @@ from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
+from .events import Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     trade_gold, trade_spawn_rate, water_path)
@@ -65,6 +66,7 @@ class GameState:
     fallout: Fallout | None = None
     clock: DoomsdayClock = field(default_factory=DoomsdayClock)
     rail: RailNetwork = field(default_factory=RailNetwork)
+    log: EventLog = field(default_factory=EventLog)
     trains: list[Train] = field(default_factory=list)
 
     _counts: dict[int, int] = field(default_factory=dict)
@@ -113,12 +115,33 @@ class GameState:
 
     # --- 행동 -------------------------------------------------------------
 
+    def is_immune(self, pid: int) -> bool:
+        """스폰 면역 중인가. 판 시작 직후 잠깐이다."""
+        p = self.players.get(pid)
+        if p is None or p.kind == "bot":
+            return False
+        return self.tick_count < C.SPAWN_IMMUNITY_TICKS
+
+    def can_attack(self, pid: int, target: int | None) -> bool:
+        """`canAttackPlayer` — **사람 공격자만 면역을 존중한다.**
+
+        봇·Nation 은 면역 중인 상대도 친다(원본 주석: "Only human attackers respect
+        PVP immunity"). 이 비대칭을 빼면 초반이 원본과 달라진다."""
+        if target is None:
+            return True
+        if self.diplomacy.is_friendly(pid, target):
+            return False
+        me = self.players.get(pid)
+        if me is not None and me.kind == "human":
+            return not self.is_immune(target)
+        return True
+
     def launch_attack(self, pid: int, target: int | None) -> Attack | None:
         p = self.players.get(pid)
         if p is None or not p.alive or self.over:
             return None
-        if target is not None and self.diplomacy.is_friendly(pid, target):
-            return None                 # 친한 상대는 못 친다 — 먼저 동맹을 깨야 한다
+        if not self.can_attack(pid, target):
+            return None                 # 친한 상대·면역 중인 상대는 못 친다
         troops = p.attack_troops()
         if troops < C.ATTACK_MIN_TROOPS:
             return None
@@ -127,19 +150,43 @@ class GameState:
             return None
         p.troops -= troops
         self.attacks.append(atk)
+        if target is not None:
+            self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
         return atk
+
+    # --- 이벤트 -----------------------------------------------------------
+
+    def emit(self, kind: EventKind, who: int | None = None, other: int | None = None,
+             tile: TileRef | None = None, amount: float = 0.0, text: str = "") -> None:
+        """무슨 일이 일어났는지 남긴다. `who` 는 **이걸 봐야 하는 사람**이다."""
+        self.log.add(Event(kind=kind, tick=self.tick_count, who=who, other=other,
+                           tile=tile, amount=amount, text=text))
 
     # --- 외교 -------------------------------------------------------------
 
     def request_alliance(self, pid: int, other: int) -> bool:
-        return self.diplomacy.request(pid, other)
+        ok = self.diplomacy.request(pid, other)
+        if ok:
+            self.emit(EventKind.ALLIANCE_REQUEST, who=other, other=pid)
+        return ok
 
     def accept_alliance(self, pid: int, requestor: int) -> bool:
-        return self.diplomacy.accept(pid, requestor, self.tick_count) is not None
+        ok = self.diplomacy.accept(pid, requestor, self.tick_count) is not None
+        if ok:
+            self.emit(EventKind.ALLIANCE_ACCEPTED, who=requestor, other=pid)
+            self.emit(EventKind.ALLIANCE_ACCEPTED, who=pid, other=requestor)
+        return ok
+
+    def reject_alliance(self, pid: int, requestor: int) -> None:
+        self.diplomacy.reject(pid, requestor)
+        self.emit(EventKind.ALLIANCE_REJECTED, who=requestor, other=pid)
 
     def break_alliance(self, pid: int, other: int) -> bool:
         """동맹 파기. 상대가 이미 배신자가 아니면 **내가** 배신자가 된다."""
-        return self.diplomacy.break_alliance(pid, other, self.tick_count)
+        ok = self.diplomacy.break_alliance(pid, other, self.tick_count)
+        if ok:
+            self.emit(EventKind.ALLIANCE_BROKEN, who=other, other=pid)
+        return ok
 
     def is_traitor(self, pid: int) -> bool:
         return self.diplomacy.is_traitor(pid, self.tick_count)
@@ -159,7 +206,7 @@ class GameState:
         if target == "auto":
             o = int(self.gmap.owner[dst])
             target = None if o < 0 else o
-        if target is not None and self.diplomacy.is_friendly(pid, target):
+        if not self.can_attack(pid, target):
             return None
 
         src = best_spawn(self.gmap, pid, dst)
@@ -175,6 +222,9 @@ class GameState:
         boat = TransportShip(owner=pid, target=target, troops=troops,
                              path=path, dst=dst)
         self.boats.append(boat)
+        if target is not None:
+            self.emit(EventKind.NAVAL_INVASION_INBOUND, who=target, other=pid,
+                      tile=dst, amount=troops)
         return boat
 
     def _advance_boats(self) -> None:
@@ -331,11 +381,15 @@ class GameState:
             target.health -= dmg
             if target.sunk:
                 w.veterancy += 1
+                self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
+                          tile=target.tile, text="전함")
         elif isinstance(target, TransportShip):
             # 수송선은 체력이 없다 — 원본은 포탄 한 방에 격침시킨다
             if target in self.boats:
                 self.boats.remove(target)
                 w.veterancy += 1
+                self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
+                          tile=target.tile, text="수송선")
         elif isinstance(target, TradeShip):
             if target in self.trade_ships:
                 self.trade_ships.remove(target)
@@ -377,6 +431,11 @@ class GameState:
         src = min(silos, key=lambda u: self._dist_sq(u.tile, dst)).tile
         n = Nuke(owner=pid, utype=utype, src=src, dst=dst)
         self.nukes.append(n)
+        kind = {UnitType.HYDROGEN_BOMB: EventKind.HYDROGEN_BOMB_INBOUND,
+                UnitType.MIRV: EventKind.MIRV_INBOUND}.get(
+                    utype, EventKind.NUKE_INBOUND)
+        victim = int(self.gmap.owner[dst])
+        self.emit(kind, who=victim if victim >= 0 else None, other=pid, tile=dst)
         return n
 
     def _split_mirv(self, n: Nuke) -> None:
@@ -431,6 +490,8 @@ class GameState:
                     continue
                 r = sam_range(sam.level)
                 if self._dist_sq(sam.tile, here) <= r * r:
+                    self.emit(EventKind.SAM_HIT, who=p.pid, other=n.owner, tile=here)
+                    self.emit(EventKind.SAM_MISS, who=n.owner, other=p.pid, tile=here)
                     return True
         return False
 
@@ -438,6 +499,8 @@ class GameState:
         tiles = blast_tiles(self.gmap, n.dst, n.utype, self.rng)
         if not tiles:
             return
+        self.emit(EventKind.NUKE_DETONATED, other=n.owner, tile=n.dst,
+                  amount=len(tiles))
         gm = self.gmap
 
         # 1) 소유자별로 몇 칸이 날아갔는지 센다 — 병력 손실이 이 수만큼 반복 적용된다
@@ -534,6 +597,8 @@ class GameState:
             return False
         a.gold -= gold
         b.gold += gold
+        self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=gold)
+        self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=gold)
         return True
 
     def donate_troops(self, pid: int, to: int, troops: float) -> bool:
@@ -542,6 +607,8 @@ class GameState:
             return False
         a.troops -= troops
         b.troops += troops
+        self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=troops)
+        self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=troops)
         return True
 
     # --- 건설 -------------------------------------------------------------
@@ -622,7 +689,9 @@ class GameState:
         if self.over:
             return
         self.tick_count += 1
-        self.diplomacy.expire_due(self.tick_count)
+        for gone in self.diplomacy.expire_due(self.tick_count):
+            self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.a, other=gone.b)
+            self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)
         self._grow()
         self._advance_construction()
         self._advance_nukes()
@@ -692,6 +761,10 @@ class GameState:
         self._counts[target] = 0
         d.alive = False
         d.troops = 0.0
+        self.emit(EventKind.CONQUERED_PLAYER, other=attacker, amount=target)
+        if d.units.units:
+            self.emit(EventKind.CAPTURED_ENEMY_UNIT, who=attacker, other=target,
+                      amount=len(d.units.units))
         # `conquerPlayer` — 건물도 정복자에게 넘어간다. 버리면 도시가 사라져
         # 병력 상한이 갑자기 떨어진다.
         winner = self.players[attacker]

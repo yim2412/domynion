@@ -29,6 +29,9 @@ def state(n: int = 3) -> GameState:
     st = GameState(gmap=gm, players=players, rng=random.Random(0))
     st._counts = {pid: 1 for pid in players}
     st._posts = DefensePostIndex(gm.size)
+    # 스폰 면역(5초)을 지난 시점에서 시작한다 — 사람은 그전에
+    # 사람을 못 친다(원본 `canAttackPlayer`).
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
     return st
 
 

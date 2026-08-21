@@ -58,15 +58,17 @@ def root_items(st: GameState, me: int, tile: TileRef,
 
     return [
         Item("공격", submenu=lambda: attack_items(st, me, tile, notify),
-             enabled=not is_mine and not friendly,
+             enabled=not is_mine and st.can_attack(me, target),
              hint=("내 땅이다" if is_mine else
                    "동맹이다 — 먼저 파기해야 한다" if friendly else
+                   "아직 스폰 면역 중이다" if target is not None
+                   and st.is_immune(target) else
                    f"보낼 병력 {mine.attack_troops():,.0f}"),
              colour=COL_ATTACK),
         Item("건설", submenu=lambda: build_items(st, me, tile, notify),
              enabled=True, hint=f"골드 {_gold(mine.gold)}", colour=COL_BUILD),
         Item("상륙", action=lambda: _boat(st, me, tile, notify),
-             enabled=not is_mine and not friendly and gm.passable(tile),
+             enabled=not is_mine and st.can_attack(me, target) and gm.passable(tile),
              hint=f"배로 병력 {mine.troops * C.BOAT_ATTACK_RATIO:,.0f} 을 보낸다",
              colour=COL_BOAT),
         Item("외교", submenu=lambda: diplomacy_items(st, me, target, notify),
@@ -193,6 +195,9 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
              hint="들어온 요청이 없다" if not incoming else
                   f"P{target} 의 요청을 받는다 ({C.ALLIANCE_DURATION_TICKS * C.TICK_DT / 60:.0f}분)",
              colour=COL_DIPLO),
+        Item("동맹 거절", action=lambda: _reject(st, me, target, notify),
+             enabled=incoming, hint='들어온 요청이 없다' if not incoming else
+                  f'P{target} 의 요청을 물린다', colour=COL_PLAIN),
         Item("동맹 요청", action=lambda: _request(st, me, target, notify),
              enabled=not allied and not outgoing,
              hint="이미 동맹이다" if allied else
@@ -221,6 +226,11 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
 def _request(st: GameState, me: int, target: int, notify) -> None:
     notify(f"P{target} 에게 동맹 요청" if st.request_alliance(me, target)
            else "요청할 수 없다")
+
+
+def _reject(st: GameState, me: int, target: int, notify) -> None:
+    st.reject_alliance(me, target)
+    notify(f'P{target} 의 동맹 요청을 거절')
 
 
 def _accept(st: GameState, me: int, target: int, notify) -> None:

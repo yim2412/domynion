@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPointF                                # noqa: E402
 
+from domynion.core import constants as C            # noqa: E402
 from domynion.core.buildings import DefensePostIndex            # noqa: E402
 from domynion.core.engine import GameState                      # noqa: E402
 from domynion.core.gamemap import GameMap                       # noqa: E402
@@ -44,6 +45,9 @@ def state(rows: list[str] | None = None) -> GameState:
     st._counts = {0: 1, 1: 1}
     st._posts = DefensePostIndex(gm.size)
     st.fallout = Fallout(gm.size)
+    # 스폰 면역(5초)을 지난 시점에서 시작한다 — 사람은 그전에
+    # 사람을 못 친다(원본 `canAttackPlayer`).
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
     return st
 
 

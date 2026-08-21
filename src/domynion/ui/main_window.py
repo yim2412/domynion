@@ -20,6 +20,7 @@ from ..ai import nation
 from ..core import constants as C
 from ..core.engine import GameState
 from .actions import root_items
+from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, Scoreboard
 from .map_widget import MapWidget
 
@@ -52,6 +53,12 @@ class MainWindow(QMainWindow):
             "color:#e8e8ec; background: rgba(16,20,28,210); padding: 6px 10px;"
             "border-radius: 6px;")
         self.inspect.hide()
+
+        # 이벤트는 셋으로 나눈다 — 지나간 일(로그) · 지금 상태(전투) · 놓치면 안
+        # 되는 것(경보). 하나로 몰면 급한 것이 흘러가 버린다.
+        self.events = EventList(state, human, parent=self.map)
+        self.attacks = AttacksPanel(state, human, parent=self.map)
+        self.alert = AlertBanner(state, human, parent=self.map)
 
         self.banner = QLabel("", self.map)
         self.banner.setStyleSheet(
@@ -94,6 +101,24 @@ class MainWindow(QMainWindow):
                          self.map.height() // 2 - 40)
         self.help.adjustSize()
         self.help.move(self.map.width() - self.help.width() - 12, 12)
+        self._place_side_panels()
+
+    def _place_side_panels(self) -> None:
+        """오른쪽 아래에 전투 → 소식 순으로 쌓는다. 위쪽은 도움말이 쓴다."""
+        margin = 12
+        bottom = self.map.height() - self.controls.height() - margin * 2
+        for panel in (self.attacks, self.events):
+            if not panel.isVisible():
+                continue
+            panel.adjustSize()
+            panel.setFixedWidth(330)
+            panel.adjustSize()
+            bottom -= panel.height() + 8
+            panel.move(self.map.width() - panel.width() - margin, bottom)
+            panel.raise_()
+        if self.alert.isVisible():
+            self.alert.move((self.map.width() - self.alert.width()) // 2, 16)
+            self.alert.raise_()
 
     # --- 루프 -------------------------------------------------------------
 
@@ -122,6 +147,10 @@ class MainWindow(QMainWindow):
         self.scoreboard.adjustSize()
         self.controls.refresh()
         self._refresh_inspect()
+        self.events.refresh()
+        self.attacks.refresh()
+        self.alert.refresh()
+        self._place_side_panels()
 
     def _refresh_inspect(self) -> None:
         """커서가 얹힌 나라의 병력·영토를 보여 준다.

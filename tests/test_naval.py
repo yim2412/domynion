@@ -33,6 +33,8 @@ def state(rows: list[str], owners: dict[int, tuple[int, int]]) -> GameState:
     st = GameState(gmap=gm, players=players, rng=random.Random(0))
     st._counts = {pid: 1 for pid in players}
     st._posts = DefensePostIndex(gm.size)
+    # 스폰 면역(5초)을 지난 시점 — 사람은 그전에 사람을 못 친다(`canAttackPlayer`).
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
     return st
 
 
@@ -169,12 +171,14 @@ def test_trade_pays_both_port_owners():
     assert st._spawn_trade_ship([(st.gmap.ref(0, 1), 0), (st.gmap.ref(9, 1), 1)])
     ship = st.trade_ships[0]
     g0, g1 = st.players[0].gold, st.players[1].gold
+    t0 = st.tick_count                     # 0 이 아니다 — 헬퍼가 면역 뒤에서 시작한다
     for _ in range(len(ship.path) + 2):
         st.tick()
         if ship not in st.trade_ships:
             break
-    gained0 = st.players[0].gold - g0 - st.tick_count * C.GOLD_PER_TICK_HUMAN
-    gained1 = st.players[1].gold - g1 - st.tick_count * C.GOLD_PER_TICK_HUMAN
+    ticked = st.tick_count - t0
+    gained0 = st.players[0].gold - g0 - ticked * C.GOLD_PER_TICK_HUMAN
+    gained1 = st.players[1].gold - g1 - ticked * C.GOLD_PER_TICK_HUMAN
     assert gained0 > 0 and gained0 == gained1, "양쪽이 같이 벌어야 한다"
 
 

@@ -94,6 +94,12 @@ TROOP_GROWTH_DIV = 4.0
 
 CITY_TROOP_INCREASE = 250_000.0    # Config.ts :: cityTroopIncrease()
 
+# 스폰 면역 — Config.ts :: spawnImmunityDuration() / PlayerImpl :: isImmune()
+#
+# **사람 공격자만 면역을 존중한다**(원본 주석: "Only human attackers respect PVP
+# immunity"). 봇·Nation 은 면역 중인 상대도 친다. 이 비대칭을 빼면 초반 규칙이 달라진다.
+SPAWN_IMMUNITY_TICKS = 5 * 10
+
 # Config.ts :: startManpower()
 START_TROOPS_HUMAN = 25_000.0
 START_TROOPS_BOT = 10_000.0
