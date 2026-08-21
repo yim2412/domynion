@@ -15,22 +15,48 @@ import pytest
 
 from domynion.core import constants as C
 from domynion.core.constants import Terrain
-from domynion.core.gamemap import GameMap, available_maps
+from domynion.core.gamemap import (SIZES, GameMap, available_maps,
+                                   available_sizes)
 
 MAPS = available_maps()
 
 
 @pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")
 @pytest.mark.parametrize("name", MAPS)
-def test_land_count_matches_manifest(name):
-    """manifest 의 육지 수와 파일이 어긋나면 파싱이 틀린 것이다."""
-    gm = GameMap.load(name)
+@pytest.mark.parametrize("size", SIZES)
+def test_land_count_matches_manifest(name, size):
+    """manifest 의 육지 수와 파일이 어긋나면 파싱이 틀린 것이다.
+
+    **세 해상도를 전부 잰다.** 크기를 고르는 코드가 조용히 엉뚱한 파일을 읽으면
+    육지 수가 안 맞는다."""
+    if size not in available_sizes(name):
+        pytest.skip(f"{name}/{size} 없음")
+    gm = GameMap.load(name, size=size)
     meta = json.loads(
-        (Path(gm.__module__ and "resources/maps") / name / "manifest.json")
-        .read_text(encoding="utf-8"))["map16x"]
+        (Path("resources/maps") / name / "manifest.json")
+        .read_text(encoding="utf-8"))[size]
     land = int(((gm.raw & C.LAND_BIT) != 0).sum())
     assert land == meta["num_land_tiles"]
     assert gm.width * gm.height == gm.raw.size
+    assert gm.width == meta["width"] and gm.height == meta["height"]
+
+
+@pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")
+def test_sizes_scale_by_four():
+    """`map16x` → `map4x` → `map` 이 각각 변당 2배(면적 4배)다."""
+    small = GameMap.load("world", size="map16x")
+    mid = GameMap.load("world", size="map4x")
+    full = GameMap.load("world", size="map")
+    assert mid.width == small.width * 2 and mid.height == small.height * 2
+    assert full.width == mid.width * 2 and full.height == mid.height * 2
+    assert small.land_count < mid.land_count < full.land_count
+
+
+@pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")
+def test_unknown_size_fails_loudly():
+    """없는 크기를 조용히 기본값으로 떨어뜨리면 어떤 지도를 재고 있는지 모르게 된다."""
+    with pytest.raises(FileNotFoundError):
+        GameMap.load("world", size="map64x")
 
 
 @pytest.mark.skipif(not MAPS, reason="지도 리소스가 없다")

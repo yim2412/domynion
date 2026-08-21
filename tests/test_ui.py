@@ -49,15 +49,27 @@ def test_frame_is_tile_resolution_not_pixel_resolution():
     타일 해상도로 만들면 4ms(253fps)다 — 17배 차이가 전부 확대에서 나온다."""
     st = state()
     fb = FrameBuilder(st.gmap)
-    rgb = fb.rgb()
-    assert rgb.shape == (st.gmap.height, st.gmap.width, 3)
-    assert rgb.dtype == np.uint8
+    assert fb.terrain_rgb.shape == (st.gmap.height, st.gmap.width, 3)
+    assert fb.owner_rgba().shape == (st.gmap.height, st.gmap.width, 4)
+    assert fb.terrain_rgb.dtype == np.uint8
 
 
-def test_frame_buffer_is_contiguous():
+def test_terrain_layer_is_baked_once_and_owner_layer_is_per_frame():
+    """지형은 판 내내 **같은 배열**이다. 매 프레임 다시 만들면 원본 크기 지도에서
+    17fps 가 된다(실측) — 오버레이만 만들면 58fps."""
+    st = state()
+    fb = FrameBuilder(st.gmap)
+    first = fb.terrain_rgb
+    st.gmap.owner[st.gmap.ref(12, 12)] = 1
+    fb.owner_rgba()
+    assert fb.terrain_rgb is first, "소유가 바뀌었는데 지형을 다시 구웠다"
+
+
+def test_frame_buffers_are_contiguous():
     """QImage 는 버퍼를 **복사하지 않는다.** 연속이 아니면 화면이 깨진다."""
     fb = FrameBuilder(state().gmap)
-    assert fb.rgb().flags["C_CONTIGUOUS"]
+    assert fb.terrain_rgb.flags["C_CONTIGUOUS"]
+    assert fb.owner_rgba().flags["C_CONTIGUOUS"]
 
 
 def test_owned_tiles_take_the_player_colour():
@@ -65,20 +77,20 @@ def test_owned_tiles_take_the_player_colour():
     spot = (12, 12)                      # `state()` 가 안 건드리는 중립 칸
     fb = FrameBuilder(st.gmap)
     assert int(st.gmap.owner[st.gmap.ref(*spot)]) == -1
-    before = fb.rgb()[spot[1], spot[0]].copy()
+    assert fb.owner_rgba()[spot[1], spot[0], 3] == 0, "중립은 투명해야 한다"
     st.gmap.owner[st.gmap.ref(*spot)] = 1
-    after = fb.rgb()[spot[1], spot[0]]
-    assert not np.array_equal(before, after), "소유가 바뀌었는데 색이 그대로다"
+    px = fb.owner_rgba()[spot[1], spot[0]]
+    assert px[3] > 0, "소유가 바뀌었는데 투명하다"
+    assert tuple(px[:3]) == P.player_color(1)
 
 
-def test_ocean_is_never_tinted():
-    st = state(["~" * 40] + ["." * 40] * 20)
-    st.gmap.owner[st.gmap.ref(10, 0)] = 0        # 바다 칸에 억지로 주인을 넣어도
+def test_neutral_is_fully_transparent_so_terrain_shows_through():
+    """중립을 불투명하게 칠하면 지형이 안 보인다 — 지도가 통째로 한 색이 된다."""
+    st = state()
     fb = FrameBuilder(st.gmap)
-    fb2 = FrameBuilder(st.gmap)
-    assert st.gmap.terrain[st.gmap.ref(10, 0)] == Terrain.OCEAN
-    # 지형 바닥은 바다 색이고, 소유 색이 섞이더라도 육지와 구별돼야 한다
-    assert fb.rgb().shape == fb2.rgb().shape
+    ov = fb.owner_rgba()
+    neutral = st.gmap.owner.reshape(st.gmap.height, st.gmap.width) < 0
+    assert (ov[..., 3][neutral] == 0).all()
 
 
 def test_border_falls_exactly_between_two_owners():
@@ -133,11 +145,11 @@ def test_rebake_picks_up_terrain_changes():
     """핵이 지형을 바꾸면 다시 구워야 한다 — 안 그러면 사라진 육지가 계속 보인다."""
     st = state()
     fb = FrameBuilder(st.gmap)
-    before = fb.rgb()[5, 35].copy()
+    before = fb.terrain_rgb[5, 35].copy()
     st.gmap.terrain[st.gmap.ref(35, 5)] = Terrain.OCEAN
-    assert np.array_equal(fb.rgb()[5, 35], before), "굽기 전에는 안 바뀐다"
+    assert np.array_equal(fb.terrain_rgb[5, 35], before), "굽기 전에는 안 바뀐다"
     fb.rebake()
-    assert not np.array_equal(fb.rgb()[5, 35], before)
+    assert not np.array_equal(fb.terrain_rgb[5, 35], before)
 
 
 # --- 위젯 -------------------------------------------------------------------

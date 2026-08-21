@@ -23,7 +23,7 @@ from .attack import Attack
 from .buildings import DefensePostIndex, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
-from .gamemap import GameMap, TileRef
+from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     trade_gold, trade_spawn_rate, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
@@ -73,9 +73,13 @@ class GameState:
 
     @classmethod
     def new(cls, player_count: int, rng: random.Random,
-            map_name: str = "world", human: int = 0) -> "GameState":
-        """`human` 은 사람이 잡는 pid. 헤드리스는 -1 을 줘서 전원 봇으로 만든다."""
-        gmap = GameMap.load(map_name)
+            map_name: str = "world", human: int = 0,
+            size: str = DEFAULT_SIZE) -> "GameState":
+        """`human` 은 사람이 잡는 pid. 헤드리스는 -1 을 줘서 전원 봇으로 만든다.
+
+        `size` 는 지도 해상도(`map16x`/`map4x`/`map`). **밸런스에 직접 영향을 준다** —
+        원본 공식이 전체 크기 기준이라 작은 지도에서는 상수항이 지배한다."""
+        gmap = GameMap.load(map_name, size=size)
         # 원본 `SpawnExecution` — 시작 영토는 1칸이 아니라 **반경 4의 원**이다.
         # 1칸으로 시작하면 상한 공식(타일^0.6)의 바닥에서 출발해 초반이 지나치게
         # 느리고, 첫 공격 한 번에 탈락할 수 있다.

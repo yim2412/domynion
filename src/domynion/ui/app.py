@@ -17,12 +17,13 @@ import sys
 
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core.gamemap import DEFAULT_SIZE, SIZES
 
 
 def build_state(seed: int, players: int, map_name: str, human: int,
-                clock: str | None) -> tuple[GameState, random.Random]:
+                clock: str | None, size: str) -> tuple[GameState, random.Random]:
     rng = random.Random(seed)
-    st = GameState.new(players, rng, map_name=map_name, human=human)
+    st = GameState.new(players, rng, map_name=map_name, human=human, size=size)
     for p in st.players.values():
         p.kind = "human" if p.pid == human else "nation"
         p.is_bot = False
@@ -35,6 +36,9 @@ def build_state(seed: int, players: int, map_name: str, human: int,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Domynion")
     ap.add_argument("--map", dest="map_name", default="world")
+    ap.add_argument("--size", choices=list(SIZES), default=DEFAULT_SIZE,
+                    help="지도 해상도. map16x=1/16 · map4x=1/4 · map=원본. "
+                         "클수록 원본 밸런스에 가깝지만 무겁다")
     ap.add_argument("--players", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--human", type=int, default=0, help="사람이 잡을 pid")
@@ -56,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     from .main_window import MainWindow
 
     st, rng = build_state(args.seed, args.players, args.map_name,
-                          args.human, args.clock)
+                          args.human, args.clock, args.size)
     app = QApplication(sys.argv[:1])
     # 전역 폰트를 먼저 정한다 — 위젯이 만들어진 뒤에 바꾸면 이미 잰 크기가 안 맞는다
     from PyQt6.QtGui import QFont

@@ -51,9 +51,12 @@ class MapWidget(QWidget):
         self.zoom = 0.0            # 0 이면 첫 그리기에서 화면에 맞춘다
         self.offset = QPointF(0, 0)
         self._drag_from: QPointF | None = None
-        self._image: QImage | None = None
-        self._buf: np.ndarray | None = None
+        # 지형은 한 번만 굽는다 — 판 내내 같은 QImage 다(핵이 터지면 다시 굽는다).
+        self._terrain_img: QImage | None = None
+        self._overlay_img: QImage | None = None
+        self._overlay_buf: np.ndarray | None = None
         self.hovered_tile: int | None = None
+        self._bake_terrain()
 
     # --- 좌표 -------------------------------------------------------------
 
@@ -78,18 +81,43 @@ class MapWidget(QWidget):
 
     # --- 그리기 -----------------------------------------------------------
 
+    def _bake_terrain(self) -> None:
+        """지형 층을 굽는다. **핵이 지형을 바꿨을 때만** 다시 부른다."""
+        buf = self.frames.terrain_rgb
+        h, w, _ = buf.shape
+        # QImage 는 버퍼를 복사하지 않으므로 `copy()` 로 자기 것을 갖게 한다 —
+        # 지형은 한 번만 만드니 복사 비용이 문제되지 않는다.
+        self._terrain_img = QImage(buf.data, w, h, w * 3,
+                                   QImage.Format.Format_RGB888).copy()
+
+    def rebake(self) -> None:
+        self.frames.rebake()
+        self._bake_terrain()
+
     def refresh(self) -> None:
-        """상태가 바뀌었을 때 부른다. 픽셀 버퍼를 새로 만들고 다시 그린다."""
-        self._buf = self.frames.rgb()
-        h, w, _ = self._buf.shape
-        # QImage 는 버퍼를 **복사하지 않는다.** `self._buf` 를 살려 둬야 한다 —
-        # 지역변수로만 두면 다음 프레임에 회수돼 화면이 깨진다.
-        self._image = QImage(self._buf.data, w, h, w * 3, QImage.Format.Format_RGB888)
+        """상태가 바뀌었을 때 부른다. **소유자 층만** 새로 만든다."""
+        self._overlay_buf = self.frames.owner_rgba()
+        h, w, _ = self._overlay_buf.shape
+        # 이쪽은 매 프레임이라 복사하지 않는다. 대신 `self._overlay_buf` 를 살려
+        # 둬야 한다 — 지역변수로만 두면 다음 프레임에 회수돼 화면이 깨진다.
+        self._overlay_img = QImage(self._overlay_buf.data, w, h, w * 4,
+                                   QImage.Format.Format_RGBA8888)
         self.update()
+
+    def visible_tiles(self) -> tuple[int, int, int, int]:
+        """화면에 보이는 타일 범위 `(x0, y0, x1, y1)`. 국경 계산을 여기로 묶는다 —
+        원본 크기 지도(200만 칸)에서 전체를 훑으면 18ms 가 든다."""
+        gm = self.state.gmap
+        z = max(self.zoom, 1e-6)
+        x0 = int((0 - self.offset.x()) / z) - 1
+        y0 = int((0 - self.offset.y()) / z) - 1
+        x1 = int((self.width() - self.offset.x()) / z) + 2
+        y1 = int((self.height() - self.offset.y()) / z) + 2
+        return (max(0, x0), max(0, y0), min(gm.width, x1), min(gm.height, y1))
 
     def paintEvent(self, _event) -> None:
         self.ensure_zoom()
-        if self._image is None:
+        if self._overlay_img is None:
             self.refresh()
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(*P.TERRAIN_COLORS[Terrain.OCEAN]))
@@ -98,15 +126,20 @@ class MapWidget(QWidget):
         gm = self.state.gmap
         target = QRectF(self.offset.x(), self.offset.y(),
                         gm.width * self.zoom, gm.height * self.zoom)
-        p.drawImage(target, self._image)
+        p.drawImage(target, self._terrain_img)
+        p.drawImage(target, self._overlay_img)      # 알파 합성은 Qt 가 한다
 
         self._draw_borders(p)
         self._draw_labels(p)
         p.end()
 
     def _draw_borders(self, p: QPainter) -> None:
-        vx, hx = self.frames.border_segments()
+        vx, hx = self.frames.border_segments(self.visible_tiles())
         if not len(vx) and not len(hx):
+            return
+        # 선 개수가 너무 많으면(줌 아웃) 그리지 않는다. 그 배율에서는 어차피
+        # 픽셀보다 촘촘해 색 경계로 이미 보인다.
+        if len(vx) + len(hx) > 40_000:
             return
         width = max(1.0, self.zoom / 4)
         p.setPen(QPen(QColor(*P.BORDER_COLOR), width))

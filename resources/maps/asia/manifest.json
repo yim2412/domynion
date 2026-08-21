@@ -5,5 +5,15 @@
     "height": 300,
     "num_land_tiles": 64809,
     "width": 500
+  },
+  "map4x": {
+    "height": 600,
+    "num_land_tiles": 265522,
+    "width": 1000
+  },
+  "map": {
+    "height": 1200,
+    "num_land_tiles": 1079587,
+    "width": 2000
   }
 }

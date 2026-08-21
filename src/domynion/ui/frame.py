@@ -1,20 +1,24 @@
-"""프레임 생성 — **타일 해상도로 만들고 확대는 Qt 에 맡긴다.**
+"""프레임 생성 — **지형은 한 번 굽고, 소유자만 매 프레임 얹는다.**
 
-실측이 설계를 정했다:
+실측이 설계를 두 번 정했다.
 
-| 방식 | 500×250 지도 한 장 |
+1차 (타일 해상도 vs 픽셀 해상도):
+
+| | 500×250 한 장 |
 |---|---|
-| 픽셀 해상도로 `np.repeat` 후 합성 (`render.py`) | 69ms → **14.5 fps** |
-| 타일 해상도(500×250)로 만들고 Qt 가 확대 | **4.0ms → 253 fps** |
+| 픽셀 해상도로 `np.repeat` 후 합성 | 69ms → 14.5 fps |
+| **타일 해상도로 만들고 확대는 Qt** | 4.0ms → 253 fps |
 
-17배 차이는 전부 픽셀 확대에서 나온다. 12만 타일을 scale 2 로 펼치면 50만 픽셀 ×
-3채널을 매 프레임 만들고 자르고 형변환하게 되는데, 그 일은 GPU 가 공짜로 해 준다.
+2차 (지형+소유자를 매번 합성 vs 소유자만 오버레이):
 
-**지형 바닥은 한 번만 굽는다.** 지형은 핵이 터질 때만 바뀌므로 그때만 다시 굽는다.
-매 프레임 하는 일은 소유자 색을 섞는 것 하나뿐이다.
+| | 1000×500 | 2000×1000 |
+|---|---|---|
+| 매 프레임 float 블렌드 후 uint8 변환 | 16.2ms (62fps) | 59.6ms (**17fps**) |
+| **소유자 RGBA 오버레이만** | 4.4ms (227fps) | 17.2ms (**58fps**) |
 
-`render.py`(PIL 렌더러)는 그대로 둔다 — 그쪽은 창 없이 그림 파일을 뽑는 용도라
-프레임률이 상관없고, 라벨·질감을 더 곱게 그린다.
+지형은 판 내내 안 바뀐다(핵이 터질 때만). 그러니 지형+질감을 **한 번만** 굽고,
+매 프레임 하는 일은 `owner` 배열을 RGBA 로 조회하는 **uint8 gather 하나**로 줄인다.
+합성은 Qt 가 알파로 한다 — 그쪽이 GPU 일이다.
 """
 
 from __future__ import annotations
@@ -27,22 +31,33 @@ from . import palette as P
 
 _TERRAIN_LUT = np.array(
     [P.TERRAIN_COLORS[Terrain(i)] for i in range(len(Terrain))], dtype=np.float32)
-_PLAYER_LUT = np.array(P.PLAYER_COLORS, dtype=np.float32)
+
+
+def _owner_rgba_lut() -> np.ndarray:
+    """`owner + 1` 로 조회하는 표. 0번(중립)은 **완전 투명**이다."""
+    lut = np.zeros((len(P.PLAYER_COLORS) + 1, 4), dtype=np.uint8)
+    alpha = int(round(P.OWNER_BLEND * 255))
+    for i, (r, g, b) in enumerate(P.PLAYER_COLORS):
+        lut[i + 1] = (r, g, b, alpha)
+    return lut
+
+
+_OWNER_LUT = _owner_rgba_lut()
 
 
 class FrameBuilder:
-    """지형 바닥을 캐시하고 매 프레임 소유자 색만 얹는다."""
+    """지형 바닥(RGB, 고정)과 소유자 층(RGBA, 매 프레임)을 따로 낸다."""
 
-    __slots__ = ("gmap", "_base", "_land", "_terrain_version")
+    __slots__ = ("gmap", "_base", "_land", "_overlay")
 
     def __init__(self, gmap: GameMap, seed: int = 0):
         self.gmap = gmap
-        self._terrain_version = -1
-        self._base = np.zeros((gmap.height, gmap.width, 3), dtype=np.float32)
+        self._base = np.zeros((gmap.height, gmap.width, 3), dtype=np.uint8)
         self._land = np.zeros((gmap.height, gmap.width), dtype=bool)
+        self._overlay: np.ndarray | None = None
         self.rebake(seed)
 
-    # --- 지형 바닥 --------------------------------------------------------
+    # --- 지형 바닥 (한 번만) ----------------------------------------------
 
     def rebake(self, seed: int = 0) -> None:
         """지형 + 질감을 굽는다. **핵이 지형을 바꿨을 때만** 다시 부른다."""
@@ -58,38 +73,66 @@ class FrameBuilder:
         tex = _upscale_bilinear(small, h, w) * 2.0 - 1.0
         self._land = terrain != Terrain.OCEAN
         amp = np.where(self._land, P.TEXTURE_AMP, P.TEXTURE_AMP * 0.5)
-        self._base = np.clip(base * (1.0 + tex * amp)[..., None], 0, 255)
+        self._base = np.ascontiguousarray(
+            np.clip(base * (1.0 + tex * amp)[..., None], 0, 255).astype(np.uint8))
 
-    # --- 매 프레임 --------------------------------------------------------
+    @property
+    def terrain_rgb(self) -> np.ndarray:
+        """지형 바닥 (h, w, 3) uint8. 판 내내 같은 배열이다."""
+        return self._base
 
-    def rgb(self) -> np.ndarray:
-        """소유자 색이 섞인 (h, w, 3) uint8. **연속 메모리**로 돌려준다 —
-        QImage 가 그 버퍼를 그대로 참조하기 때문이다."""
+    # --- 소유자 층 (매 프레임) --------------------------------------------
+
+    def owner_rgba(self) -> np.ndarray:
+        """소유자 색 (h, w, 4) uint8. 중립은 알파 0 이라 지형이 그대로 비친다.
+
+        **연속 메모리**로 돌려준다 — QImage 가 이 버퍼를 그대로 참조한다."""
         h, w = self.gmap.height, self.gmap.width
         owner = self.gmap.owner.reshape(h, w)
-        owned = owner >= 0
-        out = self._base
-        if owned.any():
-            idx = np.where(owned, owner, 0) % len(P.PLAYER_COLORS)
-            b = P.OWNER_BLEND
-            out = np.where(owned[..., None],
-                           self._base * (1 - b) + _PLAYER_LUT[idx] * b, self._base)
-        return np.ascontiguousarray(out.astype(np.uint8))
+        idx = owner + 1
+        if len(P.PLAYER_COLORS) < 64:            # pid 가 색 수를 넘으면 감싼다
+            over = idx > len(P.PLAYER_COLORS)
+            if over.any():
+                idx = np.where(over, (owner % len(P.PLAYER_COLORS)) + 1, idx)
+        self._overlay = np.ascontiguousarray(_OWNER_LUT[idx])
+        return self._overlay
 
-    def border_segments(self) -> tuple[np.ndarray, np.ndarray]:
+    # --- 국경·라벨 --------------------------------------------------------
+
+    def border_segments(self, view: tuple[int, int, int, int] | None = None
+                        ) -> tuple[np.ndarray, np.ndarray]:
         """국경선으로 그릴 변들. `(세로변, 가로변)` 각각 (n, 2) 타일 좌표.
 
-        **소유자가 다르고 양쪽 다 육지인 변만**이다. 해안선은 국경이 아니라 색으로
-        이미 갈리고, 그걸 함께 그리면 화면이 선으로 뒤덮인다."""
+        `view` 는 `(x0, y0, x1, y1)` 타일 범위 — **화면에 보이는 곳만** 계산한다.
+        원본 크기 지도(200만 칸)에서 전체를 훑으면 18ms 가 든다.
+
+        소유자가 다르고 양쪽 다 육지인 변만이다. 해안선은 국경이 아니라 색으로 이미
+        갈리고, 그걸 함께 그리면 화면이 선으로 뒤덮인다."""
         h, w = self.gmap.height, self.gmap.width
-        owner = self.gmap.owner.reshape(h, w)
-        land = self._land
-        vb = (owner[:, :-1] != owner[:, 1:]) & land[:, :-1] & land[:, 1:]
-        hb = (owner[:-1, :] != owner[1:, :]) & land[:-1, :] & land[1:, :]
-        vy, vx = np.nonzero(vb)
-        hy, hx = np.nonzero(hb)
-        return (np.stack([vx + 1, vy], axis=1) if len(vx) else np.empty((0, 2), int),
-                np.stack([hx, hy + 1], axis=1) if len(hx) else np.empty((0, 2), int))
+        x0, y0, x1, y1 = view if view else (0, 0, w, h)
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(w, x1), min(h, y1)
+        if x1 <= x0 or y1 <= y0:
+            return np.empty((0, 2), int), np.empty((0, 2), int)
+
+        owner = self.gmap.owner.reshape(h, w)[y0:y1, x0:x1]
+        land = self._land[y0:y1, x0:x1]
+        # 세로 변과 가로 변을 **따로** 본다. 하나로 묶어 "폭이든 높이든 2 미만이면
+        # 포기"로 두면 1행짜리 지도에서 세로 국경이 통째로 사라진다(실제로 그랬다).
+        if owner.shape[1] >= 2:
+            vb = (owner[:, :-1] != owner[:, 1:]) & land[:, :-1] & land[:, 1:]
+            vy, vx = np.nonzero(vb)
+        else:
+            vy = vx = np.empty(0, dtype=int)
+        if owner.shape[0] >= 2:
+            hb = (owner[:-1, :] != owner[1:, :]) & land[:-1, :] & land[1:, :]
+            hy, hx = np.nonzero(hb)
+        else:
+            hy = hx = np.empty(0, dtype=int)
+        return (np.stack([vx + x0 + 1, vy + y0], axis=1) if len(vx)
+                else np.empty((0, 2), int),
+                np.stack([hx + x0, hy + y0 + 1], axis=1) if len(hx)
+                else np.empty((0, 2), int))
 
     def label_anchors(self, players) -> list[tuple[int, float, float, float]]:
         """`(pid, 중심x, 중심y, 영토 폭)`. 폰트 크기는 **영토 덩어리의 실제 폭**에서

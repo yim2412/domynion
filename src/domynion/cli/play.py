@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from ..ai import nation, simple_ai
 from ..core import constants as C
 from ..core.engine import GameState
+from ..core.gamemap import DEFAULT_SIZE, SIZES
 
 
 @dataclass
@@ -37,12 +38,13 @@ class MatchResult:
 
 def run_match(seed: int, players: int = 4, map_name: str = "world",
               clock: str | None = None, max_seconds: float | None = None,
-              ai: str = "nation", difficulty: str = "medium") -> MatchResult:
+              ai: str = "nation", difficulty: str = "medium",
+              size: str = DEFAULT_SIZE) -> MatchResult:
     """`clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도
     지배 승리도 없이 마지막 생존자가 남을 때까지 간다."""
     t0 = time.perf_counter()
     rng = random.Random(seed)
-    st = GameState.new(players, rng, map_name=map_name, human=-1)
+    st = GameState.new(players, rng, map_name=map_name, human=-1, size=size)
     if clock:
         st.clock.cfg.enabled = True
         st.clock.cfg.speed = clock
@@ -101,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--players", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--map", dest="map_name", default="world")
+    ap.add_argument("--size", choices=list(SIZES), default=DEFAULT_SIZE)
     ap.add_argument("--jobs", type=int, default=1, help="동시에 돌릴 프로세스 수")
     ap.add_argument("--clock", choices=["slow", "normal", "fast", "veryfast"],
                     help="둠스데이 클락을 켠다 (원본 종료 규칙)")
@@ -113,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     jobs = [(args.seed + i, args.players, args.map_name, args.clock, args.max_seconds,
-             args.ai, args.difficulty) for i in range(args.games)]
+             args.ai, args.difficulty, args.size) for i in range(args.games)]
     t0 = time.perf_counter()
     results: list[MatchResult] = []
 

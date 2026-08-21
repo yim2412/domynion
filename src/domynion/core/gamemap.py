@@ -30,11 +30,24 @@ TileRef = int
 _RESOURCES = Path(__file__).resolve().parents[3] / "resources" / "maps"
 
 
+# 해상도. 원본이 같은 지도를 세 크기로 굽는다 — 이름이 곧 파일명이다.
+#
+# **크기 선택은 밸런스에 직접 영향을 준다.** 원본 공식이 전체 크기(육지 65만~234만)
+# 기준이라, 작은 지도에서는 상수항이 지배하고 핵 반경의 비중이 커진다(계획서 4.5절).
+SIZES = ("map16x", "map4x", "map")
+DEFAULT_SIZE = "map4x"
+
+
 def available_maps(root: Path | None = None) -> list[str]:
     base = root or _RESOURCES
     if not base.is_dir():
         return []
     return sorted(p.name for p in base.iterdir() if (p / "map16x.bin").is_file())
+
+
+def available_sizes(name: str, root: Path | None = None) -> list[str]:
+    base = (root or _RESOURCES) / name
+    return [s for s in SIZES if (base / f"{s}.bin").is_file()]
 
 
 class GameMap:
@@ -64,15 +77,23 @@ class GameMap:
     # --- 적재 -------------------------------------------------------------
 
     @classmethod
-    def load(cls, name: str = "world", root: Path | None = None) -> "GameMap":
+    def load(cls, name: str = "world", root: Path | None = None,
+             size: str = DEFAULT_SIZE) -> "GameMap":
+        """`size` 는 `map16x`(1/16) · `map4x`(1/4) · `map`(원본 크기).
+
+        기본이 `map4x` 인 이유: 원본 공식이 전체 크기 기준이라 `map16x` 에서는
+        병력 상한의 상수항이 지배하고 핵 반경의 비중이 16배가 된다."""
         base = (root or _RESOURCES) / name
-        meta = json.loads((base / "manifest.json").read_text(encoding="utf-8"))["map16x"]
+        if not (base / f"{size}.bin").is_file():
+            have = available_sizes(name, root)
+            raise FileNotFoundError(f"{name}/{size}.bin 이 없다. 있는 것: {have}")
+        meta = json.loads((base / "manifest.json").read_text(encoding="utf-8"))[size]
         # ⚠ `.copy()` 가 필수다. `frombuffer` 는 **읽기 전용** 배열을 준다.
         # 핵이 육지를 바다로 바꿀 때(`P5`) 여기에 쓰기 때문에, 빼면 실전에서만
         # `ValueError: assignment destination is read-only` 로 죽는다.
         # 테스트가 못 잡았던 이유: `from_rows` 는 쓰기 가능한 배열을 만든다.
-        raw = np.frombuffer((base / "map16x.bin").read_bytes(), dtype=np.uint8).copy()
-        gm = cls(meta["width"], meta["height"], raw, name=name)
+        raw = np.frombuffer((base / f"{size}.bin").read_bytes(), dtype=np.uint8).copy()
+        gm = cls(meta["width"], meta["height"], raw, name=f"{name}/{size}")
         declared = meta.get("num_land_tiles")
         if declared is not None and int((gm.raw & C.LAND_BIT).astype(bool).sum()) != declared:
             # 조용히 어긋나면 이후 모든 측정이 무의미해진다. 여기서 죽는 편이 낫다.

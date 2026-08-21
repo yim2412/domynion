@@ -39,8 +39,11 @@ pip install -e ".[dev,ui]"
 ## 실행
 
 ```bash
-# 플레이
+# 플레이 (기본 해상도 map4x = 1000×500, 육지 15.8만)
 python -m domynion.ui.app --map world --players 4 --difficulty hard
+
+# 해상도: map16x(1/16, 가볍다) · map4x(기본) · map(원본 크기, 무겁다)
+python -m domynion.ui.app --map world --size map
 
 # 창 없이 한 장 찍는다 (600초 시점)
 python -m domynion.ui.app --shot shot.png --at 600 --map world
@@ -60,7 +63,7 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q   # 변이 테스트는 캐�
 `--clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도 지배
 승리도 없이 마지막 생존자가 남을 때까지 간다.
 
-지도는 `world` `asia` `europe` `africa` 넷 — 출처와 라이선스는
+지도는 `world` `asia` `europe` `africa` 넷 × 세 해상도 — 출처와 라이선스는
 [`resources/maps/ATTRIBUTION.md`](resources/maps/ATTRIBUTION.md).
 
 ## 구조
