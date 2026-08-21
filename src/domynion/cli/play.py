@@ -31,6 +31,7 @@ class MatchResult:
     seconds: float
     top_share: float
     augments: dict[int, dict[str, int]]
+    fill_saturated: float         # 후반 표본 중 충전율이 1.0 에 박힌 비율
     min_cost_mult: float          # 판 전체에서 관측된 최저 비용 배율 (할인 중첩 감시)
     stops: int                    # 실제로 일어난 증강 정지 횟수 (설계값은 7회)
 
@@ -50,6 +51,21 @@ def apply_ai_overrides(**kw: float | int | None) -> None:
         setattr(simple_ai, attr, value)
 
 
+def apply_rule_overrides(**kw: float | None) -> None:
+    """밸런스 상수를 덮어쓴다. AI 쪽(`apply_ai_overrides`)과 같은 이유다 — 채택 전에
+    코드를 고치면 무엇이 기준선이었는지 알 수 없게 된다.
+
+    `state.py` 가 `C.<이름>` 으로 **모듈 경유** 조회하기 때문에 setattr 이 먹는다.
+    이름 import 로 바꾸는 순간 조용히 안 먹으니 주의."""
+    for name, value in kw.items():
+        if value is None:
+            continue
+        attr = name.upper()
+        if not hasattr(C, attr):
+            raise SystemExit(f"constants 에 {attr} 가 없다 — 이름이 바뀌었는지 확인할 것")
+        setattr(C, attr, value)
+
+
 def run_match(seed: int, players: int, dt: float = C.TICK_DT) -> MatchResult:
     rng = random.Random(seed)
     st = GameState.new(players, rng)
@@ -58,6 +74,7 @@ def run_match(seed: int, players: int, dt: float = C.TICK_DT) -> MatchResult:
     bots = simple_ai.attach(st, rng)
 
     min_cost = 1.0
+    sat = samples = 0
     stops = 0
     next_at = st.next_augment_at
     ticks = 0
@@ -74,6 +91,10 @@ def run_match(seed: int, players: int, dt: float = C.TICK_DT) -> MatchResult:
         if ticks % sample_every == 0:
             # 하한에 걸리는 조합이 실제로 나오는지 본다 (설계 3절 미해결 항목).
             min_cost = min(min_cost, _observed_min_cost(st))
+            if st.elapsed > 300.0:
+                for p in st.alive:
+                    samples += 1
+                    sat += p.fill_ratio(st.tiles(p.pid)) > 0.99
 
     return MatchResult(
         seed=seed,
@@ -82,6 +103,7 @@ def run_match(seed: int, players: int, dt: float = C.TICK_DT) -> MatchResult:
         seconds=st.elapsed,
         top_share=st.share(st.winner) if st.winner is not None else 0.0,
         augments={p.pid: dict(p.augments) for p in st.players.values()},
+        fill_saturated=(sat / samples if samples else 0.0),
         min_cost_mult=min_cost,
         stops=stops,
     )
@@ -161,8 +183,9 @@ def brief(results: list[MatchResult], args) -> str:
     def rate(key: str) -> float:
         return won.get(key, 0) / taken[key] * 100 if taken.get(key) else 0.0
 
-    return (f"bias={simple_ai.NEUTRAL_BIAS:<4} conc={simple_ai.MAX_CONCURRENT} "
-            f"fill={simple_ai.LAUNCH_FILL:<5} | "
+    sat = statistics.median([r.fill_saturated for r in results])
+    return (f"growth={C.TROOPS_GROWTH_RATE:<6} atk={C.DEFAULT_ATTACK_RATIO:<5} | "
+            f"충전포화 {sat * 100:>5.1f}%  "
             f"시간종료 {timeout * 100:>5.1f}%  중앙 {secs:>4.0f}초  "
             f"개척단 {rate('settlers'):>4.1f}%  강행군 {rate('forced_march'):>4.1f}%  "
             f"하한 {floored * 100:>4.1f}%  n={n}")
@@ -177,9 +200,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--brief", action="store_true", help="스윕용 한 줄 요약")
     ap.add_argument("--neutral-bias", type=float, help="AI: 중립 선호 (기본 1.6)")
     ap.add_argument("--max-concurrent", type=int, help="AI: 동시 부대 수 (기본 1)")
-    ap.add_argument("--launch-fill", type=float, help="AI: 출정 충전율 (기본 0.55)")
+    ap.add_argument("--launch-fill", type=float, help="AI: 출정 충전율 (기본 0.35)")
+    ap.add_argument("--growth-rate", type=float, help="규칙: 병력 성장률 (기본 0.085)")
+    ap.add_argument("--attack-ratio", type=float, help="규칙: 공격 투입 비율 (기본 0.25)")
     args = ap.parse_args(argv)
 
+    apply_rule_overrides(troops_growth_rate=args.growth_rate,
+                         default_attack_ratio=args.attack_ratio)
     apply_ai_overrides(neutral_bias=args.neutral_bias,
                        max_concurrent=args.max_concurrent,
                        launch_fill=args.launch_fill)
