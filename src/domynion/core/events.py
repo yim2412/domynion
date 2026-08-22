@@ -29,6 +29,7 @@ class EventKind(Enum):
     SAM_HIT = "SAM 요격"
     CAPTURED_ENEMY_UNIT = "유닛 노획"
     UNIT_DESTROYED = "유닛 파괴"
+    UNIT_DELETED = "유닛 철거"      # `unit_voluntarily_deleted` — 내가 스스로 지운 것
     ALLIANCE_ACCEPTED = "동맹 성립"
     ALLIANCE_REJECTED = "동맹 거절"
     ALLIANCE_REQUEST = "동맹 요청"
@@ -57,6 +58,7 @@ CATEGORY: dict[EventKind, Category] = {
     EventKind.CONQUERED_PLAYER: Category.ATTACK,
     EventKind.NAVAL_INVASION_INBOUND: Category.ATTACK,
     EventKind.UNIT_DESTROYED: Category.ATTACK,
+    EventKind.UNIT_DELETED: Category.SYSTEM,
     EventKind.CAPTURED_ENEMY_UNIT: Category.ATTACK,
     EventKind.MIRV_INBOUND: Category.NUKE,
     EventKind.NUKE_INBOUND: Category.NUKE,

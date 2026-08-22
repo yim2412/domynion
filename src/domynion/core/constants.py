@@ -123,6 +123,22 @@ RETREAT_MALUS = 0.25
 
 TARGET_DURATION_TICKS = 10 * 10    # 표적으로 남는 시간
 TARGET_COOLDOWN_TICKS = 15 * 10    # 다음 표적을 찍기까지
+
+# 건물 철거 — DeleteUnitExecution.ts / Config.ts :: deleteUnitCooldown, deletionMarkDuration
+#
+# 명령하면 바로 사라지지 않는다. 30초 동안 **철거 예정**으로 표시된 채 계속 돌아가다가
+# 그 뒤에 사라진다. 원본에 취소는 없다 — 무를 시간을 주는 게 아니라, 남이 보고
+# 대응할 시간을 주는 것이다. **골드는 한 푼도 안 돌아온다**(`delete()` 에 환불이 없다).
+#
+# ⚠ 계획서에 "쿨다운 10 tick" 이라고 적혀 있었는데 **틀렸다.** 원본은 둘 다 300 tick 이다.
+# 초기값이 −1 이라 판 시작 후 30초가 지나야 첫 철거가 된다(`lastDeleteUnitTick = -1`).
+DELETE_UNIT_COOLDOWN_TICKS = 30 * 10
+DELETION_MARK_DURATION_TICKS = 30 * 10
+
+# 전체 금수 — EmbargoAllExecution.ts / Config.ts :: embargoAllCooldown()
+#
+# 봇은 건너뛴다. 봇과의 무역은 원래 관계를 안 타므로 끊어 봐야 나만 손해다.
+EMBARGO_ALL_COOLDOWN_TICKS = 10 * 10
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
 REL_TROOP_DONATION = 50.0          # DonateTroopExecution
@@ -298,7 +314,10 @@ SAM_CONSTRUCTION_TICKS = 30 * 10
 
 BOAT_MAX_NUMBER = 3            # 동시에 띄울 수 있는 수송선 수
 BOAT_TICKS_PER_MOVE = 1        # TransportShipExecution.ticksPerMove
-BOAT_RETREAT_MALUS_PCT = 0.0   # 퇴각해 돌아온 병력의 손실 비율(원본 malusForRetreat)
+# 퇴각해 돌아온 병력의 손실 비율. 원본 `TransportShipExecution.ts` 의
+# `const malusForRetreat = 25` — 배를 돌리면 태운 병력의 25% 가 사라진다.
+# ⚠ 여기 0.0 이 박혀 있었다. 퇴각 기능 자체가 없어서 아무도 안 읽던 값이다.
+BOAT_RETREAT_MALUS_PCT = 0.25
 
 WARSHIP_PATROL_RANGE = 100
 WARSHIP_TARGETTING_RANGE = 130

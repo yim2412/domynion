@@ -161,43 +161,50 @@ class AttacksPanel(QWidget):
 
     def refresh(self) -> None:
         st = self.state
+        # 한 줄 = (화살표, 상대, 병력, 색, 퇴각 명령, 퇴각 손실).
+        # **퇴각 명령을 콜러블로 들고 다닌다** — 육상 공격과 상륙 부대가 서로 다른
+        # 엔진 함수를 부르는데, 줄마다 종류를 다시 따지면 여기가 분기투성이가 된다.
         lines = []
         for a in st.attacks:
             if a.attacker == self.me:
                 foe = st.players.get(a.target) if a.target is not None else None
                 mark = " (물러나는 중)" if a.retreating else ""
-                lines.append(("→", (foe.name if foe else "중립") + mark,
-                              a.troops, "#8fd6f0", a))
+                lost = a.troops * C.RETREAT_MALUS if a.target is not None else 0.0
+                lines.append(("→", (foe.name if foe else "중립") + mark, a.troops,
+                              "#8fd6f0",
+                              None if a.retreating
+                              else (lambda x=a: st.order_retreat(self.me, x)),
+                              lost))
             elif a.target == self.me:
                 foe = st.players.get(a.attacker)
                 lines.append(("←", foe.name if foe else "?",
-                              a.troops, "#e08a7a", None))
+                              a.troops, "#e08a7a", None, 0.0))
         for b in st.boats:
             if b.owner == self.me:
-                lines.append(("⛵→", "상륙 중", b.troops, "#8fd6f0", None))
+                mark = " (돌아오는 중)" if b.retreating else ""
+                lines.append(("⛵→", "상륙 중" + mark, b.troops, "#8fd6f0",
+                              None if b.retreating
+                              else (lambda x=b: st.order_boat_retreat(self.me, x)),
+                              b.troops * C.BOAT_RETREAT_MALUS_PCT))
             elif b.target == self.me:
                 foe = st.players.get(b.owner)
                 lines.append(("⛵←", foe.name if foe else "?",
-                              b.troops, "#e08a7a", None))
+                              b.troops, "#e08a7a", None, 0.0))
 
         lines = lines[:len(self._rows)]
-        for (lbl, btn), (arrow, who, troops, colour, atk) in zip(self._rows,
-                                                                 lines):
+        for (lbl, btn), (arrow, who, troops, colour, retreat, lost) in zip(
+                self._rows, lines):
             lbl.setText(f'<span style="color:{colour}">{arrow}</span> {who} '
                         f'<span style="opacity:.75">{troops:,.0f}</span>')
-            can = atk is not None and not atk.retreating
-            btn.setVisible(can)
-            if can:
-                lost = (atk.troops * C.RETREAT_MALUS
-                        if atk.target is not None else 0.0)
+            btn.setVisible(retreat is not None)
+            if retreat is not None:
                 btn.setToolTip(f"퇴각 — {lost:,.0f} 손실" if lost
                                else "퇴각 — 손실 없음")
                 try:
                     btn.clicked.disconnect()
                 except TypeError:
                     pass          # 연결이 없으면 그냥 넘어간다
-                btn.clicked.connect(
-                    lambda _=False, x=atk: st.order_retreat(self.me, x))
+                btn.clicked.connect(lambda _=False, f=retreat: f())
         for lbl, btn in self._rows[len(lines):]:
             lbl.setText("")
             btn.hide()

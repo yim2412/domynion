@@ -105,6 +105,9 @@ class Unit:
     health: int | None = None
     ticks_left: int = 0                 # 건설이 끝나기까지
     active: bool = True
+    # 철거가 예약된 tick. `UnitImpl._deletionAt` 그대로 — None 이면 예약이 없다.
+    # 소유자가 바뀌면 원본은 이걸 지운다(`setOwner` → `clearPendingDeletion`).
+    deletion_at: int | None = None
 
     def __post_init__(self) -> None:
         if self.health is None:
@@ -113,6 +116,18 @@ class Unit:
     @property
     def under_construction(self) -> bool:
         return self.ticks_left > 0
+
+    @property
+    def marked_for_deletion(self) -> bool:
+        return self.deletion_at is not None
+
+    def mark_for_deletion(self, now: int) -> None:
+        if self.active:
+            self.deletion_at = now + C.DELETION_MARK_DURATION_TICKS
+
+    def overdue_deletion(self, now: int) -> bool:
+        """`isOverdueDeletion()` — **`>` 다.** `>=` 로 두면 한 tick 일찍 사라진다."""
+        return self.active and self.deletion_at is not None and now - self.deletion_at > 0
 
 
 class UnitStore:

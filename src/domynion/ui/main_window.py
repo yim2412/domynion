@@ -98,6 +98,9 @@ class MainWindow(QMainWindow):
                   lambda: self.controls.nudge_ratio(-C.ATTACK_RATIO_STEP))
         QShortcut(QKeySequence("Y"), self,
                   lambda: self.controls.nudge_ratio(+C.ATTACK_RATIO_STEP))
+        # 전체 금수 — 원본은 순위표 옆의 버튼이다(`EmbargoAllExecution`). 우리는
+        # 방사형 메뉴가 **상대 하나**를 전제로 열려서 거기 넣을 자리가 없다.
+        QShortcut(QKeySequence("E"), self, self._embargo_all)
 
         self.help = QLabel(
             "<b>조작</b><br>"
@@ -105,7 +108,8 @@ class MainWindow(QMainWindow):
             "&nbsp;&nbsp;가운데 = 뒤로 · 바깥 = 닫기 · 회색 항목엔 이유가 붙는다<br>"
             "우클릭 드래그 · WASD/화살표 — 이동 (가로로 계속 순환한다)<br>"
             "휠 · +/− — 확대 &nbsp;·&nbsp; F — 화면에 맞추기<br>"
-            "T/Y — 공격 비율 ∓10%p &nbsp;·&nbsp; Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
+            "T/Y — 공격 비율 ∓10%p &nbsp;·&nbsp; E — 전체 금수 걸기/풀기<br>"
+            "Space — 일시정지 &nbsp;·&nbsp; H — 이 도움말 &nbsp;·&nbsp; Esc — 종료",
             self.map)
         self.help.setStyleSheet(
             "color:#e8e8ec; background: rgba(16,20,28,225); padding: 12px 16px;"
@@ -222,6 +226,21 @@ class MainWindow(QMainWindow):
         self.inspect.move(12, self.scoreboard.y() + self.scoreboard.height() + 8)
         self.inspect.show()
         self.inspect.raise_()
+
+    def _embargo_all(self) -> None:
+        """봇을 뺀 모두에게 금수를 걸거나, 이미 다 걸려 있으면 푼다.
+
+        **토글이라 지금 상태를 먼저 봐야 한다.** 항상 걸기로 두면 푸는 방법이 없고,
+        누를 때마다 뒤집게 두면 절반만 걸린 상태에서 무엇이 일어날지 알 수 없다."""
+        st, me = self.state, self.human
+        if not st.can_embargo_all(me):
+            self._flash(f"전체 금수 — 아직 쿨다운이다 "
+                        f"({C.EMBARGO_ALL_COOLDOWN_TICKS * C.TICK_DT:.0f}초)")
+            return
+        targets = st.embargo_all_targets(me)
+        start = not all(st.diplomacy.embargoed(me, o) for o in targets)
+        n = st.embargo_all(me, start=start)
+        self._flash(f"{n}개 나라에 금수" if start else f"{n}개 나라의 금수 해제")
 
     def _pick_spawn(self, tile) -> None:
         """시작 위치를 고른다. 고르는 순간 판이 시작된다(싱글플레이 규칙)."""

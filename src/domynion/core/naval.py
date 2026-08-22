@@ -120,6 +120,9 @@ class TransportShip:
     dst: TileRef
     step_i: int = 0
     retreating: bool = False
+    # 퇴각 경로를 이미 새로 깔았는가. 원본은 `retreatDst ??=` 로 **한 번만** 정한다 —
+    # 매 tick 다시 정하면 배가 해안을 따라 움직일 때마다 목적지가 흔들려 제자리걸음한다.
+    replanned: bool = False
     done: bool = False
 
     @property

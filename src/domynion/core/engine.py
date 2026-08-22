@@ -288,6 +288,42 @@ class GameState:
     def is_traitor(self, pid: int) -> bool:
         return self.diplomacy.is_traitor(pid, self.tick_count)
 
+    def embargo_all_targets(self, pid: int) -> list[int]:
+        """전체 금수가 실제로 걸리는 상대들 — 원본 `EmbargoAllExecution` 의 필터.
+
+        **봇은 뺀다.** 봇과의 무역은 관계를 타지 않아 끊어 봐야 내 무역선만 줄고,
+        지도에 봇이 400개라 넣으면 사실상 무역 자체를 끄는 버튼이 된다."""
+        return [q.pid for q in self.alive
+                if q.pid != pid and not q.is_bot]
+
+    def can_embargo_all(self, pid: int) -> bool:
+        """`canEmbargoAll()` — 쿨다운 10초 + **걸 상대가 하나라도 있어야** 한다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over:
+            return False
+        if self.tick_count - p.last_embargo_all_tick < C.EMBARGO_ALL_COOLDOWN_TICKS:
+            return False
+        return bool(self.embargo_all_targets(pid))
+
+    def embargo_all(self, pid: int, start: bool = True) -> int:
+        """봇을 뺀 모두에게 금수를 걸거나(`start`) 푼다. 바꾼 수를 돌려준다.
+
+        원본은 이미 걸린 상대를 다시 걸지 않는다 — 다시 걸면 관계 −20 이 두 번
+        붙어서 버튼 한 번이 관계를 −40 만큼 태운다."""
+        if not self.can_embargo_all(pid):
+            return 0
+        me, dip = self.players[pid], self.diplomacy
+        changed = 0
+        for other in self.embargo_all_targets(pid):
+            if start and not dip.embargoed(pid, other):
+                dip.start_embargo(pid, other)
+                changed += 1
+            elif not start and dip.embargoed(pid, other):
+                dip.stop_embargo(pid, other)
+                changed += 1
+        me.last_embargo_all_tick = self.tick_count
+        return changed
+
     # --- 해상 -------------------------------------------------------------
 
     def send_boat(self, pid: int, dst: TileRef,
@@ -324,14 +360,41 @@ class GameState:
                       tile=dst, amount=troops)
         return boat
 
+    def order_boat_retreat(self, pid: int, boat: TransportShip) -> bool:
+        """떠 있는 상륙 부대를 돌린다 — 원본 `BoatRetreatExecution`.
+
+        육상 퇴각과 달리 **지연이 없다**(`RetreatExecution.cancelDelay` 에 해당하는
+        것이 없다). 대신 되돌아오는 길 자체가 시간이고, 도착하면 25% 를 잃는다."""
+        if boat.owner != pid or boat.retreating or boat not in self.boats:
+            return False
+        boat.retreating = True
+        return True
+
+    def _replan_retreat(self, b: TransportShip) -> bool:
+        """지금 있는 자리에서 가장 가까운 내 해안으로 뱃머리를 돌린다.
+
+        원본 `retreatDst ??= bestTransportShipSpawn(boat.tile())` — **퇴각을 시작한
+        위치** 기준으로 한 번만 정한다. 돌아갈 해안이 없으면(그 사이 영토를 다 잃는
+        따위) 원본은 배를 지우고 병력을 **손실 없이** 돌려준다."""
+        dst = best_spawn(self.gmap, b.owner, b.tile)
+        path = None if dst is None else self._water_path(b.tile, dst)
+        if dst is None or path is None:
+            return False
+        b.dst, b.path, b.step_i, b.replanned = dst, path, 0, True
+        return True
+
     def _advance_boats(self) -> None:
         still: list[TransportShip] = []
         for b in self.boats:
             p = self.players.get(b.owner)
             if p is None or not p.alive:
                 continue
+            if b.retreating and not b.replanned and not self._replan_retreat(b):
+                p.troops += b.troops       # 돌아갈 해안이 없다 — 손실 없이 환원
+                continue
             # 상륙 지점이 그 사이 친해졌으면 되돌아온다 — 육상 공격과 같은 규칙이다.
-            if b.target is not None and self.diplomacy.is_friendly(b.owner, b.target):
+            if (not b.retreating and b.target is not None
+                    and self.diplomacy.is_friendly(b.owner, b.target)):
                 p.troops += b.troops
                 continue
             b.advance()
@@ -342,7 +405,13 @@ class GameState:
             dst = b.dst
             owner_now = int(self.gmap.owner[dst])
             if owner_now == b.owner:
-                p.troops += b.troops          # 이미 내 땅이면 그냥 돌아온다
+                # **내 땅에 닿으면 25% 를 잃는다**(`malusForRetreat = 25`). 퇴각만이
+                # 아니라 목적지가 그 사이 내 땅이 된 경우에도 원본은 같은 값을 뗀다 —
+                # 배에 태운 병력은 공짜로 돌아오지 않는다.
+                lost = b.troops * C.BOAT_RETREAT_MALUS_PCT
+                p.troops += b.troops - lost
+                if lost:
+                    self.emit(EventKind.ATTACK_CANCELLED, who=b.owner, amount=lost)
                 continue
             self._conquer_tile(b.owner, dst, owner_now)
             # 상륙에 성공하면 **그 자리에서 육상 공격이 시작된다**(원본도 여기서
@@ -934,6 +1003,8 @@ class GameState:
         p = self.players.get(pid)
         if p is None or not UNIT_INFO[unit.utype].upgradable or unit.under_construction:
             return False
+        if unit.marked_for_deletion:   # `isUnitValidToUpgrade` — 지울 것에 돈을 더 넣지 않는다
+            return False
         cost = p.units.cost(unit.utype)
         if p.gold < cost:
             return False
@@ -941,6 +1012,55 @@ class GameState:
         unit.level += 1
         p.units.record_constructed(unit.utype)
         return True
+
+    # --- 철거 -------------------------------------------------------------
+
+    def can_delete_unit(self, pid: int, unit: Unit | None = None) -> bool:
+        """`DeleteUnitExecution.init()` 의 관문들 + `canDeleteUnit()` 쿨다운.
+
+        원본은 이 검사를 서버에서 다시 하며 실패를 `SECURITY:` 로 찍는다 — 클라이언트
+        버튼을 회색으로 만드는 것과 **같은 조건을 두 번** 두고 있다는 뜻이다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over or self.spawn_phase:
+            return False
+        if self.tick_count - p.last_delete_unit_tick < C.DELETE_UNIT_COOLDOWN_TICKS:
+            return False
+        if unit is None:
+            return True
+        if unit.owner != pid or not unit.active or unit.marked_for_deletion:
+            return False
+        # 내 땅 위의, 육지에 있는 것만. 배는 여기로 못 지운다(원본도 막는다).
+        return (int(self.gmap.owner[unit.tile]) == pid
+                and self.gmap.passable(unit.tile))
+
+    def delete_unit(self, pid: int, unit: Unit) -> bool:
+        """철거를 **예약한다.** 30초 뒤에 실제로 사라진다 — 골드 환불은 없다."""
+        if not self.can_delete_unit(pid, unit):
+            return False
+        self.players[pid].last_delete_unit_tick = self.tick_count
+        unit.mark_for_deletion(self.tick_count)
+        return True
+
+    def _advance_deletions(self) -> None:
+        """예약 시간이 지난 것을 실제로 지운다.
+
+        **표시 기간 동안 건물은 그대로 동작한다** — 원본은 방어초소 사거리도, 도시
+        레벨도 건드리지 않고 `_deletionAt` 만 세워 둔다. 여기서 조기에 효과를 끄면
+        30초 동안 원본과 다른 판이 된다."""
+        removed = False
+        for p in self.alive:
+            gone = [u for u in p.units.units if u.overdue_deletion(self.tick_count)]
+            if not gone:
+                continue
+            for u in gone:
+                u.active = False
+                self.emit(EventKind.UNIT_DELETED, who=p.pid, tile=u.tile,
+                          text=u.utype.value)
+            keep = set(map(id, gone))
+            p.units.units = [u for u in p.units.units if id(u) not in keep]
+            removed = True
+        if removed:
+            self._rebuild_posts()
 
     def _activate(self, p: PlayerState, unit: Unit) -> None:
         """건설이 끝났을 때. 완공 카운터는 이미 `build()` 에서 올렸다.
@@ -986,6 +1106,7 @@ class GameState:
         self._apply_embargo_relations()
         self._grow()
         self._advance_construction()
+        self._advance_deletions()
         self._advance_nukes()
         self._advance_warships()
         self._advance_boats()
@@ -1083,6 +1204,7 @@ class GameState:
         winner = self.players[attacker]
         for u in d.units.units:
             u.owner = attacker
+            u.deletion_at = None       # `setOwner()` → `clearPendingDeletion()`
             winner.units.units.append(u)
             winner.units.record_constructed(u.utype)
         d.units.units = []

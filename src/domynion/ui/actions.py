@@ -30,6 +30,11 @@ BUILDABLE = (UnitType.CITY, UnitType.PORT, UnitType.FACTORY,
 
 NUKES = (UnitType.ATOM_BOMB, UnitType.HYDROGEN_BOMB, UnitType.MIRV)
 
+# 클릭한 칸에서 이만큼 안에 있는 내 건물을 "그 건물을 찍었다"로 본다.
+# 원본은 건물 아이콘을 직접 누르지만 우리 조작은 칸 단위다. **건물끼리 최소 15칸
+# 떨어져 있으므로**(`find_spot`) 반경 7 안에는 많아야 하나뿐이라 헷갈릴 일이 없다.
+STRUCTURE_CLICK_RADIUS = 7
+
 NAMES = {
     UnitType.CITY: "도시", UnitType.PORT: "항구", UnitType.FACTORY: "공장",
     UnitType.DEFENSE_POST: "방어초소", UnitType.MISSILE_SILO: "사일로",
@@ -46,6 +51,23 @@ COL_PLAIN = (70, 78, 96)
 
 def _gold(n: int) -> str:
     return f"{n:,}"
+
+
+def structure_at(st: GameState, me: int, tile: TileRef):
+    """클릭한 칸 근처의 내 건물 하나. 없으면 None."""
+    p = st.players.get(me)
+    if p is None:
+        return None
+    x, y = st.gmap.xy(tile)
+    best, best_d = None, STRUCTURE_CLICK_RADIUS ** 2 + 1
+    for u in p.units.units:
+        if u.utype not in BUILDABLE or not u.active:
+            continue
+        ux, uy = st.gmap.xy(u.tile)
+        d = (ux - x) ** 2 + (uy - y) ** 2
+        if d < best_d:
+            best, best_d = u, d
+    return best
 
 
 # 메뉴는 위젯을 모른다. 이모지 판을 열라는 신호만 `notify` 로 흘려보내고,
@@ -156,7 +178,42 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
               f"골드 {_gold(cost)} 필요 (보유 {_gold(mine.gold)})"
               if mine.gold < cost else f"골드 {_gold(cost)} · 항구 옆에 뜬다"),
         colour=COL_BUILD))
+    items.append(_delete_item(st, me, tile, notify))
     return items
+
+
+def _delete_item(st: GameState, me: int, tile: TileRef, notify) -> Item:
+    """철거. **골드는 안 돌아온다** — 그 사실을 힌트에 적어 둔다.
+
+    잘못 놓은 방어초소가 도시 자리를 막고 있어도 되돌릴 방법이 없던 자리다."""
+    unit = structure_at(st, me, tile)
+    secs = C.DELETION_MARK_DURATION_TICKS * C.TICK_DT
+    if unit is None:
+        return Item("철거", enabled=False,
+                    hint="이 근처에 내 건물이 없다 — 건물 위를 찍어야 한다",
+                    colour=COL_PLAIN)
+    name = NAMES.get(unit.utype, unit.utype.value)
+    if unit.marked_for_deletion:
+        left = max(0, unit.deletion_at - st.tick_count) * C.TICK_DT
+        return Item(f"철거 · {name}", enabled=False,
+                    hint=f"이미 철거 예정이다 — {left:.0f}초 뒤에 사라진다. 취소는 없다",
+                    colour=COL_PLAIN)
+    ok = st.can_delete_unit(me, unit)
+    return Item(
+        f"철거 · {name}", action=lambda: _delete(st, me, unit, notify),
+        enabled=ok,
+        hint=(f"{secs:.0f}초 뒤에 사라진다 · 골드는 안 돌아온다" if ok else
+              f"철거는 {C.DELETE_UNIT_COOLDOWN_TICKS * C.TICK_DT:.0f}초에 하나씩만"),
+        colour=COL_ATTACK)
+
+
+def _delete(st: GameState, me: int, unit, notify) -> None:
+    name = NAMES.get(unit.utype, unit.utype.value)
+    secs = C.DELETION_MARK_DURATION_TICKS * C.TICK_DT
+    if st.delete_unit(me, unit):
+        notify(f"{name} 철거 예정 — {secs:.0f}초 뒤에 사라진다")
+    else:
+        notify("지금은 철거할 수 없다")
 
 
 def _build(st: GameState, me: int, ut: UnitType, tile: TileRef, notify) -> None:

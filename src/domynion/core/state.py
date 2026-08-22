@@ -40,6 +40,11 @@ class PlayerState:
     # 내가 남들을 어떻게 보는가. **한 방향**이다 — 상대가 나를 보는 눈은 상대에게 있다.
     relations: Relations = field(default_factory=Relations)
 
+    # 쿨다운 기록. **초기값이 −1 이다**(`PlayerImpl.lastDeleteUnitTick = -1`) —
+    # 0 으로 두면 판 시작 직후에 한 번 공짜로 쓸 수 있어 원본과 어긋난다.
+    last_delete_unit_tick: int = -1
+    last_embargo_all_tick: int = -1
+
     augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
 
     @property

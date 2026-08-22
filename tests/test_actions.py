@@ -97,11 +97,14 @@ def test_diplomacy_is_disabled_on_neutral_ground():
 
 # --- 건설 -------------------------------------------------------------------
 
-def test_build_menu_lists_every_buildable_plus_warship():
+def test_build_menu_lists_every_buildable_plus_warship_and_delete():
+    """건물 6종 + 전함 + 철거. 철거가 건설 메뉴에 있는 이유는 짓는 것과 지우는 것이
+    같은 결정의 앞뒤이기 때문이다 — 자리를 잘못 잡았을 때 여는 곳이 여기다."""
     st = state()
     items = build_items(st, 0, st.gmap.ref(5, 5), noop)
-    assert len(items) == len(BUILDABLE) + 1
+    assert len(items) == len(BUILDABLE) + 2
     assert "전함" in labels(items)
+    assert any(l.startswith("철거") for l in labels(items))
 
 
 def test_build_shows_cost_and_refuses_without_gold():
@@ -230,3 +233,79 @@ def test_action_closes_the_menu():
     r = (RADIUS_INNER + RADIUS_OUTER) / 2
     assert m.activate(QPointF(0, -r)) is True
     assert fired == [1]
+
+
+# --- 철거 -------------------------------------------------------------------
+
+def _delete_row(items):
+    return next(i for i in items if i.label.startswith("철거"))
+
+
+def _a_city(st, x=5, y=5):
+    st.players[0].gold = 10_000_000
+    st.tick_count = C.DELETE_UNIT_COOLDOWN_TICKS
+    u = st.build(0, UnitType.CITY, st.gmap.ref(x, y))
+    assert u is not None
+    while u.under_construction:
+        st.tick()
+    return u
+
+
+def test_delete_is_greyed_out_where_there_is_no_building():
+    """회색으로 두고 이유를 붙인다 — 지우면 "왜 없지"가 된다."""
+    st = state()
+    item = _delete_row(build_items(st, 0, st.gmap.ref(50, 30), noop))
+    assert not item.enabled and "건물이 없다" in item.hint
+
+
+def test_delete_finds_the_building_you_clicked_near():
+    st = state()
+    u = _a_city(st)
+    item = _delete_row(build_items(st, 0, st.gmap.ref(7, 6), noop))
+    assert item.enabled and "도시" in item.label
+
+
+def test_a_far_away_building_is_not_picked_up():
+    """반경 밖의 건물을 집으면 엉뚱한 것을 지운다."""
+    st = state()
+    _a_city(st, x=5, y=5)
+    item = _delete_row(build_items(st, 0, st.gmap.ref(40, 30), noop))
+    assert not item.enabled
+
+
+def test_delete_hint_says_the_gold_is_gone():
+    """환불이 있다고 착각하면 되돌릴 수 없는 결정을 가볍게 내린다."""
+    st = state()
+    _a_city(st)
+    item = _delete_row(build_items(st, 0, st.gmap.ref(5, 5), noop))
+    assert "골드는 안 돌아온다" in item.hint
+
+
+def test_delete_actually_marks_it():
+    st = state()
+    u = _a_city(st)
+    _delete_row(build_items(st, 0, st.gmap.ref(5, 5), noop)).action()
+    assert u.marked_for_deletion
+
+
+def test_an_already_marked_building_shows_the_countdown():
+    st = state()
+    u = _a_city(st)
+    st.delete_unit(0, u)
+    item = _delete_row(build_items(st, 0, st.gmap.ref(5, 5), noop))
+    assert not item.enabled and "이미 철거 예정" in item.hint
+
+
+def test_cooldown_shows_up_as_a_reason():
+    st = state()
+    # 건물 둘을 15칸 떨어뜨려 지으려면 땅이 그만큼 있어야 한다.
+    for x in range(0, 30):
+        for y in range(0, 30):
+            st.gmap.owner[st.gmap.ref(x, y)] = 0
+    st._counts[0] = 900
+    u = _a_city(st)
+    st.delete_unit(0, u)
+    v = st.build(0, UnitType.CITY, st.gmap.ref(25, 25))
+    assert v is not None
+    item = _delete_row(build_items(st, 0, st.gmap.ref(25, 25), noop))
+    assert not item.enabled and "초에 하나씩만" in item.hint
