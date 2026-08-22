@@ -151,14 +151,32 @@ def _nuke(st: GameState, me: int, ut: UnitType, tile: TileRef, notify) -> None:
 # --- 건설 -------------------------------------------------------------------
 
 def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
+    """**건설/업그레이드 통합 버튼**이다 — 원본 `BuildMenu.sendBuildOrUpgrade()`.
+
+    같은 종류가 15칸 안에 이미 있으면 그 항목은 업그레이드가 되고, 없을 때만 새로
+    짓는다(원본도 `canUpgrade` 를 `canBuild` 보다 먼저 본다). 예전에는 이 자리에서
+    "지을 자리가 없다"고 거절해서, 사람은 도시를 두 채째부터 아예 못 늘렸다.
+
+    옆의 숫자는 개수가 아니라 **레벨 합**이다(원본 `count()` = `totalUnitLevels`).
+    도시 하나를 Lv3 으로 올린 것과 Lv1 세 채가 병력 상한에 같은 값을 낸다."""
     mine = st.players[me]
     items = []
     for ut in BUILDABLE:
         cost = mine.units.cost(ut)
         have = mine.units.owned(ut)
-        spot = st.can_build(me, ut, tile)
+        up = st.find_upgrade(me, ut, tile)
+        spot = None if up is not None else st.can_build(me, ut, tile)
+        label = f"{NAMES[ut]}·{have}" if have else NAMES[ut]
+        if up is not None:
+            items.append(Item(
+                f"{label} ▲Lv{up.level + 1}",
+                action=(lambda x=up, u=ut: _upgrade(st, me, x, u, notify)),
+                enabled=True,
+                hint=f"가까운 {NAMES[ut]}(Lv{up.level}) 를 올린다 · 골드 {_gold(cost)}",
+                colour=COL_BUILD))
+            continue
         items.append(Item(
-            f"{NAMES[ut]}·{have}" if have else NAMES[ut],
+            label,
             action=(lambda u=ut: _build(st, me, u, tile, notify)),
             enabled=spot is not None,
             hint=(f"골드 {_gold(cost)} 필요 (보유 {_gold(mine.gold)})"
@@ -214,6 +232,14 @@ def _delete(st: GameState, me: int, unit, notify) -> None:
         notify(f"{name} 철거 예정 — {secs:.0f}초 뒤에 사라진다")
     else:
         notify("지금은 철거할 수 없다")
+
+
+def _upgrade(st: GameState, me: int, unit, ut: UnitType, notify) -> None:
+    level = unit.level + 1
+    if st.upgrade(me, unit):
+        notify(f"{NAMES[ut]} Lv{level} — 다음 값 {_gold(st.players[me].units.cost(ut))}")
+    else:
+        notify(f"{NAMES[ut]} 업그레이드 실패 — 골드를 확인하세요")
 
 
 def _build(st: GameState, me: int, ut: UnitType, tile: TileRef, notify) -> None:

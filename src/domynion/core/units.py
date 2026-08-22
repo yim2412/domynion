@@ -143,6 +143,31 @@ class UnitStore:
         self._constructed: dict[UnitType, int] = {}
 
     def owned(self, utype: UnitType) -> int:
+        """`unitsOwned()` — **개수가 아니라 레벨 합이다.**
+
+        원본:
+
+            if (unit.isUnderConstruction()) total++;
+            else                            total += unit.level();
+
+        ⚠ 우리는 이걸 오래 **개수**로 세고 있었다. 그래서 도시를 올릴수록 비싸져야
+        하는데 값이 250,000 에 붙박여 있었다(원본 실측: 250,000 → 500,000 →
+        1,000,000). 아무도 업그레이드를 안 해서 안 드러났던 것뿐이다.
+
+        원본 `unitCount()` 도 사실상 같은 값이다 — 건설 중인 유닛은 레벨이 1 이라
+        두 함수가 갈리지 않는다. 그래서 하나로 둔다.
+
+        ⚠ **`1 if under_construction` 분기는 변이로 잡히지 않는다. 정상이다.**
+        건설 중인 유닛은 레벨이 반드시 1 이다(`can_upgrade` 가 건설 중을 막고, 레벨을
+        바꾸는 곳은 `upgrade()` 뿐이다). 그래서 `1` 과 `u.level` 이 늘 같은 값이라
+        **관찰 가능한 차이가 없다.** 원본 표현을 그대로 두려고 남긴 것이니, 다음
+        세션이 "테스트가 못 잡는다"고 여기를 파지 않도록 적어 둔다."""
+        return sum(1 if u.under_construction else u.level
+                   for u in self.units if u.utype is utype and u.active)
+
+    def num(self, utype: UnitType) -> int:
+        """**실제 개수.** 원본에는 없는 값이다 — 우리 AI 의 건물 개수 상한만 쓴다.
+        레벨을 올렸다고 "한 채 더 지었다"로 세면 상한이 조용히 낮아진다."""
         return sum(1 for u in self.units if u.utype is utype and u.active)
 
     def constructed(self, utype: UnitType) -> int:

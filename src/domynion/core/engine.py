@@ -20,7 +20,7 @@ import numpy as np
 from . import constants as C
 from .constants import Terrain
 from .attack import Attack
-from .buildings import DefensePostIndex, find_spot, structure_tiles
+from .buildings import DefensePostIndex, euclid_sq, find_spot, structure_tiles
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
@@ -997,18 +997,46 @@ class GameState:
             self._activate(p, unit)
         return unit
 
-    def upgrade(self, pid: int, unit: Unit) -> bool:
-        """`upgradeUnit()` — 같은 비용 함수를 다시 낸다. 레벨이 오르면 완공수가 하나
-        늘어 **다음 업그레이드가 더 비싸진다.**"""
+    def find_upgrade(self, pid: int, utype: UnitType, near: TileRef) -> Unit | None:
+        """`findUnitToUpgrade` — 찍은 칸에서 `structureMinDist`(15) 안의 내 같은 건물.
+
+        **원본의 건설 버튼은 건설/업그레이드 통합 버튼이다.** 같은 종류가 이미 가까이
+        있으면 그 버튼이 업그레이드가 되고(`canUpgrade` 가 `canBuild` 보다 우선한다),
+        없을 때만 새로 짓는다. 우리는 이 자리에서 "지을 자리가 없다"고 거절하고 있었다 —
+        그래서 사람은 도시를 두 채째부터 **아예 못 늘렸다.**"""
         p = self.players.get(pid)
-        if p is None or not UNIT_INFO[unit.utype].upgradable or unit.under_construction:
+        if p is None or not UNIT_INFO[utype].upgradable:
+            return None
+        min_sq = C.STRUCTURE_MIN_DIST ** 2
+        best, best_d = None, min_sq
+        for u in p.units.of(utype):
+            d = euclid_sq(self.gmap, u.tile, near)
+            if d < best_d and self.can_upgrade(pid, u):
+                best, best_d = u, d
+        return best
+
+    def can_upgrade(self, pid: int, unit: Unit) -> bool:
+        """`canUpgradeUnit()` = 종류가 업그레이드 대상 + 골드 + `isUnitValidToUpgrade`."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over or self.spawn_phase:
             return False
-        if unit.marked_for_deletion:   # `isUnitValidToUpgrade` — 지울 것에 돈을 더 넣지 않는다
+        if not UNIT_INFO[unit.utype].upgradable:
             return False
-        cost = p.units.cost(unit.utype)
-        if p.gold < cost:
+        if unit.owner != pid or not unit.active:
             return False
-        p.gold -= cost
+        if unit.under_construction or unit.marked_for_deletion:
+            return False
+        return p.gold >= p.units.cost(unit.utype)
+
+    def upgrade(self, pid: int, unit: Unit) -> bool:
+        """`upgradeUnit()` — 지금 상태로 값을 매기고, 레벨과 완공수를 함께 올린다.
+
+        **레벨이 오르면 `unitsOwned` 도 오른다**(레벨 합이다). 그래서 다음 값이
+        250,000 → 500,000 → 1,000,000 으로 뛴다 — 원본을 실행해 대조한 값이다."""
+        if not self.can_upgrade(pid, unit):
+            return False
+        p = self.players[pid]
+        p.gold -= p.units.cost(unit.utype)
         unit.level += 1
         p.units.record_constructed(unit.utype)
         return True

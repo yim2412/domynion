@@ -397,7 +397,7 @@ class NationBot:
             u for u in BUILD_WEIGHT
             if p.gold >= p.units.cost(u)
             and (u not in STRUCTURE_CAP_PER_TILES
-                 or p.units.owned(u) < max(1, tiles // STRUCTURE_CAP_PER_TILES[u]))
+                 or p.units.num(u) < max(1, tiles // STRUCTURE_CAP_PER_TILES[u]))
         ]
         if affordable:
             weights = [BUILD_WEIGHT[u] for u in affordable]

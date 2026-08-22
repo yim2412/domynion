@@ -117,6 +117,23 @@ def verify(oracle: dict) -> Report:
                 UNIT_INFO[ut].construction_ticks)
         r.check(f"체력 {name}", info["maxHealth"], UNIT_INFO[ut].max_health)
 
+    # --- 업그레이드 비용 곡선 ----------------------------------------------
+    #
+    # 건물 하나를 계속 올릴 때의 값. 위 "유닛 비용" 은 `extra` 축만 재고
+    # `unitsOwned`/`unitsConstructed` 는 안 재므로 이게 따로 필요하다.
+    for name, want in oracle.get("upgrade_costs", {}).items():
+        ut = UNIT_NAMES[name]
+        store = UnitStore()
+        unit = Unit(utype=ut, owner=0, tile=0)
+        store.units.append(unit)
+        store.record_constructed(ut)
+        got = []
+        for _ in range(len(want)):
+            got.append(store.cost(ut))
+            unit.level += 1
+            store.record_constructed(ut)
+        r.check(f"업그레이드 곡선 {name}", want, got)
+
     # --- 핵 ---------------------------------------------------------------
     for name, mag in oracle["nuke_magnitudes"].items():
         r.check(f"핵 반경 {name}", mag, list(NUKE_MAGNITUDES[UNIT_NAMES[name]]))

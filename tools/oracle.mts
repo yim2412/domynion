@@ -107,6 +107,39 @@ const out: Record<string, unknown> = {};
     };
   }
 
+  // --- 업그레이드 비용 곡선 --------------------------------------------------
+  //
+  // ⚠ 위 `unit_costs` 는 `extra` 만 흔들고 `unitsOwned`/`unitsConstructed` 는
+  // **0 으로 고정된 가짜**를 쓴다. 그래서 그 축의 버그를 하나도 못 잡았다 —
+  // 실제로 우리 `unitsOwned` 가 레벨 합이 아니라 개수였는데 여기서 안 드러났다.
+  // 오라클의 가짜가 상수를 돌려주는 축은 **검증되지 않는 축**이다.
+  //
+  // 여기서는 원본 `upgradeUnit()` 이 하는 일을 그대로 흉내 낸다:
+  //   cost = unitInfo(t).cost(mg, this)   ← 지금 상태로 값을 매기고
+  //   unit.increaseLevel()                ← unitsOwned 가 레벨 합이라 +1
+  //   recordUnitConstructed(t)            ← unitsConstructed +1
+  out.upgrade_costs = {};
+  for (const t of [UnitType.City, UnitType.Port, UnitType.MissileSilo,
+                   UnitType.SAMLauncher]) {
+    // ⚠ **타입을 봐야 한다.** 처음엔 인자를 무시하고 늘 같은 수를 돌려줬는데,
+    // 항구는 공장과 비용을 공유해서(`costWrapper(fn, Port, Factory)`) 원본이
+    // 두 종류를 각각 세는 바람에 **항구 값이 두 배로 나왔다.** 그 상태로는
+    // 하네스가 틀린 값을 내고 우리 코드를 불일치로 몰아세운다.
+    let level = 1, constructed = 1;
+    const up: any = {
+      type: () => PlayerType.Human,
+      unitsOwned: (q: unknown) => (q === t ? level : 0),
+      unitsConstructed: (q: unknown) => (q === t ? constructed : 0),
+    };
+    const info = C.unitInfo(t);
+    const seq: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      seq.push(Number(info.cost({} as never, up as never)));
+      level++; constructed++;
+    }
+    (out.upgrade_costs as Record<string, unknown>)[t] = seq;
+  }
+
   out.sam_range = [1, 2, 3, 5, 10, 100].map((l) => C.samRange(l));
   out.trade_gold = [50, 100, 300, 600, 1200].map(
     (d) => Number(C.tradeShipGold(d, player(1, 1) as never)));

@@ -7,10 +7,21 @@
 근거가 아니다 — 실제로 둠스데이 클락 인자 순서를 뒤집어 놓고도 우리 테스트는 전부
 통과하고 있었다(그건 하네스 쪽 실수였지만, 대조가 없었으면 몰랐을 종류다).
 
-기준값을 다시 뽑으려면:
+⚠ **하네스의 가짜 객체가 상수를 돌려주는 축은 검증되지 않는다.** `unit_costs` 는
+`extra` 축만 흔들고 `unitsOwned`/`unitsConstructed` 는 0 으로 굳어 있었는데, 바로
+거기가 틀려 있었다(`unitsOwned` 가 개수가 아니라 레벨 합이다). `upgrade_costs` 를
+따로 둔 이유가 그것이다 — 대조 항목이 있다고 그 축이 재어진 건 아니다.
 
-    cd <원본리포> && npm i tsx zod nanoid dompurify
-    ./node_modules/.bin/tsx <이리포>/tools/oracle.mts <원본리포> > <이리포>/tests/oracle.json
+기준값을 다시 뽑으려면(2026-08-22 실측 절차):
+
+    git clone --depth 1 --filter=blob:none --no-checkout         https://github.com/openfrontio/OpenFrontIO.git of
+    cd of
+    git sparse-checkout set --no-cone "/*" "!/*/" "src/**" "resources/*.json"
+    git checkout && npm install
+    ./node_modules/.bin/tsx <이리포>/tools/oracle.mts . > <이리포>/tests/oracle.json
+
+`node --experimental-strip-types` 로는 안 된다(원본이 `enum` 을 쓴다). sparse 패턴에
+`"/*" "!/*/"` 를 빼면 `package.json` 이 없어 `npm install` 이 ENOENT 로 죽는다.
 """
 
 from __future__ import annotations

@@ -158,22 +158,53 @@ def test_construction_takes_time_before_the_city_counts():
 
 
 def test_upgrade_raises_level_and_next_price():
+    """업그레이드 값은 **올릴수록 뛴다.** 250,000 → 500,000 → 1,000,000(상한).
+
+    ⚠ 이 테스트는 오래 **틀린 값을 못 박고 있었다.** "도시 1채를 계속 올리면 값이
+    그대로다 — min(보유1, 완공N) 이 1 에 묶인다. 직관과 다르지만 원본이 그렇다"고
+    적혀 있었는데, `unitsOwned` 가 개수가 아니라 **레벨 합**이라 1 에 안 묶인다.
+    아래 값은 원본 `Config.unitInfo(City).cost` 를 실제로 실행해 받은 것이다
+    (2026-08-22, `tools/oracle.mts` 와 같은 방식).
+
+    막지 않았으면: 도시 하나를 무한히 250,000 에 올려 병력 상한을 공짜로 늘린다."""
     st = state(["." * 40] * 20, {0: (0, 0), 1: (39, 19)})
     p = st.players[0]
-    p.gold = 10_000_000
+    p.gold = 100_000_000
     u = st.build(0, UnitType.CITY, st.gmap.ref(0, 0))
     for _ in range(UNIT_INFO[UnitType.CITY].construction_ticks):
         st.tick()
-    before = p.gold
-    assert st.upgrade(0, u)
-    assert u.level == 2
-    assert before - p.gold == 250_000, "완공 1채 상태의 값을 낸다"
-    before = p.gold
-    assert st.upgrade(0, u)
-    assert u.level == 3
-    assert before - p.gold == 250_000, (
-        "도시 1채를 계속 올리면 값이 그대로다 — min(보유1, 완공N) 이 1 에 묶인다. "
-        "직관과 다르지만 원본이 그렇다(upgradeUnit 은 extraUnits 없이 cost 를 부른다).")
+    prices = []
+    for _ in range(4):
+        before = p.gold
+        assert st.upgrade(0, u)
+        prices.append(before - p.gold)
+    assert u.level == 5
+    assert prices == [250_000, 500_000, 1_000_000, 1_000_000]
+
+
+def test_units_owned_counts_levels_not_units():
+    """`unitsOwned` 는 레벨 합이다. 개수로 세면 위 곡선이 통째로 평평해진다."""
+    st = state(["." * 40] * 20, {0: (0, 0), 1: (39, 19)})
+    p = st.players[0]
+    p.gold = 100_000_000
+    u = st.build(0, UnitType.CITY, st.gmap.ref(0, 0))
+    for _ in range(UNIT_INFO[UnitType.CITY].construction_ticks):
+        st.tick()
+    assert p.units.owned(UnitType.CITY) == 1
+    assert p.units.num(UnitType.CITY) == 1
+    st.upgrade(0, u)
+    assert p.units.owned(UnitType.CITY) == 2, "레벨 합이어야 한다"
+    assert p.units.num(UnitType.CITY) == 1, "실제 개수는 그대로 하나다"
+
+
+def test_a_building_under_construction_counts_as_one():
+    """건설 중인 것은 레벨이 아니라 1 로 센다(`if isUnderConstruction() total++`)."""
+    st = state(["." * 40] * 20, {0: (0, 0), 1: (39, 19)})
+    p = st.players[0]
+    p.gold = 100_000_000
+    u = st.build(0, UnitType.CITY, st.gmap.ref(0, 0))
+    assert u.under_construction
+    assert p.units.owned(UnitType.CITY) == 1
 
 
 def test_upgrade_refuses_non_upgradable():
