@@ -184,6 +184,20 @@ class UnitStore:
         return sum(u.level for u in self.units
                    if u.utype is UnitType.CITY and u.active and not u.under_construction)
 
+    def bulk_cost(self, utype: UnitType, amount: int) -> int:
+        """`amount` 레벨을 연달아 올릴 때의 **누적** 값. 원본 `upgradeCosts[amount-1]`.
+
+        ⚠ **`cost × amount` 가 아니다.** 한 번 올릴 때마다 레벨 합(`unitsOwned`)이
+        같이 오르므로 다음 값이 더 비싸다. 원본 주석이 못 박아 뒀다:
+        *"upgrade costs escalate per level, so a bulk total is NOT cost * amount"*.
+
+        원본은 `cost(mg, this, n)` 으로 "이미 n채 더 가진 것처럼" 값을 매긴다 —
+        우리 `cost(utype, extra=n)` 의 `extra` 가 정확히 그 자리다.
+
+        도시 예(1채 보유, 상한 100만): 1레벨 25만 · 2레벨 누적 75만 ·
+        3레벨 누적 175만. 선형으로 계산하면 3레벨이 75만이라 **2.3배 싸게 판다.**"""
+        return sum(self.cost(utype, extra=n) for n in range(amount))
+
     def cost(self, utype: UnitType, extra: int = 0) -> int:
         """`costWrapper` — 비용을 공유하는 종류는 합쳐 센다.
 

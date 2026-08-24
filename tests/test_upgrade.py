@@ -108,13 +108,13 @@ def test_you_cannot_upgrade_a_building_under_construction():
     st = state()
     u = st.build(0, UnitType.CITY, st.gmap.ref(10, 10))
     assert u is not None and u.under_construction
-    assert st.upgrade(0, u) is False
+    assert st.upgrade(0, u) == 0
 
 
 def test_you_cannot_upgrade_someone_elses_building():
     st = state()
     u = a_city(st, x=50, y=10, pid=1)
-    assert st.upgrade(0, u) is False, "남의 건물을 내 골드로 올렸다"
+    assert st.upgrade(0, u) == 0, "남의 건물을 내 골드로 올렸다"
 
 
 def test_you_cannot_upgrade_a_defense_post():
@@ -123,21 +123,21 @@ def test_you_cannot_upgrade_a_defense_post():
     assert u is not None
     while u.under_construction:
         st.tick()
-    assert st.upgrade(0, u) is False
+    assert st.upgrade(0, u) == 0
 
 
 def test_you_cannot_upgrade_without_the_gold():
     st = state()
     u = a_city(st)
     st.players[0].gold = 249_999
-    assert st.upgrade(0, u) is False
+    assert st.upgrade(0, u) == 0
 
 
 def test_you_cannot_upgrade_during_the_spawn_phase():
     st = state()
     u = a_city(st)
     st.spawn_phase = True
-    assert st.upgrade(0, u) is False
+    assert st.upgrade(0, u) == 0
 
 
 # --- 찾기 -------------------------------------------------------------------
@@ -202,10 +202,114 @@ def test_far_away_it_is_still_a_build():
 
 
 def test_the_menu_item_actually_upgrades():
+    """골드가 한 레벨치뿐이면 항목이 **바로** 올린다(하위 메뉴 없이).
+
+    원본도 `maxAmount <= 1` 이면 하위 메뉴를 만들지 않고 클릭이 ×1 로 떨어진다."""
     st = state()
     u = a_city(st, x=10, y=10)
-    city_item(st, st.gmap.ref(11, 11)).action()
+    st.players[0].gold = st.players[0].units.cost(UnitType.CITY)
+    item = city_item(st, st.gmap.ref(11, 11))
+    assert item.submenu is None, "한 레벨뿐인데 하위 메뉴를 열었다"
+    item.action()
     assert u.level == 2
+
+
+def test_the_menu_opens_a_bulk_submenu_when_you_can_afford_more():
+    """여러 레벨을 살 수 있으면 **하위 메뉴**가 열린다 — 바로 올리지 않는다.
+
+    ⚠ 이게 동작 변화다. 예전에는 클릭이 곧 1레벨이었다."""
+    st = state()
+    a_city(st, x=10, y=10)
+    item = city_item(st, st.gmap.ref(11, 11))
+    assert item.submenu is not None
+    assert item.action is None, "하위 메뉴가 있는데 클릭이 바로 올려 버린다"
+    assert "최대 ×" in item.hint
+
+
+def test_the_bulk_slots_are_always_in_the_same_place():
+    """원본은 네 칸을 늘 같은 자리에 둔다 — [1, 5, 10, 최대]. 이유는 muscle memory.
+
+    **살 수 없는 칸도 숨기지 않는다.** 회색으로 남아야 "왜 못 하지"가 보인다."""
+    st = state()
+    a_city(st, x=10, y=10)
+    st.players[0].gold = st.players[0].units.bulk_cost(UnitType.CITY, 2)
+    sub = city_item(st, st.gmap.ref(11, 11)).submenu()
+    assert [i.label for i in sub] == ["×1", "×5", "×10", "×2"], [i.label for i in sub]
+    assert [i.enabled for i in sub] == [True, False, False, True]
+
+
+def test_the_bulk_slots_stay_four_even_when_the_max_duplicates_a_step():
+    """`최대` 가 5나 10과 같아도 **칸을 지우지 않는다** — 원본이 그렇다.
+
+    `const slots = [1, ...steps, maxAmount]` 에 중복 제거가 없다. 칸 수가 줄면
+    자리가 밀려서 "늘 같은 자리"가 깨지는데, 그게 이 배치의 유일한 목적이다."""
+    st = state()
+    a_city(st, x=10, y=10)
+    st.players[0].gold = st.players[0].units.bulk_cost(UnitType.CITY, 5)
+    sub = city_item(st, st.gmap.ref(11, 11)).submenu()
+    assert [i.label for i in sub] == ["×1", "×5", "×10", "×5"], [i.label for i in sub]
+
+
+def test_a_bulk_slot_upgrades_that_many_levels():
+    """×5 칸이 실제로 5레벨을 올리고 누적값만큼 결제하는가."""
+    st = state()
+    u = a_city(st, x=10, y=10)
+    p = st.players[0]
+    want = p.units.bulk_cost(UnitType.CITY, 5)
+    slot = next(i for i in city_item(st, st.gmap.ref(11, 11)).submenu()
+                if i.label == "×5")
+    before = p.gold
+    slot.action()
+    assert u.level == 6
+    assert before - p.gold == want
+
+
+def test_bulk_charges_the_escalating_total_not_a_flat_multiple():
+    """**`cost × 수량` 이 아니다.** 레벨이 오를 때마다 다음 값이 오른다.
+
+    원본 주석: "upgrade costs escalate per level, so a bulk total is NOT
+    cost * amount". 선형으로 매기면 3레벨을 2.3배 싸게 파는 셈이 된다."""
+    st = state()
+    u = a_city(st, x=10, y=10)
+    p = st.players[0]
+    flat = p.units.cost(UnitType.CITY) * 3
+    want = p.units.bulk_cost(UnitType.CITY, 3)
+    assert want > flat, (want, flat)
+
+    before = p.gold
+    assert st.upgrade(0, u, 3) == 3
+    assert before - p.gold == want
+    assert u.level == 4
+
+
+def test_bulk_stops_when_the_gold_runs_out():
+    """중간에 골드가 떨어지면 **거기까지만 오르고 멈춘다** — 원본 실행부 그대로.
+
+    막지 않았으면: 값을 미리 합산해 한 번에 빼는 구현은 골드를 음수로 만들거나
+    아무것도 안 올린다. 둘 다 원본과 다르다."""
+    st = state()
+    u = a_city(st, x=10, y=10)
+    p = st.players[0]
+    p.gold = p.units.bulk_cost(UnitType.CITY, 2)
+    assert st.upgrade(0, u, 10) == 2, "요청한 만큼 다 올라 버렸다"
+    assert u.level == 3
+    assert p.gold == 0
+
+
+def test_max_bulk_upgrade_is_capped_at_fifty():
+    """`MAX_UPGRADE_AMOUNT` = 50. 골드가 아무리 많아도 한 번에 50레벨까지다."""
+    st = state()
+    u = a_city(st, x=10, y=10)
+    st.players[0].gold = 10 ** 12
+    assert C.MAX_UPGRADE_AMOUNT == 50
+    assert st.max_bulk_upgrade(0, u) == 50
+
+
+def test_max_bulk_upgrade_is_zero_when_you_cannot_upgrade_at_all():
+    st = state()
+    u = a_city(st, x=10, y=10)
+    st.players[0].gold = 0
+    assert st.max_bulk_upgrade(0, u) == 0
 
 
 def test_the_count_beside_the_name_is_the_level_sum():

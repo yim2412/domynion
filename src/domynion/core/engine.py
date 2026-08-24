@@ -1030,18 +1030,52 @@ class GameState:
             return False
         return p.gold >= p.units.cost(unit.utype)
 
-    def upgrade(self, pid: int, unit: Unit) -> bool:
-        """`upgradeUnit()` — 지금 상태로 값을 매기고, 레벨과 완공수를 함께 올린다.
+    def upgrade(self, pid: int, unit: Unit, amount: int = 1) -> int:
+        """`UpgradeStructureExecution` — **실제로 오른 레벨 수**를 돌려준다.
 
+        `upgradeUnit()` 은 지금 상태로 값을 매기고 레벨과 완공수를 함께 올린다.
         **레벨이 오르면 `unitsOwned` 도 오른다**(레벨 합이다). 그래서 다음 값이
-        250,000 → 500,000 → 1,000,000 으로 뛴다 — 원본을 실행해 대조한 값이다."""
+        250,000 → 500,000 → 1,000,000 으로 뛴다 — 원본을 실행해 대조한 값이다.
+
+        `amount` 는 원본 실행부 그대로 **매 단계 다시 검사하며 반복**한다:
+
+            for (let i = 0; i < this.amount; i++) {
+              if (!this.player.canUpgradeUnit(this.structure)) break;
+              this.player.upgradeUnit(this.structure);
+            }
+
+        즉 값을 미리 합산해 한 번에 빼지 않는다. 골드가 중간에 떨어지면 **거기까지만
+        오르고 멈춘다** — 그래서 돌려주는 값이 요청한 수보다 작을 수 있다.
+        `units.bulk_cost()` 는 이 결과를 **미리 보여주기 위한 것**이지 결제 경로가 아니다.
+
+        ⚠ 반환이 bool 이 아니라 int 다. 0 이 "하나도 못 올렸다"이고, 예전처럼
+        `if st.upgrade(...)` 로 써도 뜻이 같다."""
+        done = 0
+        p = self.players.get(pid)
+        for _ in range(max(0, amount)):
+            if not self.can_upgrade(pid, unit):
+                break
+            p.gold -= p.units.cost(unit.utype)
+            unit.level += 1
+            p.units.record_constructed(unit.utype)
+            done += 1
+        return done
+
+    def max_bulk_upgrade(self, pid: int, unit: Unit) -> int:
+        """`maxBulkAmount` — 지금 골드로 살 수 있는 최대 레벨 수(상한 50).
+
+        원본은 미리 만들어 둔 누적표(`upgradeCosts`)를 넘어서면 **선형 가격으로
+        조용히 떨어지므로** 표 길이에서 멈춘다. 우리는 `bulk_cost` 가 언제나
+        누적으로 계산하지만, 상한은 같은 이유로 `MAX_UPGRADE_AMOUNT` 에 둔다."""
         if not self.can_upgrade(pid, unit):
-            return False
+            return 0
         p = self.players[pid]
-        p.gold -= p.units.cost(unit.utype)
-        unit.level += 1
-        p.units.record_constructed(unit.utype)
-        return True
+        best = 0
+        for n in range(1, C.MAX_UPGRADE_AMOUNT + 1):
+            if p.units.bulk_cost(unit.utype, n) > p.gold:
+                break
+            best = n
+        return best
 
     # --- 철거 -------------------------------------------------------------
 

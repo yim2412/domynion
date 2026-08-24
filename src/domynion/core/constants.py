@@ -304,6 +304,17 @@ GOLD_PER_TICK_BOT = 50
 # Config.ts :: structureMinDist() — 건물끼리 이만큼 떨어져야 한다(유클리드).
 STRUCTURE_MIN_DIST = 15
 
+# Game.ts :: MAX_UPGRADE_AMOUNT — 한 번에 올릴 수 있는 최대 레벨 수.
+# 우리는 오래 1레벨씩만 올릴 수 있었다. 도시 값이 25만 → 50만 → 100만으로 뛰므로
+# 후반에는 한 번에 여러 레벨을 사는 것이 실제 조작이다.
+MAX_UPGRADE_AMOUNT = 50
+
+# Game.ts :: STRUCTURE_BULK_STEPS — 대량 메뉴의 고정 중간 단계.
+# 원본은 **네 칸을 늘 같은 자리에** 둔다: [1, 5, 10, 지금 살 수 있는 최대].
+# 자리를 고정하는 이유가 주석에 적혀 있다 — "muscle memory". 살 수 없는 칸도
+# 숨기지 않고 회색으로 남긴다.
+STRUCTURE_BULK_STEPS: tuple[int, ...] = (5, 10)
+
 # Config.ts :: SAM_CONSTRUCTION_TICKS
 SAM_CONSTRUCTION_TICKS = 30 * 10
 

@@ -196,7 +196,7 @@ def test_a_marked_building_cannot_be_upgraded():
     st = state()
     u = a_city(st)
     st.delete_unit(0, u)
-    assert st.upgrade(0, u) is False
+    assert st.upgrade(0, u) == 0
 
 
 def test_capturing_clears_the_pending_deletion():

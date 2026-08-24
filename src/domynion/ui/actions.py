@@ -168,11 +168,20 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
         spot = None if up is not None else st.can_build(me, ut, tile)
         label = f"{NAMES[ut]}·{have}" if have else NAMES[ut]
         if up is not None:
+            # 여러 레벨을 살 수 있을 때만 하위 메뉴를 연다. 한 레벨뿐이면 메뉴를
+            # 한 번 더 여는 것이 손해다 — 원본도 `maxAmount <= 1` 이면 하위 메뉴를
+            # 만들지 않고 클릭이 바로 ×1 로 떨어지게 둔다.
+            top = st.max_bulk_upgrade(me, up)
             items.append(Item(
                 f"{label} ▲Lv{up.level + 1}",
-                action=(lambda x=up, u=ut: _upgrade(st, me, x, u, notify)),
+                action=(None if top > 1 else
+                        (lambda x=up, u=ut: _upgrade(st, me, x, u, notify))),
+                submenu=((lambda x=up, u=ut: _upgrade_amounts(st, me, x, u, notify))
+                         if top > 1 else None),
                 enabled=True,
-                hint=f"가까운 {NAMES[ut]}(Lv{up.level}) 를 올린다 · 골드 {_gold(cost)}",
+                hint=(f"가까운 {NAMES[ut]}(Lv{up.level}) 를 올린다 · "
+                      f"골드 {_gold(cost)}"
+                      + (f" · 최대 ×{top}" if top > 1 else "")),
                 colour=COL_BUILD))
             continue
         items.append(Item(
@@ -234,12 +243,54 @@ def _delete(st: GameState, me: int, unit, notify) -> None:
         notify("지금은 철거할 수 없다")
 
 
-def _upgrade(st: GameState, me: int, unit, ut: UnitType, notify) -> None:
-    level = unit.level + 1
-    if st.upgrade(me, unit):
-        notify(f"{NAMES[ut]} Lv{level} — 다음 값 {_gold(st.players[me].units.cost(ut))}")
-    else:
+def _upgrade(st: GameState, me: int, unit, ut: UnitType, notify,
+             amount: int = 1) -> None:
+    """`amount` 만큼 올린다. **요청한 수보다 적게 오를 수 있다.**
+
+    엔진이 매 단계 다시 검사하므로 골드가 중간에 떨어지면 거기까지만 오른다
+    (원본 실행부 그대로). 그래서 몇 레벨이 실제로 올랐는지를 그대로 알려준다 —
+    "5레벨 눌렀는데 3레벨만 올랐다"를 사람이 알 수 없으면 안 된다."""
+    want = amount
+    got = st.upgrade(me, unit, amount)
+    nxt = _gold(st.players[me].units.cost(ut))
+    if got == 0:
         notify(f"{NAMES[ut]} 업그레이드 실패 — 골드를 확인하세요")
+    elif got < want:
+        notify(f"{NAMES[ut]} Lv{unit.level} — 골드가 모자라 {want}레벨 중 "
+               f"{got}레벨만 올렸다 · 다음 값 {nxt}")
+    else:
+        notify(f"{NAMES[ut]} Lv{unit.level} (+{got}) — 다음 값 {nxt}")
+
+
+def _upgrade_amounts(st: GameState, me: int, unit, ut: UnitType,
+                     notify) -> list[Item]:
+    """대량 업그레이드 하위 메뉴 — 원본 `RadialMenuElements` 그대로.
+
+    **네 칸을 늘 같은 자리에 둔다**: [1, 5, 10, 지금 살 수 있는 최대].
+    원본 주석이 이유를 적어 뒀다 — "muscle memory". 살 수 없는 칸도 숨기지 않고
+    회색으로 남긴다(이 파일 `Item` 의 규칙과도 같다).
+
+    ⚠ 값은 `cost × 수량` 이 **아니다.** 한 레벨 올릴 때마다 다음 값이 오르므로
+    누적으로 계산한다(`units.bulk_cost`)."""
+    mine = st.players[me]
+    top = st.max_bulk_upgrade(me, unit)
+    # ⚠ **중복을 지우지 않는다.** `top` 이 5나 10과 같으면 같은 수가 두 번 뜨는데,
+    # 원본이 그렇다(`const slots = [1, ...steps, maxAmount]`). 칸 수가 줄면 자리가
+    # 밀려서 "늘 같은 자리" 자체가 깨진다 — 그게 이 배치의 유일한 목적이다.
+    slots = [1, *C.STRUCTURE_BULK_STEPS, top]
+    out: list[Item] = []
+    for n in slots:
+        price = mine.units.bulk_cost(ut, n)
+        ok = n <= top
+        out.append(Item(
+            f"×{n}",
+            action=(lambda a=n: _upgrade(st, me, unit, ut, notify, a)),
+            enabled=ok,
+            hint=(f"Lv{unit.level} → Lv{unit.level + n} · 골드 {_gold(price)}"
+                  if ok else
+                  f"골드 {_gold(price)} 필요 (보유 {_gold(mine.gold)})"),
+            colour=COL_BUILD))
+    return out
 
 
 def _build(st: GameState, me: int, ut: UnitType, tile: TileRef, notify) -> None:
