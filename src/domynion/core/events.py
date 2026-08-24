@@ -28,6 +28,10 @@ class EventKind(Enum):
     SAM_MISS = "SAM 실패"
     SAM_HIT = "SAM 요격"
     CAPTURED_ENEMY_UNIT = "유닛 노획"
+    # 원본 `received_gold_from_conquest` — 정복으로 받은 골드.
+    # `CONQUERED_PLAYER` 를 재사용하면 안 된다. 그쪽 `amount` 는 정복당한
+    # 사람의 pid 라서, 골드를 넣으면 소식창이 엉뚱한 이름을 찍는다.
+    GOLD_FROM_CONQUEST = "정복 전리품"
     UNIT_DESTROYED = "유닛 파괴"
     UNIT_DELETED = "유닛 철거"      # `unit_voluntarily_deleted` — 내가 스스로 지운 것
     ALLIANCE_ACCEPTED = "동맹 성립"
@@ -60,6 +64,7 @@ CATEGORY: dict[EventKind, Category] = {
     EventKind.UNIT_DESTROYED: Category.ATTACK,
     EventKind.UNIT_DELETED: Category.SYSTEM,
     EventKind.CAPTURED_ENEMY_UNIT: Category.ATTACK,
+    EventKind.GOLD_FROM_CONQUEST: Category.ATTACK,
     EventKind.MIRV_INBOUND: Category.NUKE,
     EventKind.NUKE_INBOUND: Category.NUKE,
     EventKind.HYDROGEN_BOMB_INBOUND: Category.NUKE,

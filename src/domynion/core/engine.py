@@ -217,6 +217,7 @@ class GameState:
         if atk is None:
             return None
         p.troops -= troops
+        p.attacks_sent += 1
         self.attacks.append(atk)
         if target is not None:
             self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
@@ -416,6 +417,7 @@ class GameState:
             self._conquer_tile(b.owner, dst, owner_now)
             # 상륙에 성공하면 **그 자리에서 육상 공격이 시작된다**(원본도 여기서
             # AttackExecution 을 새로 만든다). 배가 육지를 계속 먹는 게 아니다.
+            p.attacks_sent += 1
             atk = Attack.launch(self.gmap, b.owner, b.target, b.troops,
                                 self.rng, self.tick_count, source_tile=dst)
             if atk is None:
@@ -1236,8 +1238,34 @@ class GameState:
             winner.units.units.append(u)
             winner.units.record_constructed(u.utype)
         d.units.units = []
+        self._transfer_conquest_gold(winner, d)
         self.diplomacy.drop_player(target)
         self._rebuild_posts()
+
+    def _transfer_conquest_gold(self, winner: PlayerState,
+                                loser: PlayerState) -> None:
+        """`conquerPlayer` 의 골드 이전. **우리에게 통째로 없던 규칙이다.**
+
+        원본은 정복자가 패자의 골드를 가져간다 — 봇·나라는 **전액**, 사람은 **절반**
+        (`conquerGoldAmount`). 패자에게서는 언제나 **전액**이 빠지므로, 사람을 정복하면
+        나머지 절반은 **어디로도 가지 않고 사라진다.** 그 비대칭이 원본이고, 사람을
+        터는 것이 나라를 터는 것보다 남는 게 적다는 뜻이다.
+
+        ⚠ 예외 하나: **한 번도 공격을 보낸 적 없는 사람**은 이전 자체를 건너뛴다.
+        시작 골드를 켠 판에서 가만히 있는 사람을 털어 가는 것을 막는 장치다
+        (원본 주석: "Don't transfer gold when the conquered player didn't play").
+        봇·나라에는 이 예외가 걸리지 않는다.
+
+        이게 없어서 판에서 골드가 조용히 증발하고 있었다 — 472명이 도는 판은 수백 명이
+        탈락하는데, 그들이 모은 골드가 아무에게도 가지 않았다."""
+        if loser.kind == "human" and loser.attacks_sent == 0:
+            return
+        taken = (loser.gold // 2 if loser.kind == "human" else loser.gold)
+        winner.gold += taken
+        loser.gold = 0                 # `removeGold(gold)` — 언제나 전액이 빠진다
+        if taken:
+            self.emit(EventKind.GOLD_FROM_CONQUEST, who=winner.pid,
+                      other=loser.pid, amount=taken)
 
     def _tick_clock(self) -> None:
         """둠스데이 클락 — 원본의 진짜 종료 규칙. 기본은 꺼져 있다(원본도 그렇다)."""

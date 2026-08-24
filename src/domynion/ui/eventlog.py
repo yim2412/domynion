@@ -61,6 +61,8 @@ def describe(st: GameState, e: Event, me: int) -> str:
         return f"{who} 가 {gone.name if gone else '?'} 를 정복"
     if k is EventKind.CAPTURED_ENEMY_UNIT:
         return f"{who} 의 건물 {int(e.amount)}개를 노획"
+    if k is EventKind.GOLD_FROM_CONQUEST:
+        return f"{who} 에게서 {int(e.amount):,} 골드 노획"
     if k is EventKind.UNIT_DESTROYED:
         return f"{who} 가 내 {e.text} 격침"
     if k is EventKind.ALLIANCE_REQUEST:

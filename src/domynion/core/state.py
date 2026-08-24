@@ -45,6 +45,13 @@ class PlayerState:
     last_delete_unit_tick: int = -1
     last_embargo_all_tick: int = -1
 
+    # 이 플레이어가 공격을 **보낸** 횟수. 원본은 통계
+    # (`stats().attacks[ATTACK_INDEX_SENT]`)에서 읽는데, 우리는 통계 계층이 없어
+    # 여기 센다. 쓰이는 곳은 하나뿐이다 — **한 번도 안 친 사람은 정복당해도
+    # 골드를 뺏기지 않는다**(`GameImpl.conquerPlayer` 의 `skipGoldTransfer`).
+    # 시작 골드를 켠 판에서 가만히 있는 사람을 털어 가는 것을 막는 장치다.
+    attacks_sent: int = 0
+
     augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
 
     @property
