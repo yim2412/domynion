@@ -585,8 +585,10 @@ class GameState:
             return None
         if utype not in NUKE_MAGNITUDES and utype is not UnitType.MIRV:
             return None
+        # `PlayerImpl.nukeSpawn` — **재장전 중인 사일로는 쓸 수 없다.**
+        # 이게 없으면 사일로 한 기로 골드가 되는 한 무한 연사가 된다.
         silos = [u for u in p.units.of(UnitType.MISSILE_SILO)
-                 if not u.under_construction]
+                 if not u.under_construction and not u.in_cooldown]
         if not silos:
             return None
         cost = self.nuke_cost(pid, utype)
@@ -596,7 +598,9 @@ class GameState:
         p.units.record_constructed(utype)
         if utype is UnitType.MIRV:
             self.mirvs_launched += 1
-        src = min(silos, key=lambda u: self._dist_sq(u.tile, dst)).tile
+        silo = min(silos, key=lambda u: self._dist_sq(u.tile, dst))
+        silo.fire(self.tick_count)          # `silo.launch()` — 관 하나가 막힌다
+        src = silo.tile
         n = Nuke(owner=pid, utype=utype, src=src, dst=dst)
         self.nukes.append(n)
         kind = {UnitType.HYDROGEN_BOMB: EventKind.HYDROGEN_BOMB_INBOUND,
@@ -655,6 +659,31 @@ class GameState:
                 still.append(n)
         self.nukes = still
 
+    def _reload_missiles(self) -> None:
+        """`MissileSiloExecution` · `SAMLauncherExecution` 의 재장전 부분.
+
+        ⚠ **둘의 처리 횟수가 다르다.** 사일로는 tick 당 맨 앞 관 **하나만**
+        비우고(원본이 `if`), SAM 은 끝난 것을 **전부** 비운다(원본이 `while`).
+        사일로를 `while` 로 바꾸면 한 tick 에 관이 여러 개 열려 연사 간격이 줄어든다 —
+        같은 상수(90 tick)를 쓴다고 같은 코드로 합치면 안 되는 자리다."""
+        now = self.tick_count
+        for p in self.alive:
+            for silo in p.units.of(UnitType.MISSILE_SILO):
+                if not silo.under_construction:
+                    silo.reload_front(now, C.SILO_COOLDOWN_TICKS)
+            for sam in p.units.of(UnitType.SAM_LAUNCHER):
+                if not sam.under_construction:
+                    sam.reload_ready(now, C.SAM_COOLDOWN_TICKS)
+
+    def ready_missiles(self, pid: int) -> int:
+        """`readyMissileCount()` — 지금 쏠 수 있는 미사일 수(사일로 관의 합).
+
+        핵을 한 번에 여러 발 사는 상한이 이 값이다."""
+        p = self.players.get(pid)
+        if p is None:
+            return 0
+        return sum(u.ready_tubes for u in p.units.of(UnitType.MISSILE_SILO))
+
     def _sam_intercepts(self, n: Nuke) -> bool:
         """SAM 은 **자기 것이 아닌** 핵만 요격한다. 사거리는 레벨에 따라 70~150."""
         here = n.tile(self.gmap)
@@ -662,10 +691,14 @@ class GameState:
             if p.pid == n.owner or self.diplomacy.is_friendly(p.pid, n.owner):
                 continue
             for sam in p.units.of(UnitType.SAM_LAUNCHER):
-                if sam.under_construction:
+                # **관이 전부 차 있으면 못 쏜다**(`SAMLauncherExecution` 이
+                # `isInCooldown()` 이면 그 tick 을 통째로 건너뛴다). 이게 없어서
+                # SAM 한 기가 판의 모든 핵을 영원히 100% 막고 있었다.
+                if sam.under_construction or sam.in_cooldown:
                     continue
                 r = sam_range(sam.level)
                 if self._dist_sq(sam.tile, here) <= r * r:
+                    sam.fire(self.tick_count)
                     self.emit(EventKind.SAM_HIT, who=p.pid, other=n.owner, tile=here)
                     self.emit(EventKind.SAM_MISS, who=n.owner, other=p.pid, tile=here)
                     return True
@@ -1057,6 +1090,11 @@ class GameState:
                 break
             p.gold -= p.units.cost(unit.utype)
             unit.level += 1
+            # `UnitImpl.increaseLevel` — 사일로·SAM 은 **새 관이 재장전부터
+            # 시작한다.** 올리자마자 한 발 더 쏘게 두면 업그레이드가 즉발 화력이
+            # 되어 버린다.
+            if unit.utype in (UnitType.MISSILE_SILO, UnitType.SAM_LAUNCHER):
+                unit.fire(self.tick_count)
             p.units.record_constructed(unit.utype)
             done += 1
         return done
@@ -1171,6 +1209,7 @@ class GameState:
         self._grow()
         self._advance_construction()
         self._advance_deletions()
+        self._reload_missiles()
         self._advance_nukes()
         self._advance_warships()
         self._advance_boats()

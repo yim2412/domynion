@@ -109,9 +109,62 @@ class Unit:
     # 소유자가 바뀌면 원본은 이걸 지운다(`setOwner` → `clearPendingDeletion`).
     deletion_at: int | None = None
 
+    # 발사한 tick 들 (`UnitImpl._missileTimerQueue`). 사일로와 SAM 만 쓴다.
+    #
+    # **발사관 수 = 레벨이다.** Lv3 사일로는 관이 셋이고, 쏜 관만 재장전에 들어간다.
+    # 큐 길이가 레벨과 같아지면 그 기체는 쿨다운 상태다(`in_cooldown`).
+    #
+    # ⚠ 이게 없어서 사일로 한 기로 무한 연사가 됐고, **SAM 한 기가 판의 모든 핵을
+    # 영원히 막았다.** 리스트인 이유는 관마다 재장전이 따로 돌기 때문이다 — 숫자
+    # 하나(마지막 발사 tick)로 두면 Lv3 이 Lv1 과 똑같이 동작한다.
+    missile_queue: list[int] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         if self.health is None:
             self.health = UNIT_INFO[self.utype].max_health
+
+    # --- 발사관 (사일로 · SAM) --------------------------------------------
+
+    @property
+    def ready_tubes(self) -> int:
+        """지금 쏠 수 있는 관 수 (`level - missileTimerQueue.length`).
+
+        건설 중이면 0이다 — 원본 `readyMissileCount` 가 그렇게 센다."""
+        if self.under_construction:
+            return 0
+        return max(0, self.level - len(self.missile_queue))
+
+    @property
+    def in_cooldown(self) -> bool:
+        """`isInCooldown()` — 관이 전부 찼는가. **`>=` 가 아니라 `==` 다.**
+
+        원본이 `length === level` 로 쓴다. 레벨이 내려가면 큐도 같이 줄이므로
+        (`decreaseLevel` 이 `pop()` 한다) 큐가 레벨을 넘는 상태가 없다."""
+        return len(self.missile_queue) == self.level
+
+    def fire(self, now: int) -> None:
+        """`launch()` — 관 하나를 재장전에 넣는다."""
+        self.missile_queue.append(now)
+
+    def reload_ready(self, now: int, cooldown: int) -> int:
+        """재장전이 끝난 관을 비운다. 비운 개수를 돌려준다.
+
+        ⚠ **사일로와 SAM 의 처리 횟수가 다르다.** 원본 `MissileSiloExecution` 은
+        tick 당 맨 앞 하나만 보고(`if`), `SAMLauncherExecution` 은 끝난 것을 전부
+        비운다(`while`). 사일로를 `while` 로 바꾸면 한 tick 에 관이 여러 개 열려
+        연사 간격이 줄어든다. 호출부가 정하도록 `limit` 을 받는다."""
+        done = 0
+        while self.missile_queue and now - self.missile_queue[0] >= cooldown:
+            self.missile_queue.pop(0)
+            done += 1
+        return done
+
+    def reload_front(self, now: int, cooldown: int) -> bool:
+        """맨 앞 관 하나만 본다 — 사일로용(`MissileSiloExecution` 은 `if` 다)."""
+        if self.missile_queue and now - self.missile_queue[0] >= cooldown:
+            self.missile_queue.pop(0)
+            return True
+        return False
 
     @property
     def under_construction(self) -> bool:

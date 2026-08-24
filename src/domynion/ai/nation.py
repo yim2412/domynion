@@ -387,7 +387,12 @@ class NationBot:
                 if st.build_warship(self.pid, n) is not None:
                     return
         # 사일로가 있으면 가장 큰 적을 노린다 (`NationNukeBehavior` 의 축소판)
-        if p.units.of(UnitType.MISSILE_SILO):
+        #
+        # ⚠ **쏠 수 있는 관이 있는지 먼저 본다.** 원본도 사일로마다
+        # `availableSlots = level - missileTimerQueue.length` 를 보고 0이면 건너뛴다.
+        # 이 검사가 없으면 재장전 중일 때 `launch_nuke` 가 조용히 None 을 돌려주고,
+        # 이 봇의 그 판단 tick 이 통째로 날아간다 — 전함도 안 짓고 아무것도 안 한다.
+        if st.ready_missiles(self.pid) > 0:
             for utype in (UnitType.HYDROGEN_BOMB, UnitType.ATOM_BOMB):
                 if p.gold < p.units.cost(utype):
                     continue

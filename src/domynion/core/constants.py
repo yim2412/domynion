@@ -318,6 +318,18 @@ STRUCTURE_BULK_STEPS: tuple[int, ...] = (5, 10)
 # Config.ts :: SAM_CONSTRUCTION_TICKS
 SAM_CONSTRUCTION_TICKS = 30 * 10
 
+# Config.ts :: SiloCooldown() / SAMCooldown() — 둘 다 90 tick(9초)이다.
+#
+# **발사관은 레벨 수만큼이다.** 사일로/SAM 을 Lv3 으로 올리면 관이 셋이고, 쏜 관만
+# 재장전에 들어간다(`missileTimerQueue`). 관이 전부 차면 그 기체는 쿨다운 상태다
+# (`isInCooldown` = 큐 길이 == 레벨).
+#
+# ⚠ 우리는 이게 통째로 없었다. 사일로 한 기로 무한 연사가 됐고, **SAM 한 기가 판의
+# 모든 핵을 영원히 100% 막았다.** 값을 따로 두는 이유는 원본이 따로 두기 때문이고,
+# 지금 같은 값이라고 합치면 한쪽만 바뀔 때 조용히 어긋난다.
+SILO_COOLDOWN_TICKS = 90
+SAM_COOLDOWN_TICKS = 90
+
 
 # --- 해상 (P4) ------------------------------------------------------------
 #
