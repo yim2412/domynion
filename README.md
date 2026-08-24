@@ -17,7 +17,7 @@
 
 **플레이할 수 있다.** 실제 openfront 지도 위에서 영토 확장 · 골드 · 건물 ·
 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 · 둠스데이 클락 · 원본 봇이
-함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 434개.
+함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 471개.
 
 | | |
 |---|---|
@@ -90,13 +90,27 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q   # 변이 테스트는 캐�
 src/domynion/
   core/          순수 로직 계층 — UI·네트워크 의존 없음
     constants.py   밸런스 수치 단일 출처
-    gamemap.py     대륙 생성(노이즈 높이맵), 타일, 인접, 시작 배치
-    augments.py    증강 카드·레벨·계수 합산·드래프트
-    state.py       플레이어 상태 + 증강이 반영된 파생 수치
-    attack.py      공격 부대와 연속 확장 (프론티어 BFS 큐)
-    engine.py      tick(dt), 증강 정지, 탈락, 승리 판정
+    gamemap.py     지도 로드, 타일·인접·바다 연결성분
+    spawn.py       시작 위치 고르기 (반경 4의 원)
+    state.py       플레이어 상태 + 파생 수치
+    attack.py      공격 부대와 연속 확장 (우선순위 힙)
+    units.py       유닛 종류·비용 곡선·보유량(레벨 합)
+    buildings.py   건물 배치 규칙 · 방어초소 커버리지 색인
+    naval.py       수송선 · 무역선 · 전함
+    rail.py        공장 · 역 · 기차
+    nukes.py       원자탄 · 수소탄 · MIRV · 낙진 · SAM
+    diplomacy.py   동맹 · 금수 · 팀
+    relations.py   관계 수치와 감쇠
+    emoji.py       이모지와 관계 변화량
+    doomsday.py    둠스데이 클락 (원본의 종료 규칙)
+    events.py      소식·경보 로그
+    augments.py    증강 카드 (P7 — 아직 미사용)
+    engine.py      tick 루프, 건설·업그레이드·철거, 탈락·승리 판정
   ai/
-    simple_ai.py   규칙 기반 AI — 반응 주기로 묶여 있다
+    nation.py      Nation 봇 — 공격 · 외교 · 상륙 · 핵 (`NationExecution`)
+    structures.py  Nation 봇의 건설·업그레이드 (`NationStructureBehavior`)
+    tribe.py       부족(봇) — 동맹을 다 받고 건물을 지운다
+    simple_ai.py   v0.1 규칙 기반 AI (대조용으로 남겨 둔다)
   ui/
     frame.py       타일 해상도 프레임 생성 (확대는 Qt 가 한다)
     map_widget.py  지도 + 국경선 + 이름

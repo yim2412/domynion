@@ -134,6 +134,12 @@ class Attack:
     attacker: int
     target: int | None
     troops: float
+    # 배가 내린 칸. **육상 공격이면 None** — 원본 `AttackExecution.sourceTile()` 이
+    # 그 구분에 쓰인다. 방어초소는 국경을 넘어오는 것을 늦추는 물건이라, 배로 뒤를
+    # 잡힌 상황에는 소용이 없다. 그래서 원본 AI 는 초소를 지을지 판단할 때
+    # `sourceTile() === null` 인 공격만 센다(`NationStructureBehavior`).
+    # 이 필드가 없어서 우리는 오래 그 둘을 구분하지 못했다.
+    source_tile: TileRef | None = None
     heap: list[tuple[float, TileRef]] = field(default_factory=list)
     seen: set[TileRef] = field(default_factory=set)
     retreated: bool = False
@@ -144,9 +150,13 @@ class Attack:
 
     @classmethod
     def launch(cls, gmap: GameMap, attacker: int, target: int | None,
-               troops: float, rng: random.Random, tick: int = 0) -> "Attack | None":
-        """내 국경에서 target 소유 타일에 붙는다. 붙을 곳이 없으면 None."""
-        atk = cls(attacker=attacker, target=target, troops=troops)
+               troops: float, rng: random.Random, tick: int = 0,
+               source_tile: TileRef | None = None) -> "Attack | None":
+        """내 국경에서 target 소유 타일에 붙는다. 붙을 곳이 없으면 None.
+
+        `source_tile` 은 **배가 내린 칸**이다. 육상 공격은 넘기지 않는다."""
+        atk = cls(attacker=attacker, target=target, troops=troops,
+                  source_tile=source_tile)
         want = -1 if target is None else target
         mine = gmap.owned_refs(attacker)
         for t in mine.tolist():

@@ -417,7 +417,7 @@ class GameState:
             # 상륙에 성공하면 **그 자리에서 육상 공격이 시작된다**(원본도 여기서
             # AttackExecution 을 새로 만든다). 배가 육지를 계속 먹는 게 아니다.
             atk = Attack.launch(self.gmap, b.owner, b.target, b.troops,
-                                self.rng, self.tick_count)
+                                self.rng, self.tick_count, source_tile=dst)
             if atk is None:
                 p.troops += b.troops
             else:
