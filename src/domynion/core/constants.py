@@ -365,6 +365,13 @@ MIRV_WARHEAD_COUNT = 350
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 TRADE_SPAWN_SIGMOID_MID = 400
 
+# 항구는 **10 tick 마다** 스폰을 굴린다(`PortExecution.tick` 의 `% 10`). 판 전체가
+# 아니라 항구마다다 — 이걸 판 하나로 두면 항구가 몇이든 유통량이 같아진다.
+TRADE_SPAWN_CHECK_PERIOD = 10
+# 근접 보너스를 받는 후보 수 = `within(전체/3, 4, 전체)`.
+TRADE_PROXIMITY_BONUS_DIVISOR = 3
+TRADE_PROXIMITY_BONUS_MIN = 4
+
 # 철도 (P4 마무리) — Config.ts :: trainStation*/trainGold/trainSpawnRate
 #
 # 역은 따로 짓는 게 아니라 **건물에 붙는다.** 사거리 15~110 안의 역끼리 이어진다 —

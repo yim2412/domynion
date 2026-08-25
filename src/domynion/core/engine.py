@@ -26,7 +26,8 @@ from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
-                    trade_gold, trade_spawn_rate, water_path)
+                    port_check_due, trade_gold, trade_spawn_rate,
+                    trading_ports, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
@@ -62,7 +63,6 @@ class GameState:
     boats: list[TransportShip] = field(default_factory=list)
     warships: list[Warship] = field(default_factory=list)
     trade_ships: list[TradeShip] = field(default_factory=list)
-    _trade_rejections: int = 0
     # 항구 쌍은 계속 반복된다. 바다 지형은 안 바뀌므로 경로를 그대로 재사용한다.
     # ⚠ P5 에서 핵이 육지를 바다로 만들면 **여기를 비워야 한다.**
     _path_cache: dict = field(default_factory=dict)
@@ -433,18 +433,29 @@ class GameState:
             self._counts[previous] = max(0, self._counts.get(previous, 0) - 1)
 
     def _advance_trade(self) -> None:
-        """항구가 둘 이상이면 무역선이 뜬다. 도착하면 **양쪽 항구 주인이 함께** 번다."""
-        ports = [(u.tile, p.pid) for p in self.alive
+        """항구마다 따로 스폰을 굴린다. 도착하면 **양쪽 항구 주인이 함께** 번다.
+
+        ⚠ 이식 누락 열아홉 — 전에는 이걸 **판 전체에서 매 tick 한 번** 굴렸다.
+        원본은 `PortExecution` 이 항구마다 붙어 10 tick 마다 **레벨 횟수만큼**
+        굴리고, 거절 카운터도 항구마다 따로 쌓는다. 자세한 것은 `naval.trading_ports`.
+        """
+        ports = [(u.tile, p.pid, u.level, u) for p in self.alive
                  for u in p.units.of(UnitType.PORT) if not u.under_construction]
         if len(ports) >= 2:
-            rate = trade_spawn_rate(self._trade_rejections, len(self.trade_ships))
-            if self.rng.randrange(max(1, rate)) == 0:
-                if self._spawn_trade_ship(ports):
-                    self._trade_rejections = 0
-                else:
-                    self._trade_rejections += 1
-            else:
-                self._trade_rejections += 1
+            n_ships = len(self.trade_ships)
+            for tile, pid, level, unit in ports:
+                if not port_check_due(unit.check_offset, self.tick_count):
+                    continue
+                # `shouldSpawnTradeShip()` — **레벨만큼** 굴린다. 실패할 때마다
+                # 그 항구의 pity 가 올라가고, 성공하면 그 항구만 0으로 돌아간다.
+                for _ in range(level):
+                    rate = trade_spawn_rate(unit.spawn_rejections, n_ships)
+                    if self.rng.randrange(max(1, rate)) == 0:
+                        unit.spawn_rejections = 0
+                        if self._spawn_trade_ship(tile, pid, ports):
+                            n_ships += 1
+                        break
+                    unit.spawn_rejections += 1
 
         still: list[TradeShip] = []
         for t in self.trade_ships:
@@ -474,16 +485,29 @@ class GameState:
                 and not self.diplomacy.embargoed(a, b)
                 and not self.diplomacy.embargoed(b, a))
 
-    def _spawn_trade_ship(self, ports: list[tuple[TileRef, int]]) -> bool:
-        src, dst = self.rng.sample(ports, 2)
+    def _spawn_trade_ship(self, src: TileRef, owner: int,
+                          ports: list[tuple[TileRef, int, int, Unit]]) -> bool:
+        """`tradingPorts()` 로 만든 **확률 목록**에서 목적지를 하나 고른다.
+
+        균등 무작위가 아니다 — 레벨·거리·동맹이 가중치로 붙는다. 균등으로 두면
+        레벨이 아무 일도 안 하고, 시그모이드가 크게 깎는 300 미만 왕복이 오히려
+        자주 뽑힌다."""
         # `canTrade()` — 금수는 **양방향**이다. 어느 한쪽이 걸어도 항로가 끊긴다.
-        if src[1] == dst[1] or not self._can_trade(src[1], dst[1]):
+        cands = [(t, pid, lvl) for t, pid, lvl, _ in ports
+                 if pid != owner and self._can_trade(owner, pid)]
+        if not cands:
             return False
-        path = self._water_path(src[0], dst[0])
+        friendly = {pid for _, pid, _ in cands
+                    if self.diplomacy.is_friendly(owner, pid)}
+        weighted = trading_ports(self.gmap, src, cands, friendly)
+        if not weighted:
+            return False
+        dst, dst_owner = weighted[self.rng.randrange(len(weighted))]
+        path = self._water_path(src, dst)
         if path is None:
             return False
-        self.trade_ships.append(TradeShip(owner=src[1], src_port=src[0],
-                                          dst_port=dst[0], dst_owner=dst[1],
+        self.trade_ships.append(TradeShip(owner=owner, src_port=src,
+                                          dst_port=dst, dst_owner=dst_owner,
                                           path=path))
         return True
 
@@ -1022,7 +1046,10 @@ class GameState:
         p = self.players[pid]
         p.gold -= p.units.cost(utype)
         unit = Unit(utype=utype, owner=pid, tile=tile,
-                    ticks_left=UNIT_INFO[utype].construction_ticks)
+                    ticks_left=UNIT_INFO[utype].construction_ticks,
+                    # `checkOffset = mg.ticks() % 10` — 항구마다 굴리는 tick 을
+                    # 어긋나게 둔다. 안 두면 유통량이 10 tick 주기로 뭉친다.
+                    check_offset=self.tick_count % C.TRADE_SPAWN_CHECK_PERIOD)
         p.units.units.append(unit)
         # 원본은 `buildUnit()` 안에서, **건설이 끝나기 전에** 완공 카운터를 올린다
         # (PlayerImpl.ts 주석: "already accounts for in-progress builds").

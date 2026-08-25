@@ -81,7 +81,8 @@ class GameMap:
     """
 
     __slots__ = ("width", "height", "size", "raw", "owner",
-                 "terrain", "land_count", "name", "_ocean_cc", "nations")
+                 "terrain", "land_count", "name", "_ocean_cc", "nations",
+                 "_touch_cc")
 
     def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
         if raw.size != width * height:
@@ -96,6 +97,9 @@ class GameMap:
         self.owner = np.full(self.size, -1, dtype=np.int16)   # -1 = 중립
         self.land_count = int(self.passable_mask().sum())
         self._ocean_cc: np.ndarray | None = None
+        # 칸이 접한 바다 연결성분. 지형이 안 바뀌므로 한 번 재면 끝이다.
+        # ⚠ 핵이 육지를 바다로 만들면 여기도 비워야 한다(`_path_cache` 와 함께).
+        self._touch_cc: dict[int, frozenset[int]] = {}
 
     # --- 적재 -------------------------------------------------------------
 

@@ -15,8 +15,10 @@ from domynion.core.buildings import DefensePostIndex
 from domynion.core.constants import Terrain
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
-from domynion.core.naval import (best_spawn, shoreline_tiles, trade_gold,
-                                 trade_spawn_rate, water_path)
+from domynion.core.naval import (best_spawn, port_check_due,
+                                 proximity_bonus_count, shoreline_tiles,
+                                 trade_gold, trade_spawn_rate, trading_ports,
+                                 water_path)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
 
@@ -168,7 +170,9 @@ def test_trade_pays_both_port_owners():
         st.players[pid].units.units.append(u)
         st.players[pid].units.record_constructed(UnitType.PORT)
     st._counts = {0: 2, 1: 2}
-    assert st._spawn_trade_ship([(st.gmap.ref(0, 1), 0), (st.gmap.ref(9, 1), 1)])
+    ports = [(st.gmap.ref(0, 1), 0, 1, st.players[0].units.units[0]),
+             (st.gmap.ref(9, 1), 1, 1, st.players[1].units.units[0])]
+    assert st._spawn_trade_ship(st.gmap.ref(0, 1), 0, ports)
     ship = st.trade_ships[0]
     g0, g1 = st.players[0].gold, st.players[1].gold
     t0 = st.tick_count                     # 0 이 아니다 — 헬퍼가 면역 뒤에서 시작한다
@@ -185,10 +189,11 @@ def test_trade_pays_both_port_owners():
 def test_embargo_stops_trade():
     st = state(["." + "~" * 8 + "."] * 3, {0: (0, 0), 1: (9, 0)})
     st.diplomacy.start_embargo(0, 1)
-    ports = [(st.gmap.ref(0, 1), 0), (st.gmap.ref(9, 1), 1)]
-    # 금수는 양방향이다(`canTrade`) — 뽑히는 순서와 무관하게 막혀야 한다
-    for _ in range(20):
-        assert not st._spawn_trade_ship(ports)
+    ports = [(st.gmap.ref(0, 1), 0, 1, None), (st.gmap.ref(9, 1), 1, 1, None)]
+    # 금수는 양방향이다(`canTrade`) — 어느 쪽에서 출발해도 막혀야 한다
+    for src, owner in ((st.gmap.ref(0, 1), 0), (st.gmap.ref(9, 1), 1)):
+        for _ in range(10):
+            assert not st._spawn_trade_ship(src, owner, ports)
 
 
 # --- 기부 -------------------------------------------------------------------
@@ -243,3 +248,240 @@ def test_inland_tiles_are_not_shoreline():
     shore = set(shoreline_tiles(gm, 0).tolist())
     assert gm.ref(2, 2) not in shore, "한가운데 칸이 해안으로 잡혔다"
     assert gm.ref(1, 1) in shore
+
+
+# --- 무역선 스폰은 항구마다 돈다 (이식 누락 열아홉) --------------------------
+
+def _sea(width: int = 60) -> GameMap:
+    """가로로 긴 바다 — 항구를 원하는 거리에 놓을 수 있다."""
+    return GameMap.from_rows(["." + "~" * (width - 2) + "."] * 3)
+
+
+def _port(st: GameState, pid: int, x: int, level: int = 1) -> Unit:
+    u = Unit(UnitType.PORT, pid, tile=st.gmap.ref(x, 1), level=level)
+    st.gmap.owner[u.tile] = pid
+    st.players[pid].units.units.append(u)
+    st.players[pid].units.record_constructed(UnitType.PORT)
+    return u
+
+
+def test_port_check_offset_spreads_the_rolls():
+    """`(ticks + checkOffset) % 10` — 항구마다 다른 tick 에 굴린다.
+
+    한꺼번에 굴리면 무역선이 10 tick 주기로 뭉쳐 나온다."""
+    fired = {off: [t for t in range(10) if port_check_due(off, t)]
+             for off in range(10)}
+    assert all(len(v) == 1 for v in fired.values()), "10 tick 에 정확히 한 번"
+    assert len({v[0] for v in fired.values()}) == 10, "오프셋마다 다른 tick 이어야"
+
+
+def test_proximity_bonus_count_is_clamped():
+    """`within(전체/3, 4, 전체)` — 후보가 적으면 전부, 많으면 1/3."""
+    assert proximity_bonus_count(30) == 10
+    assert proximity_bonus_count(6) == 4, "바닥 4"
+    assert proximity_bonus_count(2) == 2, "전체보다 클 수 없다"
+
+
+def test_trading_ports_weights_by_level():
+    """레벨이 곧 가중치다 — Lv3 항구는 Lv1 보다 세 배 잘 뽑힌다.
+
+    ⚠ 균등 무작위로 두면 **레벨이 아무 일도 안 한다**(`unitsOwned` 때와 같은 누락)."""
+    gm = _sea()
+    src = gm.ref(0, 1)
+    # 둘 다 300 이상 밖이 되도록 — 보너스가 끼면 레벨 몫이 안 보인다
+    cands = [(gm.ref(30, 1), 1, 1), (gm.ref(31, 1), 2, 3)]
+    w = trading_ports(gm, src, cands, friendly=set())
+    assert w.count((gm.ref(31, 1), 2)) == 3 * w.count((gm.ref(30, 1), 1))
+
+
+def test_trading_ports_bonus_goes_to_the_nearest_third():
+    """근접 보너스는 **거리순 상위 1/3** 에만 간다.
+
+    ⚠ 후보가 `proximity_bonus_count` 이하면 전원이 받으므로 **정렬을 지워도
+    결과가 같다** — 그래서 후보를 12개 두고 가장 먼 것이 보너스를 못 받는지를 본다.
+    (변이가 처음에 살아남았던 자리다. 재료가 문제였다.)"""
+    gm = _sea(width=4000)
+    src = gm.ref(0, 1)
+    # 전부 300 밖 — 근접 보너스만 남기고 debuff 를 배제한다
+    # ⚠ **먼 것부터** 넘긴다. 가까운 순으로 넘기면 정렬을 지워도 순서가 같아
+    # 변이가 살아남는다(2차에서 실제로 살아남았다).
+    cands = [(gm.ref(400 + i * 300, 1), 1 + i, 1) for i in reversed(range(12))]
+    w = trading_ports(gm, src, cands, friendly=set())
+    assert proximity_bonus_count(12) == 4
+    nearest = [(gm.ref(400 + i * 300, 1), 1 + i) for i in range(4)]
+    farthest = [(gm.ref(400 + i * 300, 1), 1 + i) for i in range(4, 12)]
+    assert all(w.count(c) == 2 for c in nearest), "가까운 4곳은 레벨 몫 + 보너스"
+    assert all(w.count(c) == 1 for c in farthest), "나머지는 레벨 몫뿐"
+
+
+def test_trading_ports_gives_no_bonus_under_the_debuff_range():
+    """300 미만은 근접·동맹 보너스에서 **빠진다**.
+
+    `trade_gold` 시그모이드가 그 구간을 크게 깎으므로, 가까운 항구끼리 왕복하는
+    것이 이득이 되면 안 된다. 대조군으로 300 밖 항구는 보너스를 받는다."""
+    gm = _sea(width=800)
+    src = gm.ref(0, 1)
+    near = [(gm.ref(10, 1), 1, 1)]
+    far = [(gm.ref(500, 1), 1, 1)]
+    assert len(trading_ports(gm, src, near, friendly={1})) == 1, "가까우면 레벨 몫뿐"
+    # 거리순 상위 1/3(바닥 4) + 동맹 → 레벨 몫의 3배
+    assert len(trading_ports(gm, src, far, friendly={1})) == 3
+    assert len(trading_ports(gm, src, far, friendly=set())) == 2, "동맹 몫만 빠진다"
+
+
+def test_trading_ports_skips_unreachable_water():
+    """수로가 안 이어지면 후보에서 아예 빠진다(`hasWaterComponent`)."""
+    gm = GameMap.from_rows(["~~.~~"] * 3)      # 가운데 육지로 바다가 둘로 갈린다
+    assert trading_ports(gm, gm.ref(0, 1), [(gm.ref(4, 1), 1, 1)], set()) == []
+
+
+def test_each_port_keeps_its_own_pity_timer():
+    """거절 카운터는 **항구마다** 쌓인다.
+
+    ⚠ 판 전체에 하나로 두면 아무 항구나 성공했을 때 모두의 pity 가 리셋된다 —
+    항구를 아무리 지어도 유통량이 안 늘던 원인이다."""
+    st = GameState(gmap=_sea(), players={}, rng=random.Random(0))
+    st._counts, st._posts = {}, DefensePostIndex(st.gmap.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    for pid, x in ((0, 2), (1, 50)):
+        st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False,
+                                      start=st.gmap.ref(x, 1))
+        st._counts[pid] = 1
+    a, b = _port(st, 0, 2), _port(st, 1, 50)
+    # 굴리는 tick 을 어긋나게 둔다 — b 만 굴러야 a 의 카운터가 안 움직인다
+    a.check_offset, b.check_offset = 0, 5
+    a.spawn_rejections = 40                   # a 에만 빚을 쌓아 둔다
+    before = a.spawn_rejections
+    for _ in range(60):
+        st.tick_count += 1
+        if port_check_due(a.check_offset, st.tick_count):
+            continue                          # a 가 굴 차례는 건너뛴다
+        st._advance_trade()
+    # ⚠ "둘이 다르다"만 보면 **둘 다 0 일 때도 통과한다.** a 가 굴지 않은 동안
+    # a 의 값이 그대로였는지를 단언해야 공유 여부가 드러난다.
+    assert a.spawn_rejections == before,         f"a 는 굴지도 않았는데 카운터가 {before} -> {a.spawn_rejections} 로 움직였다"
+    # ⚠ `b != before` 로 두면 b 가 **한 번도 안 올라도** 통과한다(b 는 0, before 는 40).
+    # b 자신의 출발값에서 실제로 올랐는지를 봐야 카운터가 도는 것이 드러난다.
+    assert b.spawn_rejections > 0, "b 는 굴었는데 자기 카운터가 안 올랐다"
+
+
+def _trade_bed(n_ports: int = 1, level: int = 1, width: int = 900,
+               seed: int = 7, offsets: bool = False) -> GameState:
+    """항구를 양쪽에 놓은 시험대. 서로 300 밖이라 debuff 를 안 받는다."""
+    st = GameState(gmap=_sea(width=width), players={}, rng=random.Random(seed))
+    st._counts, st._posts = {}, DefensePostIndex(st.gmap.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    for pid in range(2):
+        st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False,
+                                      start=st.gmap.ref(1 + pid * (width - 3), 1))
+        st._counts[pid] = 1
+    for i in range(n_ports):
+        for pid, x in ((0, 2 + i), (1, width - 3 - i)):
+            u = _port(st, pid, x, level=level)
+            u.check_offset = (i if offsets else 0)
+    return st
+
+
+def _count_spawns(st: GameState, ticks: int) -> int:
+    total = 0
+    for _ in range(ticks):
+        st.tick_count += 1
+        before = len(st.trade_ships)
+        st._advance_trade()
+        total += max(0, len(st.trade_ships) - before)
+        st.trade_ships.clear()             # 도착·수를 빼고 **스폰만** 센다
+    return total
+
+
+def test_port_level_multiplies_the_spawn_rolls():
+    """`shouldSpawnTradeShip()` 은 **레벨 횟수만큼** 굴린다.
+
+    ⚠ 항구를 전부 Lv1 로 두면 이 규칙을 지워도 결과가 같다 — §5.34 에서 사일로에
+    똑같이 당했다(레벨 합과 개수가 같아 변이가 살아남았다). 그래서 Lv1 대조군과
+    Lv4 를 함께 잰다."""
+    lv1 = _count_spawns(_trade_bed(level=1), 600)
+    lv4 = _count_spawns(_trade_bed(level=4), 600)
+    assert lv4 > lv1, f"Lv4 인데 굴림 수가 안 늘었다 ({lv1} -> {lv4})"
+
+
+def test_spawn_rolls_only_every_ten_ticks():
+    """10 tick 게이트가 없으면 유통량이 그대로 10배가 된다.
+
+    ⚠ "늘었다"만 보는 단언은 이 게이트를 지워도 통과한다(더 늘 뿐이다).
+    **막지 않았으면 무엇이 일어났을 것인가**를 단언한다 — 오프셋을 전부 0으로
+    맞춘 항구는 10 tick 에 한 번만 굴 수 있으므로 스폰 수가 tick 수의 1/10 을
+    넘을 수 없다."""
+    ticks = 500
+    st = _trade_bed(n_ports=3, level=1)      # 오프셋 전부 0
+    spawned = _count_spawns(st, ticks)
+    assert 0 < spawned <= ticks // C.TRADE_SPAWN_CHECK_PERIOD, (
+        f"{ticks} tick 에 {spawned}회 — 10 tick 게이트를 지나쳤다")
+
+
+def test_destination_is_weighted_not_uniform():
+    """목적지는 **가중 목록**에서 뽑는다 — 균등 무작위가 아니다.
+
+    ⚠ 후보가 하나뿐이면 무엇을 뽑아도 같다. Lv1 하나와 Lv5 하나를 두고
+    Lv5 쪽이 더 자주 뽑히는지를 본다."""
+    gm = _sea(width=4000)
+    src = gm.ref(0, 1)
+    cands = [(gm.ref(1000, 1), 1, 1), (gm.ref(1001, 1), 2, 5)]
+    w = trading_ports(gm, src, cands, friendly=set())
+    lv5 = w.count((gm.ref(1001, 1), 2))
+    lv1 = w.count((gm.ref(1000, 1), 1))
+    assert lv5 == 5 * lv1, f"Lv5 가 Lv1 의 5배여야 한다 ({lv1} vs {lv5})"
+    assert lv1 + lv5 > 2, "균등 목록이면 각각 1개뿐이다"
+
+
+def test_engine_uses_the_weighted_list_for_destinations():
+    """**배선** 검사 — `_spawn_trade_ship` 이 가중 목록을 실제로 쓰는가.
+
+    ⚠ `trading_ports` 만 단위 테스트하면 엔진이 균등 무작위로 뽑도록 바뀌어도
+    통과한다(로직과 배선을 따로 재야 한다). 상대 항구를 Lv1 하나와 Lv9 하나로
+    두고, 어디로 떠났는지를 센다."""
+    width = 2000
+    st = GameState(gmap=_sea(width=width), players={}, rng=random.Random(3))
+    st._counts, st._posts = {}, DefensePostIndex(st.gmap.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    for pid in range(3):
+        st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False,
+                                      start=st.gmap.ref(1 + pid, 1))
+        st._counts[pid] = 1
+    src = _port(st, 0, 2)
+    lo = _port(st, 1, 1000, level=1)
+    hi = _port(st, 2, 1001, level=9)
+    ports = [(u.tile, u.owner, u.level, u) for u in (src, lo, hi)]
+
+    hits = {lo.tile: 0, hi.tile: 0}
+    for _ in range(300):
+        st.trade_ships.clear()
+        if st._spawn_trade_ship(src.tile, 0, ports):
+            hits[st.trade_ships[0].dst_port] += 1
+    assert hits[hi.tile] > hits[lo.tile] * 3, (
+        f"Lv9 로 {hits[hi.tile]}회, Lv1 로 {hits[lo.tile]}회 — 균등으로 뽑고 있다")
+
+
+def test_more_ports_means_more_trade():
+    """항구를 더 지으면 유통량이 는다.
+
+    ⚠ 판 전체에서 한 번만 굴리면 이 단언이 **깨진다** — 항구가 몇이든 같아진다.
+    실측에서 항구 120곳에 무역선 도착이 9,000 tick 동안 29회뿐이었다."""
+    def spawns(n_ports: int) -> int:
+        st = GameState(gmap=_sea(width=200), players={}, rng=random.Random(7))
+        st._counts, st._posts = {}, DefensePostIndex(st.gmap.size)
+        st.tick_count = C.SPAWN_IMMUNITY_TICKS
+        for pid in range(2):
+            st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False,
+                                          start=st.gmap.ref(1 + pid * 190, 1))
+            st._counts[pid] = 1
+        for i in range(n_ports):
+            _port(st, 0, 2 + i)
+            _port(st, 1, 190 - i)
+        total = 0
+        for _ in range(200):
+            before = len(st.trade_ships)
+            st._advance_trade()
+            total += max(0, len(st.trade_ships) - before)
+        return total
+    few, many = spawns(1), spawns(8)
+    assert many > few, f"항구를 8배로 늘렸는데 유통량이 {few} -> {many}"

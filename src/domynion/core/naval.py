@@ -27,9 +27,15 @@ from .constants import Terrain
 from .gamemap import GameMap, TileRef
 
 
-def _touching_components(gmap: GameMap, t: TileRef) -> set[int]:
-    cc = gmap.ocean_components()
-    return {int(cc[n]) for n in gmap.neighbors(t) if cc[n] >= 0}
+def _touching_components(gmap: GameMap, t: TileRef) -> frozenset[int]:
+    """칸이 접한 바다 연결성분. **캐시한다** — 무역선 목적지를 고를 때 항구마다
+    후보 전부에 대해 부르므로(120곳이면 판당 수만 번) 매번 다시 재면 비싸다."""
+    hit = gmap._touch_cc.get(t)
+    if hit is None:
+        cc = gmap.ocean_components()
+        hit = frozenset(int(cc[x]) for x in gmap.neighbors(t) if cc[x] >= 0)
+        gmap._touch_cc[t] = hit
+    return hit
 
 
 def water_path(gmap: GameMap, src: TileRef, dst: TileRef,
@@ -217,3 +223,68 @@ def trade_spawn_rate(rejections: int, num_ships: int) -> int:
     base = 1.0 - 1.0 / (1.0 + math.exp(-decay * (num_ships - 400)))
     pity = 1.0 / (rejections + 1)
     return int(100 * pity / base) if base > 0 else 1 << 30
+
+
+# --- 무역선 스폰 — 항구마다 따로 돈다 (`PortExecution`) ----------------------
+#
+# ⚠ 이식 누락 열아홉. 우리는 이걸 **판 전체에서 매 tick 한 번** 굴리고 있었다.
+# 원본은 `PortExecution` 이 항구마다 붙어 10 tick 마다, **레벨 횟수만큼** 굴리고,
+# 거절 카운터(pity)도 항구마다 따로 쌓인다. 실측 결과가 그대로 갈렸다 —
+# 원본 크기 9,000 tick 에서 무역선 도착이 22회였다(기차는 577회).
+#
+# 판 하나로 두면 세 가지가 동시에 깨진다:
+#   1. 항구가 46곳이든 2곳이든 유통량이 같다 (항구를 지을 이유가 없어진다)
+#   2. 레벨이 아무 일도 안 한다 (`unitsOwned` 때와 같은 종류의 누락)
+#   3. 아무 항구나 한 번 성공하면 **모든 항구의 pity 가 0으로 리셋된다**
+
+def port_check_due(check_offset: int, tick: int) -> bool:
+    """`(ticks + checkOffset) % 10 !== 0` — 항구마다 다른 tick 에 굴린다.
+
+    한꺼번에 굴리면 유통량이 10 tick 주기로 뭉친다. 원본은 항구가 생긴 tick 을
+    그대로 오프셋으로 쓴다(`checkOffset = mg.ticks() % 10`)."""
+    return (tick + check_offset) % C.TRADE_SPAWN_CHECK_PERIOD == 0
+
+
+def proximity_bonus_count(total_ports: int) -> int:
+    """`within(totalPorts / 3, 4, totalPorts)` — 근접 보너스를 받는 후보 수."""
+    return int(min(max(total_ports / C.TRADE_PROXIMITY_BONUS_DIVISOR,
+                       C.TRADE_PROXIMITY_BONUS_MIN), total_ports))
+
+
+def manhattan(gmap: GameMap, a: TileRef, b: TileRef) -> int:
+    w = gmap.width
+    return abs(a % w - b % w) + abs(a // w - b // w)
+
+
+def trading_ports(gmap: GameMap, src: TileRef,
+                  candidates: list[tuple[TileRef, int, int]],
+                  friendly: "set[int]") -> list[tuple[TileRef, int]]:
+    """`tradingPorts()` — **확률 목록**이다. 같은 항구가 여러 번 들어가면 그만큼 잘 뽑힌다.
+
+    `candidates` 는 이미 금수·자기 자신을 걸러 낸 (타일, 주인, 레벨) 목록.
+    반환은 (타일, 주인) 을 가중치만큼 반복한 것 — 호출부가 균등하게 하나 고르면 된다.
+
+    가중치 셋이 곱이 아니라 **합**으로 붙는다(원본이 `push` 를 반복한다):
+      · 기본 레벨만큼
+      · 거리순 상위 1/3 안이고 300 이상이면 레벨만큼 더
+      · 동맹이고 300 이상이면 레벨만큼 더
+    300 미만(`tradeShipShortRangeDebuff`)이 보너스에서 빠지는 것이 핵심이다 —
+    `trade_gold` 시그모이드가 그 구간을 크게 깎으므로 가까운 항구끼리 왕복하는
+    것이 이득이 되면 안 된다.
+    """
+    src_comp = _touching_components(gmap, src)
+    reachable = [(t, owner, lvl) for t, owner, lvl in candidates
+                 if src_comp & _touching_components(gmap, t)]
+    reachable.sort(key=lambda c: manhattan(gmap, src, c[0]))
+
+    bonus_n = proximity_bonus_count(len(reachable))
+    out: list[tuple[TileRef, int]] = []
+    for i, (tile, owner, lvl) in enumerate(reachable):
+        entry = [(tile, owner)] * lvl
+        out += entry
+        too_close = manhattan(gmap, src, tile) < C.TRADE_SHORT_RANGE_DEBUFF
+        if not too_close and i < bonus_n:
+            out += entry
+        if not too_close and owner in friendly:
+            out += entry
+    return out

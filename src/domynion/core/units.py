@@ -119,6 +119,14 @@ class Unit:
     # 하나(마지막 발사 tick)로 두면 Lv3 이 Lv1 과 똑같이 동작한다.
     missile_queue: list[int] = field(default_factory=list)
 
+    # --- 항구 전용 (`PortExecution`) ---------------------------------------
+    #
+    # ⚠ 이식 누락 열아홉. 둘 다 **항구마다** 있어야 한다 — 판 전체에 하나로 두면
+    # 아무 항구나 성공했을 때 모두의 pity 가 리셋되고, 항구를 더 지어도 유통량이
+    # 늘지 않는다. 원본은 `PortExecution` 인스턴스가 항구마다 하나씩 붙어 있다.
+    spawn_rejections: int = 0            # `tradeShipSpawnRejections`
+    check_offset: int = 0                # `checkOffset = mg.ticks() % 10`
+
     def __post_init__(self) -> None:
         if self.health is None:
             self.health = UNIT_INFO[self.utype].max_health
