@@ -32,6 +32,11 @@ class EventKind(Enum):
     # `CONQUERED_PLAYER` 를 재사용하면 안 된다. 그쪽 `amount` 는 정복당한
     # 사람의 pid 라서, 골드를 넣으면 소식창이 엉뚱한 이름을 찍는다.
     GOLD_FROM_CONQUEST = "정복 전리품"
+    # 원본 `received_gold_from_captured_ship` — 나포한 무역선이 도착해 받은 골드.
+    # `CAPTURED_ENEMY_UNIT` 과 나눠 두는 이유는 `GOLD_FROM_CONQUEST` 와 같다 —
+    # 이쪽 `amount` 는 골드고 저쪽은 유닛이라, 합치면 소식창이 엉뚱한 걸 찍는다.
+    GOLD_FROM_CAPTURED_SHIP = "나포 전리품"
+    TRADE_SHIP_CAPTURED = "무역선 나포"     # `trade_ship_captured` — 뺏긴 쪽에게
     UNIT_DESTROYED = "유닛 파괴"
     UNIT_DELETED = "유닛 철거"      # `unit_voluntarily_deleted` — 내가 스스로 지운 것
     ALLIANCE_ACCEPTED = "동맹 성립"
@@ -65,6 +70,8 @@ CATEGORY: dict[EventKind, Category] = {
     EventKind.UNIT_DELETED: Category.SYSTEM,
     EventKind.CAPTURED_ENEMY_UNIT: Category.ATTACK,
     EventKind.GOLD_FROM_CONQUEST: Category.ATTACK,
+    EventKind.GOLD_FROM_CAPTURED_SHIP: Category.TRADE,
+    EventKind.TRADE_SHIP_CAPTURED: Category.TRADE,
     EventKind.MIRV_INBOUND: Category.NUKE,
     EventKind.NUKE_INBOUND: Category.NUKE,
     EventKind.HYDROGEN_BOMB_INBOUND: Category.NUKE,

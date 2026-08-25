@@ -195,6 +195,17 @@ class TradeShip:
     step_i: int = 0
     done: bool = False
 
+    # --- 나포 (`wasCaptured`) ---------------------------------------------
+    #
+    # ⚠ 이식 누락 스물. 전에는 전함이 무역선을 **포탄으로 격침**시켰다 —
+    # 골드가 아무에게도 안 가고 증발했다. 원본은 쫓아가 **나포**하고, 도착하면
+    # **나포한 쪽이 전액을 번다**(원래 주인은 한 푼도 못 받는다). 원본 통계에
+    # `piracyGold` 가 별도 항목으로 있을 만큼 독립된 수입 경로다.
+    captured_by: int | None = None
+    # 해안선 물 칸을 밟은 마지막 tick. 그 뒤 20 tick 동안 나포당하지 않는다
+    # (`_lastSetSafeFromPirates`). 항구 앞에서 잡히지 않게 하는 장치다.
+    last_safe_tick: int = -10_000
+
     @property
     def tile(self) -> TileRef:
         return self.path[min(self.step_i, len(self.path) - 1)]
@@ -202,6 +213,10 @@ class TradeShip:
     @property
     def arrived(self) -> bool:
         return self.step_i >= len(self.path) - 1
+
+    def safe_from_pirates(self, tick: int) -> bool:
+        """`isSafeFromPirates()` — 해안선을 밟은 지 20 tick 이 안 지났으면 안전."""
+        return tick - self.last_safe_tick < C.SAFE_FROM_PIRATES_TICKS
 
     def advance(self) -> None:
         if not self.arrived:

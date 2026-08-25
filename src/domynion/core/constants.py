@@ -343,6 +343,14 @@ BOAT_TICKS_PER_MOVE = 1        # TransportShipExecution.ticksPerMove
 BOAT_RETREAT_MALUS_PCT = 0.25
 
 WARSHIP_PATROL_RANGE = 100
+# 무역선이 해안선 물 칸을 밟으면 이 tick 동안 나포 대상에서 빠진다
+# (`safeFromPiratesCooldownMax`). 항구 앞에서 잡히지 않게 하는 장치다.
+SAFE_FROM_PIRATES_TICKS = 20
+# 나포 사거리 — 원본 `huntDownTradeShip` 은 맨해튼 5 안이면 그 자리에서 잡는다
+PIRACY_CAPTURE_RANGE = 5
+# `huntDownTradeShip` 은 tick 당 루프를 **2번** 돈다 — 무역선과 같은 속도(1칸/tick)
+# 로는 영원히 못 따라잡기 때문이다. 추격이 성립하려면 더 빨라야 한다.
+PIRACY_HUNT_STEPS = 2
 WARSHIP_TARGETTING_RANGE = 130
 WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
 WARSHIP_DOCKING_RANGE = 5

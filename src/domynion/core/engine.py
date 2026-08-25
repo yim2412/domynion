@@ -26,7 +26,7 @@ from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
-                    port_check_due, trade_gold, trade_spawn_rate,
+                    manhattan, port_check_due, trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
@@ -463,16 +463,57 @@ class GameState:
             dst_p = self.players.get(t.dst_owner)
             if src_p is None or not src_p.alive or dst_p is None or not dst_p.alive:
                 continue
-            if not self._can_trade(t.owner, t.dst_owner):
+            # 나포된 배는 금수와 무관하다 — 해적이 자기 항구로 끌고 가는 것이라
+            # 원래 두 나라의 관계가 항로를 끊지 않는다.
+            if t.captured_by is None and not self._can_trade(t.owner, t.dst_owner):
                 continue                       # 금수 중이면 항로가 끊긴다
             t.advance()
+            # 해안선 물 칸을 밟으면 20 tick 동안 나포당하지 않는다.
+            if self.gmap.is_ocean(t.tile) and self.gmap.is_shoreline(t.tile):
+                t.last_safe_tick = self.tick_count
             if not t.arrived:
                 still.append(t)
                 continue
             gold = trade_gold(len(t.path))
-            src_p.gold += gold
-            dst_p.gold += gold
+            if t.captured_by is not None:
+                # `wasCaptured` — **나포한 쪽이 전액**을 번다. 원래 주인은 0이다.
+                pirate = self.players.get(t.captured_by)
+                if pirate is not None and pirate.alive:
+                    pirate.gold += gold
+                    self.emit(EventKind.GOLD_FROM_CAPTURED_SHIP,
+                              who=pirate.pid, other=t.owner,
+                              tile=t.dst_port, text="나포한 무역선")
+            else:
+                src_p.gold += gold
+                dst_p.gold += gold
         self.trade_ships = still
+
+    def _capture_trade_ship(self, t: TradeShip, pid: int) -> bool:
+        """`captureUnit()` + `TradeShipExecution` 의 나포 뒤 항로 갱신.
+
+        나포하면 배는 **해적의 가장 가까운 도달 가능 항구**로 뱃머리를 돌린다.
+        갈 수 있는 항구가 없으면 원본은 배를 지운다 — 골드도 사라진다."""
+        pirate = self.players.get(pid)
+        if pirate is None or not pirate.alive:
+            return False
+        here = t.tile
+        best: TileRef | None = None
+        best_d = None
+        for u in pirate.units.of(UnitType.PORT):
+            if u.under_construction or u.marked_for_deletion:
+                continue
+            d = manhattan(self.gmap, here, u.tile)
+            if best_d is None or d < best_d:
+                best, best_d = u.tile, d
+        if best is None:
+            return False
+        path = self._water_path(here, best)
+        if path is None:
+            return False
+        t.captured_by = pid
+        t.dst_port, t.dst_owner = best, pid
+        t.path, t.step_i = path, 0
+        return True
 
     def _water_path(self, src: TileRef, dst: TileRef) -> "list[TileRef] | None":
         key = (src, dst)
@@ -546,7 +587,11 @@ class GameState:
                 continue
 
             target = self._pick_naval_target(w, r2)
-            if target is not None:
+            if isinstance(target, TradeShip):
+                # `huntDownTradeShip` — 무역선은 **쏘는 게 아니라 쫓아가 잡는다.**
+                # 포격 쿨다운을 쓰지 않는다(원본도 이 분기에서 안 쓴다).
+                self._hunt_trade_ship(w, target)
+            elif target is not None:
                 w.cooldown = C.WARSHIP_SHELL_ATTACK_RATE
                 self._fire_shell(w, target)
             alive_ships.append(w)
@@ -562,10 +607,65 @@ class GameState:
         for o in self.warships:
             if o is not w and not o.sunk and hostile(o.owner)                     and self._dist_sq(w.tile, o.tile) <= r2:
                 return o
-        for t in self.trade_ships:
-            if hostile(t.owner) and self._dist_sq(w.tile, t.tile) <= r2:
-                return t
+        # 무역선은 관문이 더 있다(`findBestTarget` 의 `includeTradeShips` 분기).
+        # 나포는 격침과 달리 **끌고 갈 곳이 있어야** 성립하기 때문이다.
+        if self._has_reachable_port(w):
+            patrol_r2 = C.WARSHIP_PATROL_RANGE ** 2
+            for t in self.trade_ships:
+                if not hostile(t.owner):
+                    continue
+                if t.safe_from_pirates(self.tick_count):
+                    continue          # 해안선을 막 밟았다 — 20 tick 은 못 건드린다
+                # 목적지가 나거나 내 동맹이면 안 건드린다. 어차피 내가 벌 배다.
+                if t.dst_owner == w.owner or self.diplomacy.is_friendly(w.owner,
+                                                                       t.dst_owner):
+                    continue
+                if self._dist_sq(w.patrol_origin, t.tile) > patrol_r2:
+                    continue          # 순찰 구역 밖까지 쫓아가지는 않는다
+                if self._dist_sq(w.tile, t.tile) <= r2:
+                    return t
         return None
+
+    def _hunt_trade_ship(self, w: Warship, t: TradeShip) -> None:
+        """`huntDownTradeShip` — tick 당 **2칸** 다가가고, 맨해튼 5 안이면 나포한다.
+
+        ⚠ 2칸인 것이 규칙이다. 무역선도 1칸/tick 이라 같은 속도면 영원히 못
+        따라잡는다 — 추격 자체가 성립하지 않는다."""
+        for _ in range(C.PIRACY_HUNT_STEPS):
+            if manhattan(self.gmap, w.tile, t.tile) <= C.PIRACY_CAPTURE_RANGE:
+                if self._capture_trade_ship(t, w.owner):
+                    w.veterancy += 1
+                    self.emit(EventKind.TRADE_SHIP_CAPTURED, who=t.owner,
+                              other=w.owner, tile=t.tile, text="무역선")
+                elif t in self.trade_ships:
+                    self.trade_ships.remove(t)   # 끌고 갈 항구가 없으면 원본도 지운다
+                return
+            step = self._step_toward(w.tile, t.tile)
+            if step is None:
+                return
+            w.tile = step
+
+    def _step_toward(self, src: TileRef, dst: TileRef) -> "TileRef | None":
+        """`bestNeighborToward` — 바다 이웃 중 목표에 가장 가까운 칸.
+
+        경로 탐색이 아니라 탐욕이다. 원본도 근접(20 이하)에서는 그렇게 한다 —
+        축소 지도 경로가 대각으로 튀어 수렴이 안 되기 때문이다."""
+        best, best_d = None, manhattan(self.gmap, src, dst)
+        for n in self.gmap.neighbors(src):
+            if self.gmap.terrain[n] != Terrain.OCEAN:
+                continue
+            d = manhattan(self.gmap, n, dst)
+            if d < best_d:
+                best, best_d = n, d
+        return best
+
+    def _has_reachable_port(self, w: Warship) -> bool:
+        """`hasReachablePort` — 나포해도 끌고 갈 항구가 없으면 아예 안 노린다."""
+        p = self.players.get(w.owner)
+        if p is None:
+            return False
+        return any(not u.under_construction and not u.marked_for_deletion
+                   for u in p.units.of(UnitType.PORT))
 
     def _fire_shell(self, w: Warship, target) -> None:
         dmg = shell_damage(self.rng, w.veterancy)
@@ -582,9 +682,8 @@ class GameState:
                 w.veterancy += 1
                 self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
                           tile=target.tile, text="수송선")
-        elif isinstance(target, TradeShip):
-            if target in self.trade_ships:
-                self.trade_ships.remove(target)
+        # ⚠ 무역선은 여기 안 온다 — **격침이 아니라 나포**라
+        # `_hunt_trade_ship` 이 따로 처리한다(이식 누락 스물).
 
     def _heal_warship(self, w: Warship, p: PlayerState) -> None:
         """항구 사거리 안이면 tick 당 1 회복. **클락에 표시된 쪽은 회복 못 한다** —

@@ -144,6 +144,28 @@ class GameMap:
                 else:
                     b |= C.OCEAN_BIT
                 raw[y * w + x] = b
+        # ⚠ 해안선 비트를 안 세우면 **테스트 지도에만 해안선이 없다.** 실제
+        # 지도는 바이너리에 이미 들어 있어서, 이걸 빼먹으면 `is_shoreline` 에
+        # 걸린 규칙(무역선 나포 보호 등)이 테스트에서 영원히 발동하지 않는다.
+        # 원본 `WaterManager` — **통행불가 이웃은 해안선을 만들지 않는다**(빈
+        # 공간이지 해안이 아니다).
+        #
+        # 파이썬 루프로 두면 안 된다. 테스트가 지도를 수백 번 만드는데 그때마다
+        # 전 칸을 도는 순수 루프면 스위트가 2.4초에서 8초로 뛴다(실측).
+        grid = raw.reshape(h, w)
+        land = (grid & C.LAND_BIT) != 0
+        ok = (grid & C.MAGNITUDE_MASK) < C.IMPASSABLE_MAGNITUDE
+        opp = np.zeros((h, w), dtype=bool)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nl = np.roll(land, (dy, dx), axis=(0, 1))
+            no = np.roll(ok, (dy, dx), axis=(0, 1))
+            edge = np.ones((h, w), dtype=bool)      # 가장자리는 이웃이 없다
+            if dy == -1: edge[-1, :] = False
+            elif dy == 1: edge[0, :] = False
+            elif dx == -1: edge[:, -1] = False
+            else: edge[:, 0] = False
+            opp |= (nl != land) & no & edge
+        grid[opp & ok] |= C.SHORELINE_BIT
         return cls(w, h, raw, name=name)
 
     # --- 지형 -------------------------------------------------------------
