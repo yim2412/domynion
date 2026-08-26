@@ -719,3 +719,198 @@ def test_rich_check_ignores_humans():
         st.players[pid].gold = 900_000_000     # 봇보다 훨씬 부자다
     b._counter_infestation(st)
     assert any(w.owner == 0 for w in st.warships), "사람을 세는 바람에 견제를 멈췄다"
+
+
+# --- 들어오는 상륙선 선제 대응 -------------------------------------------------
+#
+# 보복이 당한 뒤라면 이쪽은 당하기 전이다.
+
+def _incoming(st, enemy: int, at_x: int, dst_x: int):
+    """적 상륙선 한 척을 내 땅으로 보낸다."""
+    from domynion.core.naval import TransportShip
+    dst = st.gmap.ref(dst_x, 5)
+    st.gmap.owner[dst] = 0                     # 목표는 내 땅이어야 한다
+    b = TransportShip(owner=enemy, target=0, troops=1000.0,
+                      path=[st.gmap.ref(at_x, 5)], dst=dst)
+    st.boats.append(b)
+    return b
+
+
+def _intercept_state(difficulty: str = "impossible"):
+    st = _sea_state()
+    _with_port(st)
+    st.players[0].gold = 100_000_000
+    return st, bot(difficulty=difficulty, seed=1)
+
+
+def test_an_incoming_boat_draws_a_warship():
+    """멀리서 오는 상륙선을 보면 미리 전함을 낸다."""
+    st, b = _intercept_state()
+    _incoming(st, 1, at_x=200, dst_x=10)       # 190칸 남았다
+    for _ in range(30):
+        b._intercept_incoming(st)
+        if st.warships:
+            break
+        b._dealt_boats.clear()                 # 확률(80%)을 여러 번 굴린다
+    assert any(w.owner == 0 for w in st.warships), "다가오는데 아무것도 안 했다"
+
+
+def test_a_boat_about_to_land_is_ignored():
+    """목표까지 20 안이면 손쓸 수 없다고 보고 넘긴다.
+
+    ⚠ 대조군은 멀리 있는 배다(위 테스트). 그게 없으면 "안 했다"가
+    기능이 통째로 죽어도 참이다."""
+    st, b = _intercept_state()
+    _incoming(st, 1, at_x=15, dst_x=10)        # 5칸 남았다
+    for _ in range(30):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert not any(w.owner == 0 for w in st.warships), "코앞인데 배를 띄웠다"
+
+
+def test_a_covered_target_is_ignored():
+    """목표 90 안에 내 전함이 이미 있으면 또 띄우지 않는다."""
+    from domynion.core.naval import Warship
+    st, b = _intercept_state()
+    dst_x = 100
+    st.warships.append(Warship(owner=0, tile=st.gmap.ref(dst_x + 10, 5)))
+    _incoming(st, 1, at_x=250, dst_x=dst_x)
+    before = len(st.warships)
+    for _ in range(30):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert len(st.warships) == before, "이미 덮인 자리에 또 띄웠다"
+
+
+def test_a_patrol_origin_alone_counts_as_cover():
+    """배는 멀리 있어도 **순찰 기점**이 목표 90 안이면 덮인 것으로 본다.
+
+    ⚠ 배 자체를 가까이 두면 위치 검사가 먼저 잡아 기점 검사가 안 재진다."""
+    from domynion.core.naval import Warship
+    st, b = _intercept_state()
+    dst_x = 100
+    # ⚠ x 축으로 250 을 떼려다 지도 폭(300)을 넘겨 **줄바꿈되어 오히려
+    # 가까워졌다.** 위치 검사가 먼저 잡아 기점 검사가 안 재졌다. y 축으로 뗀다.
+    w = Warship(owner=0, tile=st.gmap.ref(dst_x, 180))       # 배는 멀다(175)
+    w.patrol_origin = st.gmap.ref(dst_x + 10, 5)             # 기점은 가깝다(10)
+    st.warships.append(w)
+    _incoming(st, 1, at_x=280, dst_x=dst_x)
+    before = len(st.warships)
+    for _ in range(30):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert len(st.warships) == before, "기점이 가까운데 또 띄웠다"
+
+
+def test_a_far_warship_does_not_count_as_cover():
+    """대조군 — 90 밖의 전함은 덮은 것으로 치지 않는다."""
+    from domynion.core.naval import Warship
+    st, b = _intercept_state()
+    dst_x = 100
+    far = Warship(owner=0, tile=st.gmap.ref(dst_x, 180))     # 같은 이유로 y 축
+    far.patrol_origin = far.tile
+    st.warships.append(far)
+    _incoming(st, 1, at_x=250, dst_x=dst_x)
+    before = len(st.warships)
+    for _ in range(30):
+        b._intercept_incoming(st)
+        if len(st.warships) > before:
+            break
+        b._dealt_boats.clear()
+    assert len(st.warships) > before, "멀리 있는 배를 덮은 것으로 쳤다"
+
+
+def test_an_allied_landing_is_not_intercepted():
+    """동맹의 상륙선은 안 친다."""
+    st, b = _intercept_state()
+    st.diplomacy.form(0, 1, tick=0)
+    _incoming(st, 1, at_x=200, dst_x=10)
+    for _ in range(30):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert not any(w.owner == 0 for w in st.warships), "동맹을 쳤다"
+
+
+def test_a_boat_headed_elsewhere_is_ignored():
+    """남의 땅을 노리는 배는 내 일이 아니다."""
+    from domynion.core.naval import TransportShip
+    st, b = _intercept_state()
+    dst = st.gmap.ref(10, 5)
+    st.gmap.owner[dst] = 1                     # 목표가 내 땅이 아니다
+    st.boats.append(TransportShip(owner=2, target=1, troops=1000.0,
+                                  path=[st.gmap.ref(200, 5)], dst=dst))
+    for _ in range(30):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert not any(w.owner == 0 for w in st.warships), "남의 싸움에 끼어들었다"
+
+
+def test_each_boat_is_handled_once():
+    """**한 척에 한 번만** 대응한다(`dealtWithTransportShip`).
+
+    ⚠ "전함이 한 척뿐"으로는 안 잡힌다 — 띄운 배가 목표를 덮어 버려 **커버
+    검사가 두 번째 시도를 대신 막는다.** 대응 판단 자체가 몇 번 불렸는지를
+    직접 세야 한다. 이게 없으면 확률이 빗나갈 때마다 매 tick 다시 시도해
+    §5.40 의 낭비가 되돌아온다."""
+    st, b = _intercept_state()
+    _incoming(st, 1, at_x=200, dst_x=10)
+    calls = []
+    b._retaliate = lambda *a, **k: calls.append(1)   # 짓지 않고 세기만 한다
+    for _ in range(200):
+        b._intercept_incoming(st)
+    assert len(calls) == 1, f"같은 배에 {len(calls)}번 대응했다"
+
+
+def test_only_one_boat_per_tick():
+    """한 tick 에 **한 척만** 처리한다(원본의 `break`).
+
+    ⚠ 여러 척이 동시에 오면 한 tick 에 함대가 통째로 나간다."""
+    st, b = _intercept_state()
+    for i in range(5):
+        _incoming(st, 1, at_x=200 + i, dst_x=10 + i)
+    calls = []
+    b._retaliate = lambda *a, **k: calls.append(1)
+    b._intercept_incoming(st)
+    assert len(calls) == 1, f"한 tick 에 {len(calls)}척을 처리했다"
+
+
+def test_a_retreating_boat_is_ignored():
+    """퇴각 중인 배는 더 이상 위협이 아니다."""
+    st, b = _intercept_state()
+    boat = _incoming(st, 1, at_x=200, dst_x=10)
+    boat.retreating = True
+    calls = []
+    b._retaliate = lambda *a, **k: calls.append(1)
+    for _ in range(50):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert not calls, "퇴각하는 배에 대응했다"
+
+
+def test_my_own_boat_is_ignored():
+    """내 상륙선에는 대응하지 않는다."""
+    from domynion.core.naval import TransportShip
+    st, b = _intercept_state()
+    dst = st.gmap.ref(10, 5)
+    st.gmap.owner[dst] = 0
+    st.boats.append(TransportShip(owner=0, target=1, troops=1000.0,
+                                  path=[st.gmap.ref(200, 5)], dst=dst))
+    calls = []
+    b._retaliate = lambda *a, **k: calls.append(1)
+    for _ in range(50):
+        b._intercept_incoming(st)
+        b._dealt_boats.clear()
+    assert not calls, "내 배에 대응했다"
+
+
+def test_tick_actually_runs_the_interceptor():
+    """**배선** 검사 — `tick()` 이 선제 대응을 실제로 부르는가."""
+    st, b = _intercept_state()
+    _incoming(st, 1, at_x=200, dst_x=10)
+    for _ in range(max(6, b.attack_rate + 2)):
+        st.tick_count += 1
+        b.tick(st)
+        if any(w.owner == 0 for w in st.warships):
+            break
+        b._dealt_boats.clear()
+    assert any(w.owner == 0 for w in st.warships), "tick 이 선제 대응을 안 부른다"

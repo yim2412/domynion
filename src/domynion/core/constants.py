@@ -167,6 +167,16 @@ WARSHIP_INFESTATION_GAME_MIN = 10    # 판 전체 전함이 이보다 많아야 
 WARSHIP_INFESTATION_ENEMY_MIN = 10   # 한 적이 이보다 많이 가졌으면 표적
 WARSHIP_INFESTATION_RICH_TOP = 3     # 부자 상위 몇 명만 나선다
 
+# 들어오는 상륙선 선제 대응 (`trackIncomingTransportsAndRetaliate`)
+#
+# 목표까지 이만큼도 안 남았으면 손쓸 수 없다고 보고 넘긴다. 지금 배를 띄워도
+# 상륙이 먼저 끝난다.
+INCOMING_BOAT_TOO_CLOSE = 20
+# 목표 근처에 이 거리 안으로 내 전함(또는 그 순찰 기점)이 있으면 이미 덮인 것으로 본다
+INCOMING_BOAT_COVERED_RANGE = 90
+# 대응 전함을 목표에서 이 반경 안 바다에 띄운다
+INCOMING_BOAT_SPAWN_RADIUS = 30
+
 # 공격당하면 얼마나 나빠지는가 — 난이도가 높을수록 더 오래 기억한다.
 REL_ATTACKED: dict[str, float] = {
     "easy": -60.0, "medium": -70.0, "hard": -80.0, "impossible": -100.0,

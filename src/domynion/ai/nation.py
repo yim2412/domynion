@@ -83,6 +83,8 @@ class NationBot:
     _tracked_trade: set = field(default_factory=set)
     # 내가 띄운 수송선들(`trackedTransportShips`). 격침당하면 보복한다.
     _tracked_boats: list = field(default_factory=list)
+    # 이미 대응한 상륙선(`dealtWithTransportShip`). 한 척에 한 번만 대응한다.
+    _dealt_boats: set = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.trigger_ratio = self.rng.randint(50, 60) / 100
@@ -106,6 +108,7 @@ class NationBot:
         self._track_trade_ships(st)
         self._track_transport_ships(st)
         self._counter_infestation(st)
+        self._intercept_incoming(st)
         if st.tick_count % self.attack_rate == self._build_tick:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
@@ -399,6 +402,66 @@ class NationBot:
         for t in st.trade_ships:
             if t.owner == self.pid and t.captured_by is None:
                 self._tracked_trade.add(id(t))
+
+    def _intercept_incoming(self, st: GameState) -> None:
+        """`trackIncomingTransportsAndRetaliate` — 내 땅을 노리는 상륙선을 **미리** 친다.
+
+        보복(`_retaliate`)이 당한 **뒤**라면 이쪽은 당하기 **전**이다. 관문 셋이
+        이 기능을 쓸모 있게 만든다:
+
+        | 관문 | 왜 |
+        |---|---|
+        | 목표까지 20 이상 남았다 | 코앞이면 배를 띄워도 상륙이 먼저 끝난다 |
+        | 목표 90 안에 내 전함(또는 그 순찰 기점)이 없다 | 이미 덮은 자리에 또 띄우면 낭비다 |
+        | 상대가 동맹이 아니다 | |
+
+        ⚠ **한 척에 한 번만** 대응한다(`dealtWithTransportShip`). 안 그러면
+        같은 배가 다가오는 내내 매 tick 전함을 뽑아 §5.40 의 낭비가 되돌아온다.
+        그리고 한 tick 에 **한 척만** 처리한다(원본의 `break`).
+        """
+        p = st.players.get(self.pid)
+        if p is None or not p.alive:
+            return
+        gmap = st.gmap
+        w2 = gmap.width
+
+        def man(a, b):
+            return abs(a % w2 - b % w2) + abs(a // w2 - b // w2)
+
+        live = {id(b) for b in st.boats}
+        self._dealt_boats &= live          # 사라진 배는 잊는다
+        mine = [x for x in st.warships if x.owner == self.pid and not x.sunk]
+
+        for b in st.boats:
+            # ⚠ `b.owner == self.pid` 는 **관찰 가능한 차이가 없다**(원본도 같다):
+            # 아래 `is_friendly(pid, pid)` 가 항상 참이라 어차피 걸러진다.
+            # 남겨 두는 이유는 내 배마다 거리·소유 검사를 도는 것을 아끼기
+            # 위해서다(원본의 `smallID() !== this.player.smallID()` 와 같다).
+            if b.owner == self.pid or b.retreating:
+                continue
+            if int(gmap.owner[b.dst]) != self.pid:
+                continue                    # 내 땅을 노리는 배가 아니다
+            if id(b) in self._dealt_boats:
+                continue
+            if man(b.tile, b.dst) < C.INCOMING_BOAT_TOO_CLOSE:
+                self._dealt_boats.add(id(b))
+                continue
+            if st.diplomacy.is_friendly(self.pid, b.owner):
+                continue
+            covered = any(
+                man(x.tile, b.dst) < C.INCOMING_BOAT_COVERED_RANGE
+                or (x.patrol_origin is not None
+                    and man(x.patrol_origin, b.dst) < C.INCOMING_BOAT_COVERED_RANGE)
+                for x in mine)
+            if covered:
+                self._dealt_boats.add(id(b))
+                continue
+            tile = self._warship_spawn_tile(st, b.dst,
+                                            C.INCOMING_BOAT_SPAWN_RADIUS)
+            if tile is not None:
+                self._retaliate(st, tile, b.owner, C.REL_WARSHIP_SANK_OTHER)
+            self._dealt_boats.add(id(b))
+            return                          # 원본의 `break` — tick 당 한 척
 
     def _counter_infestation(self, st: GameState) -> None:
         """`counterWarshipInfestation` — 바다를 전함으로 덮은 상대를 견제한다.
