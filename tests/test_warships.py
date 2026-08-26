@@ -159,14 +159,19 @@ def test_reload_cooldown_limits_fire_rate():
 # --- 수리 -------------------------------------------------------------------
 
 def test_ports_heal_warships_but_not_for_a_doomed_side():
-    """클락에 표시된 쪽은 수리를 못 한다 — 그래야 클락의 유출이 배를 실제로 가라앉힌다."""
+    """클락에 표시된 쪽은 수리를 못 한다 — 그래야 클락의 유출이 배를 실제로 가라앉힌다.
+
+    ⚠ 체력을 후퇴 문턱(75%) **위**로 둔다. 아래로 두면 배가 후퇴·정박해서
+    수동 회복(+1)이 아니라 정박 회복(+레벨×5)이 섞인다."""
     st = state()
     port = Unit(UnitType.PORT, 0, tile=st.gmap.ref(0, 0))
     st.players[0].units.units.append(port)
-    w = Warship(owner=0, tile=st.gmap.ref(2, 0), health=500)
+    healthy = C.WARSHIP_MAX_HEALTH - 10
+    w = Warship(owner=0, tile=st.gmap.ref(2, 0), health=healthy)
     st.warships.append(w)
     st._advance_warships()
-    assert w.health == 500 + C.WARSHIP_PASSIVE_HEALING
+    assert w.retreat_port is None, "문턱 위인데 후퇴했다"
+    assert w.health == healthy + C.WARSHIP_PASSIVE_HEALING
 
     st.clock.marked_at[0] = 0.0
     before = w.health
@@ -628,3 +633,206 @@ def test_patrol_tile_is_never_land_even_in_the_shoreline_fallback():
         t = st._random_patrol_tile(ship)
         assert t is not None, "폴백에서도 못 찾았다"
         assert gm.terrain[t] == Terrain.OCEAN, "폴백에서 육지를 골랐다"
+
+
+# --- 수리 후퇴 · 정박 (이식 누락 스물셋) --------------------------------------
+#
+# 전에는 다치면 그 자리에서 계속 싸웠다. 원본은 체력이 75% 아래면 항구로
+# 돌아가 정박하고, 항구 레벨 × 5 를 정박한 배들이 나눠 갖는다.
+
+def _retreat_bed(port_x: int = 5, ship_x: int = 45, level: int = 1):
+    """항구와 전함을 멀리 떼어 둔 시험대 — 후퇴 이동이 실제로 재진다."""
+    st = state()
+    p = Unit(UnitType.PORT, 0, tile=st.gmap.ref(port_x, 5), level=level)
+    st.gmap.owner[p.tile] = 0
+    st.players[0].units.units.append(p)
+    st.players[0].units.record_constructed(UnitType.PORT)
+    return st, p
+
+
+def test_a_hurt_warship_retreats_to_its_port():
+    """체력이 75% 아래면 항구로 돌아간다.
+
+    ⚠ 대조군: 문턱 위인 배는 안 돌아간다. 그게 없으면 "항상 후퇴"로 바꿔도 통과한다."""
+    st, port = _retreat_bed()
+    hurt = Warship(owner=0, tile=st.gmap.ref(45, 5), health=700)   # 70%
+    fine = Warship(owner=0, tile=st.gmap.ref(45, 8),
+                   health=C.WARSHIP_MAX_HEALTH)                    # 100%
+    st.warships += [hurt, fine]
+    st.tick_count += 1
+    st._advance_warships()
+    assert hurt.retreat_port == port.tile, "다쳤는데 안 돌아간다"
+    assert fine.retreat_port is None, "멀쩡한데 돌아간다 — 대조군이 깨졌다"
+    start = hurt.tile
+    for _ in range(20):
+        st.tick_count += 1
+        st._advance_warships()
+    assert hurt.tile % st.gmap.width < start % st.gmap.width, "항구 쪽으로 안 간다"
+
+
+def test_docked_healing_scales_with_port_level():
+    """정박 회복 = **항구 레벨 × 5**. 레벨이 곧 수리 능력이다.
+
+    ⚠ 레벨을 하나로만 두면 이 규칙을 지워도 결과가 같다(§5.34 와 같은 실수).
+    Lv1 대조군과 Lv4 를 함께 잰다."""
+    def healed(level: int) -> int:
+        st, port = _retreat_bed(port_x=5, level=level)
+        w = Warship(owner=0, tile=st.gmap.ref(7, 5), health=500)
+        st.warships.append(w)
+        st.tick_count += 1
+        st._advance_warships()
+        assert w.docked, "사거리 안인데 정박 안 했다"
+        return w.health - 500
+    lv1, lv4 = healed(1), healed(4)
+    assert lv4 > lv1, f"레벨이 회복량을 안 바꾼다 ({lv1} vs {lv4})"
+
+
+def test_docked_ships_share_the_healing_pool():
+    """같은 항구에 몰리면 **나눠 갖는다** — 각자 느려진다."""
+    def healed(n_ships: int) -> int:
+        st, port = _retreat_bed(port_x=5, level=4)
+        ships = [Warship(owner=0, tile=st.gmap.ref(7, 5 + i), health=500)
+                 for i in range(n_ships)]
+        st.warships += ships
+        # ⚠ 첫 tick 은 못 쓴다. 배들이 그 tick 안에서 차례로 정박하므로 먼저
+        # 처리되는 배는 **아직 아무도 정박 안 한 상태**로 계산돼 풀을 독차지한다.
+        # 전원이 정박한 뒤의 한 tick 을 재야 나눠 갖는 것이 보인다.
+        for _ in range(3):
+            st.tick_count += 1
+            st._advance_warships()
+        assert all(s.docked for s in ships), "전원이 정박해야 나눠 갖는 것이 재진다"
+        before = ships[0].health
+        st.tick_count += 1
+        st._advance_warships()
+        return ships[0].health - before
+    alone, crowded = healed(1), healed(4)
+    assert crowded < alone, f"몰려도 회복량이 같다 ({alone} vs {crowded})"
+
+
+def test_port_level_caps_how_many_ships_can_dock():
+    """정박 자리는 **항구 레벨 만큼**이다. 넘치면 옆에서 기다린다."""
+    st, port = _retreat_bed(port_x=5, level=2)
+    ships = [Warship(owner=0, tile=st.gmap.ref(7, 5 + i), health=500)
+             for i in range(5)]
+    st.warships += ships
+    for _ in range(5):
+        st.tick_count += 1
+        st._advance_warships()
+    assert sum(1 for s in ships if s.docked) == 2, "레벨 2 인데 정박 수가 다르다"
+
+
+def test_a_warship_stops_retreating_once_healed():
+    """다 나으면 후퇴를 접고 순찰로 돌아간다."""
+    st, port = _retreat_bed(port_x=5, level=8)
+    w = Warship(owner=0, tile=st.gmap.ref(7, 5), health=990)
+    st.warships.append(w)
+    for _ in range(10):
+        st.tick_count += 1
+        st._advance_warships()
+    assert w.health == C.WARSHIP_MAX_HEALTH
+    assert w.retreat_port is None and not w.docked, "다 나았는데 계속 정박해 있다"
+
+
+def test_a_hurt_warship_with_no_port_keeps_patrolling():
+    """갈 곳이 없으면 후퇴하지 않는다 — 멈추면 그냥 표적이 된다."""
+    st = state()
+    w = Warship(owner=0, tile=st.gmap.ref(30, 5), health=100)
+    st.warships.append(w)
+    start = w.tile
+    for _ in range(30):
+        st.tick_count += 1
+        st._advance_warships()
+    assert w.retreat_port is None
+    assert w.tile != start, "항구도 없는데 굳었다"
+
+
+def test_a_retreating_warship_still_shoots_what_chases_it():
+    """후퇴 중에도 붙는 수송선·전함은 쏜다(`findRetreatAggroTarget`)."""
+    st, port = _retreat_bed(port_x=5)
+    w = Warship(owner=0, tile=st.gmap.ref(45, 5), health=700)
+    foe = Warship(owner=1, tile=st.gmap.ref(47, 5))
+    st.warships += [w, foe]
+    for _ in range(3):
+        st.tick_count += 1
+        st._advance_warships()
+    assert w.retreat_port is not None, "후퇴 중이 아니다 — 대조군이 깨졌다"
+    assert foe.health < C.WARSHIP_MAX_HEALTH, "후퇴하느라 쫓아오는 적을 안 쐈다"
+
+
+def test_a_doomed_side_does_not_retreat():
+    """클락에 표시된 쪽은 수리가 안 되므로 돌아가 봐야 헛걸음이다."""
+    st, port = _retreat_bed(port_x=5)
+    st.clock.marked_at[0] = 0.0
+    w = Warship(owner=0, tile=st.gmap.ref(45, 5), health=300)
+    st.warships.append(w)
+    st.tick_count += 1
+    st._advance_warships()
+    assert w.retreat_port is None, "수리도 안 되는데 항구로 갔다"
+
+
+def test_retreat_is_judged_on_health_before_healing():
+    """후퇴 판정은 **회복 전** 체력으로 한다(`healthBeforeHealing`).
+
+    ⚠ 문턱에서 정확히 1 차이라 경계에서만 드러난다. 회복 뒤 값으로 보면 항구
+    옆에서 tick 당 1씩 차오르는 배가 문턱을 오르내리며 후퇴를 껐다 켰다 한다.
+    대조군으로 문턱 위 배가 안 나가는 것도 함께 본다."""
+    threshold = (C.WARSHIP_MAX_HEALTH * C.WARSHIP_RETREAT_HEALTH_PERCENT) // 100
+    st, port = _retreat_bed(port_x=5)
+    # 회복(+1) 을 받으면 정확히 문턱에 닿는 체력. 회복 전에는 문턱 아래다.
+    edge = Warship(owner=0, tile=st.gmap.ref(45, 5), health=threshold - 1)
+    over = Warship(owner=0, tile=st.gmap.ref(45, 9), health=threshold)
+    st.warships += [edge, over]
+    st.tick_count += 1
+    st._advance_warships()
+    assert edge.health == threshold, "수동 회복이 안 붙어 경계가 안 재진다"
+    assert edge.retreat_port is not None, \
+        "회복 뒤 체력으로 판정하고 있다 — 회복 전에는 문턱 아래였다"
+    assert over.retreat_port is None, "문턱 위인데 나갔다 — 대조군이 깨졌다"
+
+
+def test_healing_remainder_is_carried_over():
+    """회복 나머지를 들고 간다(`activeHealingRemainder`).
+
+    ⚠ 재료를 두 번 골라야 한다. **정원이 곧 레벨**이라 항구를 가득 채우면
+    풀(레벨×5)이 정확히 5씩 나뉘어 나머지가 0이 된다 — 어떤 레벨이든 그렇다.
+    정원보다 **적게** 태워야 소수가 생긴다(Lv4 에 3척 = 6.67).
+    그리고 여러 tick 을 합산해야 드러난다 — 한 tick 만 보면 둘 다 6 이다.
+    9 tick 이면 들고 갈 때 60, 버릴 때 54."""
+    st, port = _retreat_bed(port_x=5, level=4)
+    ships = [Warship(owner=0, tile=st.gmap.ref(7, 5 + i), health=500)
+             for i in range(3)]
+    st.warships += ships
+    for _ in range(3):                       # 전원 정박시킨다
+        st.tick_count += 1
+        st._advance_warships()
+    assert all(s.docked for s in ships)
+    before = ships[0].health
+    ticks = 9
+    for _ in range(ticks):
+        st.tick_count += 1
+        st._advance_warships()
+    gained = ships[0].health - before
+    passive = C.WARSHIP_PASSIVE_HEALING * ticks
+    docked_gain = gained - passive
+    # 들고 가면 20/3 × 9 = 60. 버리면 6 × 9 = 54.
+    assert docked_gain >= 58, f"{ticks} tick 에 정박 회복이 {docked_gain} — 나머지를 버렸다"
+
+
+def test_retreat_ends_when_fully_healed_even_while_docked():
+    """다 나으면 정박을 풀고 순찰로 돌아간다.
+
+    ⚠ 앞선 테스트는 회복이 빨라(Lv8) 도착 전에 이미 다 나아서, 정박 상태에서
+    푸는 경로를 안 탔다. 정박한 채 마지막 1을 채우는 경우를 따로 잰다."""
+    st, port = _retreat_bed(port_x=5, level=1)
+    w = Warship(owner=0, tile=st.gmap.ref(7, 5), health=740)
+    st.warships.append(w)
+    st.tick_count += 1
+    st._advance_warships()
+    assert w.docked, "정박부터 해야 이 경로가 재진다"
+    for _ in range(200):
+        st.tick_count += 1
+        st._advance_warships()
+        if w.retreat_port is None:
+            break
+    assert w.health == C.WARSHIP_MAX_HEALTH
+    assert w.retreat_port is None and not w.docked, "다 나았는데 정박을 안 푼다"

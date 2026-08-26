@@ -581,9 +581,17 @@ class GameState:
             p = self.players.get(w.owner)
             if p is None or not p.alive or w.sunk:
                 continue
+            health_before = w.health
             self._heal_warship(w, p)
             if w.cooldown > 0:
                 w.cooldown -= 1
+                alive_ships.append(w)
+                continue
+
+            # ⚠ 후퇴 판정은 **회복 전 체력**으로 한다. 회복 뒤 값으로 보면 항구
+            # 옆에서 tick 당 1씩 차오르는 배가 문턱을 오르내리며 후퇴를 껐다 켰다
+            # 한다(원본이 `healthBeforeHealing` 을 따로 넘기는 이유다).
+            if self._handle_retreat(w, p, health_before):
                 alive_ships.append(w)
                 continue
 
@@ -630,6 +638,111 @@ class GameState:
                 if self._dist_sq(w.tile, t.tile) <= r2:
                     return t
         return None
+
+    def _handle_retreat(self, w: Warship, p: PlayerState, health_before: int) -> bool:
+        """`shouldStartRepairRetreat` + `handleRepairRetreat`.
+
+        체력이 최대의 75% 아래로 떨어지면 가장 가까운 항구로 돌아가 정박한다.
+        정박 중에는 항구 레벨 × 5 를 그 항구의 배들이 나눠 갖는다 — 레벨이 곧
+        수리 능력이고, 한 항구에 몰리면 각자 느려진다.
+
+        True 를 돌려주면 이 tick 은 후퇴가 가져간다(교전도 순찰도 안 한다).
+        ⚠ 다만 원본은 후퇴 중에도 **수송선·전함이 붙으면 쏜다**(`findRetreatAggroTarget`).
+        """
+        if w.retreat_port is None:
+            # 클락에 표시된 쪽은 애초에 수리가 안 된다 — 돌아가 봐야 헛걸음이다.
+            if w.owner in self.clock.marked_at:
+                return False
+            threshold = (C.WARSHIP_MAX_HEALTH * C.WARSHIP_RETREAT_HEALTH_PERCENT) // 100
+            if health_before >= threshold:
+                return False
+            w.retreat_port = self._nearest_port_tile(w, p)
+        elif not any(u.tile == w.retreat_port and not u.under_construction
+                     for u in p.units.of(UnitType.PORT)):
+            w.retreat_port = self._nearest_port_tile(w, p)   # 항구가 사라졌다
+            w.docked = False
+
+        # ⚠ None 검사는 **한 곳에만** 둔다. 위 두 갈래에 각각 두면 한쪽을 지워도
+        # 다른 쪽이 가려 줘서 변이가 살아남는다(실제로 살아남았다).
+        # 갈 곳이 없으면 후퇴하지 않는다 — 순찰을 멈추면 그냥 표적이 된다.
+        if w.retreat_port is None:
+            self._cancel_retreat(w)
+            return False
+
+        # 후퇴 중에도 붙는 적은 쏜다(무역선은 제외 — 그건 추격이라 후퇴와 겹친다)
+        aggro = self._pick_retreat_aggro(w, C.WARSHIP_TARGETTING_RANGE ** 2)
+        if aggro is not None:
+            w.cooldown = C.WARSHIP_SHELL_ATTACK_RATE
+            self._fire_shell(w, aggro)
+
+        if self._dist_sq(w.tile, w.retreat_port) <= C.WARSHIP_DOCKING_RANGE ** 2:
+            port = next(u for u in p.units.of(UnitType.PORT)
+                        if u.tile == w.retreat_port)
+            docked_here = [o for o in self.warships
+                           if o is not w and o.docked and not o.sunk
+                           and o.retreat_port == w.retreat_port]
+            if w.docked or len(docked_here) < port.level:
+                w.docked = True
+                self._apply_docked_healing(w, port, len(docked_here) + 1)
+            elif w.health >= C.WARSHIP_MAX_HEALTH:
+                self._cancel_retreat(w)
+                return False
+            # 자리가 없으면 항구 옆에서 기다린다(수동 회복은 계속 받는다)
+        else:
+            step = self._step_toward(w.tile, w.retreat_port)
+            if step is None:
+                self._cancel_retreat(w)
+                return False
+            w.tile = step
+
+        if w.health >= C.WARSHIP_MAX_HEALTH:
+            self._cancel_retreat(w)
+        return True
+
+    def _cancel_retreat(self, w: Warship) -> None:
+        w.retreat_port, w.docked, w.heal_remainder = None, False, 0.0
+
+    def _nearest_port_tile(self, w: Warship, p: PlayerState) -> "TileRef | None":
+        comp = _touching_components(self.gmap, w.tile)
+        best, best_d = None, None
+        for u in p.units.of(UnitType.PORT):
+            if u.under_construction or u.marked_for_deletion:
+                continue
+            if comp and not (comp & _touching_components(self.gmap, u.tile)):
+                continue          # 수로가 안 이어져 있으면 갈 수 없다
+            d = self._dist_sq(w.tile, u.tile)
+            if best_d is None or d < best_d:
+                best, best_d = u.tile, d
+        return best
+
+    def _pick_retreat_aggro(self, w: Warship, r2: int):
+        """`findRetreatAggroTarget` — 후퇴 중에는 **무역선을 안 쫓는다.**
+        나포는 항구 반대 방향으로 끌려갈 수 있어 후퇴와 겹친다."""
+        def hostile(pid: int) -> bool:
+            return pid != w.owner and not self.diplomacy.is_friendly(w.owner, pid)
+        for b in self.boats:
+            if hostile(b.owner) and self._dist_sq(w.tile, b.tile) <= r2:
+                return b
+        for o in self.warships:
+            if (o is not w and not o.sunk and hostile(o.owner)
+                    and self._dist_sq(w.tile, o.tile) <= r2):
+                return o
+        return None
+
+    def _apply_docked_healing(self, w: Warship, port: Unit, n_docked: int) -> None:
+        """`applyActiveDockedHealing` — 레벨 × 5 를 정박한 배들이 **나눠 갖는다**.
+
+        ⚠ 나머지를 들고 가야 한다. 세 척이면 5/3 = 1.67 인데 매 tick 1 로 자르면
+        회복량이 조용히 20% 줄어든다(원본이 `activeHealingRemainder` 를 두는 이유)."""
+        pool = port.level * C.WARSHIP_PORT_HEALING_PER_LEVEL
+        if pool <= 0 or n_docked <= 0:
+            return
+        w.heal_remainder += pool / n_docked
+        gain = int(w.heal_remainder)
+        if gain <= 0:
+            return
+        w.heal_remainder -= gain
+        w.health = min(C.WARSHIP_MAX_HEALTH, w.health + gain)
 
     def _patrol(self, w: Warship) -> None:
         """`patrol()` — 순찰 지점을 하나 잡고 그쪽으로 한 칸 간다. 닿으면 새로 뽑는다.

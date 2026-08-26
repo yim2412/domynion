@@ -356,6 +356,16 @@ PIRACY_HUNT_STEPS = 2
 # 영원히 후보를 못 찾는 것을 막는 장치다.
 PATROL_ATTEMPTS_BEFORE_EXPAND = 500
 PATROL_MAX_EXPANDS = 3
+
+# 수리 후퇴 (`WarshipExecution` 의 retreating/docked 상태)
+#
+# 체력이 최대의 이 비율 아래로 떨어지면 항구로 돌아간다. 항구가 없으면 안 간다 —
+# 갈 곳이 없는데 순찰을 멈추면 그냥 표적이 된다.
+WARSHIP_RETREAT_HEALTH_PERCENT = 75
+WARSHIP_DOCKING_RANGE = 5            # 이 안에 들어오면 정박이다
+# 정박 회복은 **항구 레벨 × 이 값**을 그 항구에 정박한 배들이 나눠 갖는다.
+# 그래서 레벨이 곧 수리 능력이고, 한 항구에 몰리면 각자 느려진다.
+WARSHIP_PORT_HEALING_PER_LEVEL = 5
 WARSHIP_TARGETTING_RANGE = 130
 WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
 WARSHIP_DOCKING_RANGE = 5

@@ -180,6 +180,17 @@ class Warship:
     # 안 드러난다(사거리 안이면 그 자리에서 쏘면 된다). 나포를 붙이니 드러났다.
     patrol_target: TileRef | None = None
 
+    # --- 수리 후퇴 (`retreating` / `docked`) --------------------------------
+    #
+    # ⚠ 이식 누락 스물셋. 우리 전함은 다치면 그 자리에서 계속 싸웠다 — 원본은
+    # 체력이 75% 아래로 떨어지면 항구로 돌아가 정박해 수리한다.
+    retreat_port: TileRef | None = None   # None 이면 순찰 중이다
+    docked: bool = False
+    # 정박 회복은 소수로 나뉘므로(레벨×5 를 배들이 나눠 갖는다) 나머지를 들고
+    # 간다. 안 그러면 세 척이 정박했을 때 5/3 = 1.67 이 매 tick 1 로 잘려
+    # 회복량이 조용히 20% 줄어든다.
+    heal_remainder: float = 0.0
+
     def __post_init__(self) -> None:
         if self.patrol_origin is None:
             self.patrol_origin = self.tile
