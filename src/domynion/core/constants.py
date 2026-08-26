@@ -161,6 +161,12 @@ WARSHIP_RETALIATION_CHANCE = {"easy": 0, "medium": 15, "hard": 50, "impossible":
 # 이미 순찰 중인 배를 다시 보낼 때 보는 거리(`maybeMoveWarship`)
 WARSHIP_REASSIGN_RANGE = 130
 
+# 바다 독점 견제 (`counterWarshipInfestation`) — hard 이상만 한다.
+# 한 나라가 바다를 전함으로 덮어 무역·상륙을 통째로 막는 것을 푸는 장치다.
+WARSHIP_INFESTATION_GAME_MIN = 10    # 판 전체 전함이 이보다 많아야 본다
+WARSHIP_INFESTATION_ENEMY_MIN = 10   # 한 적이 이보다 많이 가졌으면 표적
+WARSHIP_INFESTATION_RICH_TOP = 3     # 부자 상위 몇 명만 나선다
+
 # 공격당하면 얼마나 나빠지는가 — 난이도가 높을수록 더 오래 기억한다.
 REL_ATTACKED: dict[str, float] = {
     "easy": -60.0, "medium": -70.0, "hard": -80.0, "impossible": -100.0,

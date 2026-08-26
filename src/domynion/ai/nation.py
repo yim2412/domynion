@@ -105,6 +105,7 @@ class NationBot:
         # 도착까지 끝난 배를 놓친다(원본도 `trackShipsAndRetaliate` 를 매 tick 부른다).
         self._track_trade_ships(st)
         self._track_transport_ships(st)
+        self._counter_infestation(st)
         if st.tick_count % self.attack_rate == self._build_tick:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
@@ -398,6 +399,70 @@ class NationBot:
         for t in st.trade_ships:
             if t.owner == self.pid and t.captured_by is None:
                 self._tracked_trade.add(id(t))
+
+    def _counter_infestation(self, st: GameState) -> None:
+        """`counterWarshipInfestation` — 바다를 전함으로 덮은 상대를 견제한다.
+
+        한 나라가 전함으로 바다를 독점하면 남의 무역선·수송선이 통째로 막힌다.
+        그걸 푸는 장치다 — **적의 전함 옆에 내 전함을 띄운다.**
+
+        관문이 다섯이고, 다 있어야 한다:
+
+        | 관문 | 왜 |
+        |---|---|
+        | hard 이상 | 원본 주석: *"Only the smart nations can do this"* |
+        | 판 전체 전함 > 10 | 바다가 실제로 붐벼야 독점이라 할 수 있다 |
+        | 내 전함 < 10 | 견제한다고 내가 독점하면 안 된다 |
+        | 항구가 있다 · 골드가 된다 | |
+        | **내가 부자 상위 3** | 원본 주석: *"We don't want poor nations to use their precious gold on this"* |
+
+        ⚠ 마지막이 핵심이다. 이게 없으면 가난한 나라가 마지막 골드를 여기 쓰고
+        아무것도 못 짓는다 — §5.40 에서 잡은 것과 같은 종류의 낭비다.
+        """
+        if self.difficulty not in ("hard", "impossible"):
+            return
+        p = st.players.get(self.pid)
+        if p is None or not p.alive:
+            return
+        alive_ships = [w for w in st.warships if not w.sunk]
+        # ⚠ 이 줄은 **관찰 가능한 차이가 없는 이른 탈출**이다(원본도 같다):
+        # 아래에서 적 하나가 10척을 넘어야 표적이 되므로, 판 전체가 10 이하면
+        # 애초에 표적이 나올 수 없다. 원본이 둔 이유는 성능이다 —
+        # 붐비지 않는 판에서 매 tick 전 함대를 세지 않으려는 것. 파지 말 것.
+        if len(alive_ships) <= C.WARSHIP_INFESTATION_GAME_MIN:
+            return
+        mine = [w for w in alive_ships if w.owner == self.pid]
+        if len(mine) >= C.WARSHIP_RETALIATION_CAP:
+            return
+        if not p.units.of(UnitType.PORT):
+            return
+        if p.gold < p.units.cost(UnitType.WARSHIP):
+            return
+        if not self._is_rich(st):
+            return
+
+        counts: dict[int, list] = {}
+        for w in alive_ships:
+            if w.owner == self.pid or st.diplomacy.is_friendly(self.pid, w.owner):
+                continue
+            counts.setdefault(w.owner, []).append(w)
+        for owner, ships in counts.items():
+            if len(ships) > C.WARSHIP_INFESTATION_ENEMY_MIN:
+                tile = self.rng.choice(ships).tile
+                # 적 전함 **옆에** 띄운다. 못 지으면 있던 배를 그리로 보낸다.
+                if st.build_warship(self.pid, tile) is None:
+                    self._move_warship(st, mine, tile)
+                return
+
+    def _is_rich(self, st: GameState) -> bool:
+        """`isRichPlayer` — 골드 상위 3 안에 드는가. **사람은 세지 않는다.**"""
+        golds = sorted((q.gold for q in st.alive if q.kind != "human"),
+                       reverse=True)
+        if not golds:
+            return False
+        cut = golds[min(C.WARSHIP_INFESTATION_RICH_TOP, len(golds)) - 1]
+        p = st.players.get(self.pid)
+        return p is not None and p.gold >= cut
 
     def _track_transport_ships(self, st: GameState) -> None:
         """`trackTransportShipsAndRetaliate` — 내 수송선이 **격침당하면** 보복한다.

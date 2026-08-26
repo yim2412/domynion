@@ -580,3 +580,142 @@ def test_a_nuke_marks_who_sank_the_boat():
     st._detonate(n)
     assert boat not in st.boats, "핵에 안 날아갔다 — 재료가 잘못됐다"
     assert boat.sunk_by == 1, "핵으로 격침시킨 사람을 안 남겼다"
+
+
+# --- 바다 독점 견제 (`counterWarshipInfestation`) ------------------------------
+
+def _infest(st, enemy: int, n: int):
+    """적 전함을 n 척 깔아 독점 상태를 만든다."""
+    from domynion.core.naval import Warship
+    for i in range(n):
+        st.warships.append(Warship(owner=enemy, tile=st.gmap.ref(100 + i, 60)))
+
+
+def _rich_setup(difficulty: str = "hard", enemy_ships: int = 12,
+                my_gold: int = 100_000_000, enemy_gold: int = 0):
+    st = _sea_state()
+    _with_port(st)
+    st.players[0].gold = my_gold
+    st.players[1].gold = enemy_gold
+    _infest(st, 1, enemy_ships)
+    return st, bot(difficulty=difficulty, seed=1)
+
+
+def test_a_rich_hard_nation_counters_an_infestation():
+    """적이 전함으로 바다를 덮으면 그 옆에 내 전함을 띄운다."""
+    st, b = _rich_setup()
+    b._counter_infestation(st)
+    assert any(w.owner == 0 for w in st.warships), "견제를 안 했다"
+
+
+def test_only_hard_and_above_counter():
+    """easy·medium 은 안 한다 — 원본 주석: *"Only the smart nations"*.
+
+    대조군은 hard 다."""
+    for d in ("easy", "medium"):
+        st, b = _rich_setup(difficulty=d)
+        b._counter_infestation(st)
+        assert not any(w.owner == 0 for w in st.warships), f"{d} 가 견제했다"
+    st, b = _rich_setup(difficulty="hard")
+    b._counter_infestation(st)
+    assert any(w.owner == 0 for w in st.warships), "hard 가 안 한다 — 대조군이 깨졌다"
+
+
+def test_a_poor_nation_does_not_counter():
+    """부자 상위 3 밖이면 안 한다 — 마지막 골드를 여기 쓰면 안 된다.
+
+    ⚠ 골드가 아예 없어서 못 하는 것과 구분해야 한다. **골드는 충분한데
+    남들이 더 부자인** 상황으로 잰다."""
+    st = _sea_state()
+    _with_port(st)
+    _infest(st, 1, 12)
+    st.players[0].gold = 1_000_000            # 전함(250,000)은 충분히 산다
+    st.players[1].gold = 9_000_000
+    # 상위 3을 채울 부자 셋을 더 둔다
+    for pid in (2, 3, 4):
+        st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", kind="nation",
+                                      start=st.gmap.ref(pid, 0))
+        st.gmap.owner[st.gmap.ref(pid, 0)] = pid
+        st._counts[pid] = 1
+        st.players[pid].gold = 8_000_000
+    b = bot(difficulty="hard", seed=1)
+    assert st.players[0].gold >= st.players[0].units.cost(
+        __import__("domynion.core.units", fromlist=["UnitType"]).UnitType.WARSHIP)
+    b._counter_infestation(st)
+    assert not any(w.owner == 0 for w in st.warships), "가난한데 견제했다"
+
+
+def test_a_thin_sea_is_not_an_infestation():
+    """판 전체 전함이 10 이하면 독점이라 하지 않는다.
+
+    대조군은 12척이다."""
+    st, b = _rich_setup(enemy_ships=8)
+    b._counter_infestation(st)
+    assert not any(w.owner == 0 for w in st.warships), "8척인데 견제했다"
+
+
+def test_an_enemy_with_few_ships_is_not_a_target():
+    """한 적이 10척을 넘어야 표적이다. 여럿이 나눠 가진 것은 독점이 아니다."""
+    st = _sea_state()
+    _with_port(st)
+    st.players[0].gold = 100_000_000
+    for pid in (1, 2):
+        if pid not in st.players:
+            st.players[pid] = PlayerState(pid=pid, name=f"P{pid}", kind="nation",
+                                          start=st.gmap.ref(pid, 0))
+            st.gmap.owner[st.gmap.ref(pid, 0)] = pid
+            st._counts[pid] = 1
+        _infest(st, pid, 7)                    # 합쳐 14척, 각자는 7척
+    b = bot(difficulty="hard", seed=1)
+    b._counter_infestation(st)
+    assert not any(w.owner == 0 for w in st.warships), \
+        "아무도 10척을 안 넘었는데 견제했다"
+
+
+def test_allies_are_not_countered():
+    """동맹의 함대는 독점으로 보지 않는다."""
+    st, b = _rich_setup()
+    st.diplomacy.form(0, 1, tick=0)
+    b._counter_infestation(st)
+    assert not any(w.owner == 0 for w in st.warships), "동맹을 견제했다"
+
+
+def test_countering_respects_my_own_cap():
+    """내가 이미 10척이면 안 한다 — 견제한다고 내가 독점하면 안 된다."""
+    from domynion.core.naval import Warship
+    st, b = _rich_setup()
+    for i in range(C.WARSHIP_RETALIATION_CAP):
+        st.warships.append(Warship(owner=0, tile=st.gmap.ref(200 + i, 60)))
+    before = sum(1 for w in st.warships if w.owner == 0)
+    b._counter_infestation(st)
+    assert sum(1 for w in st.warships if w.owner == 0) == before, "상한을 넘겼다"
+
+
+def test_tick_actually_runs_the_infestation_counter():
+    """**배선** 검사 — `tick()` 이 견제를 실제로 부르는가.
+
+    ⚠ 앞의 테스트들은 `_counter_infestation` 을 직접 부른다. 그러면 `tick()`
+    에서 호출을 지워도 전부 통과한다(로직과 배선을 따로 재야 한다)."""
+    st, b = _rich_setup()
+    for _ in range(max(4, b.attack_rate + 2)):
+        st.tick_count += 1
+        b.tick(st)
+        if any(w.owner == 0 for w in st.warships):
+            break
+    assert any(w.owner == 0 for w in st.warships), "tick 이 견제를 안 부른다"
+
+
+def test_rich_check_ignores_humans():
+    """`isRichPlayer` 는 **사람을 세지 않는다.**
+
+    ⚠ 사람을 세면 사람이 부자일 때 봇들의 순위가 밀려 견제가 통째로 멈춘다.
+    골드가 많은 사람 셋을 두고도 봇이 견제하는지를 본다."""
+    st, b = _rich_setup()
+    for pid in (5, 6, 7):
+        st.players[pid] = PlayerState(pid=pid, name=f"H{pid}", kind="human",
+                                      start=st.gmap.ref(pid, 0))
+        st.gmap.owner[st.gmap.ref(pid, 0)] = pid
+        st._counts[pid] = 1
+        st.players[pid].gold = 900_000_000     # 봇보다 훨씬 부자다
+    b._counter_infestation(st)
+    assert any(w.owner == 0 for w in st.warships), "사람을 세는 바람에 견제를 멈췄다"
