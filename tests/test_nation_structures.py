@@ -687,3 +687,107 @@ def test_high_density_ignores_tribes():
 # 15. `_best_to_upgrade` 의 SAM 점수 제거
 #      → test_upgrade_prefers_structures_covered_by_a_sam
 # ---------------------------------------------------------------------------
+
+
+# --- 초소 자리 (`sampleTilesNearFront`) --------------------------------------
+#
+# §5.31 에서 간략화해 뒀던 자리다. 전에는 전선 타일을 그대로 find_spot 에 넘겨
+# 가장 가까운 빈자리를 썼다 — 초소가 국경에 딱 붙고 여러 기가 한 곳에 몰린다.
+
+def _wide_state():
+    """넓은 영토 — 국경 깊이 띠(borderSpacing×0.75~1.5)가 실제로 존재해야 한다."""
+    st = make_state()
+    give_land(st, 0, land_of(st, 0))          # 아래에서 직접 채운다
+    return st
+
+
+def _fill(st, pid: int, x0: int, y0: int, x1: int, y1: int) -> None:
+    n = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            st.gmap.owner[st.gmap.ref(x, y)] = pid
+            n += 1
+    st._counts[pid] = st._counts.get(pid, 0) + n
+
+
+def test_defense_posts_sit_in_the_border_depth_band():
+    """초소는 국경에서 `borderSpacing × 0.75 ~ 1.5` 안에 선다.
+
+    ⚠ 너무 앞이면 첫 공격에 넘어가고, 너무 뒤면 전선을 못 덮는다.
+    전에는 전선 타일 근처의 가장 가까운 빈자리라 **국경에 딱 붙었다.**"""
+    from domynion.ai.placement import border_tiles, closest_dist
+    b = NationStructureBehavior(0, random.Random(0), "hard")
+    st = make_state()
+    span = border_spacing() * 4
+    _fill(st, 0, 0, 0, span, span)
+    front = [st.gmap.ref(0, y) for y in range(0, span, 5)]   # 왼쪽 국경이 전선
+    tiles = b._sample_near_front(st, front, 25)
+    assert tiles, "한 칸도 못 뽑았다"
+    bts = border_tiles(st.gmap, 0)
+    lo = math.ceil(border_spacing() * 0.75)
+    hi = math.ceil(border_spacing() * 1.5)
+    for t in tiles:
+        d = closest_dist(st.gmap, bts, t)
+        assert d is not None and lo <= d <= hi, f"국경에서 {d} — 띠({lo}~{hi}) 밖이다"
+
+
+def test_all_sampled_tiles_are_mine():
+    """남의 땅은 안 뽑는다."""
+    b = NationStructureBehavior(0, random.Random(0), "hard")
+    st = make_state()
+    span = border_spacing() * 4
+    _fill(st, 0, 0, 0, span, span)
+    _fill(st, 1, span, 0, span * 2, span)     # 옆에 남의 땅
+    front = [st.gmap.ref(span - 1, y) for y in range(0, span, 5)]
+    for t in b._sample_near_front(st, front, 25):
+        assert int(st.gmap.owner[t]) == 0, "남의 땅을 뽑았다"
+
+
+def test_posts_spread_away_from_existing_ones():
+    """이미 초소가 있으면 그 초소에서 `borderSpacing × 1.5` 밖인 전선만 쓴다.
+
+    ⚠ 처음에 `<=` 로 "몰리지 않았다"만 쟀는데 그건 **항상 참**이었다. 뽑힌 칸이
+    기존 초소에서 얼마나 떨어졌는지를 **직접 재고**, 초소가 없는 경우를 대조군으로
+    둔다."""
+    from domynion.ai.placement import euclid_sq
+    span = border_spacing() * 4
+
+    def min_dist_to(x0: int, y0: int, with_post: bool) -> float:
+        b = NationStructureBehavior(0, random.Random(1), "hard")
+        st = make_state()
+        _fill(st, 0, 0, 0, span, span)
+        # 전선을 왼쪽 국경 전체에 두고, 기존 초소를 그 한쪽 끝 근처에 놓는다
+        front = [st.gmap.ref(0, y) for y in range(0, span, 4)]
+        post = st.gmap.ref(x0, y0)
+        if with_post:
+            st.players[0].units.units.append(
+                Unit(UnitType.DEFENSE_POST, 0, tile=post))
+        tiles = b._sample_near_front(st, front, 25)
+        assert tiles, "한 칸도 못 뽑았다 — 재료가 잘못됐다"
+        return min(euclid_sq(st.gmap, t, post) for t in tiles) ** 0.5
+
+    px, py = border_spacing(), 5
+    with_post = min_dist_to(px, py, True)
+    without = min_dist_to(px, py, False)
+    assert with_post > without,         f"초소가 있어도 같은 자리에 뽑는다 ({without:.0f} -> {with_post:.0f})"
+
+
+def test_a_thin_territory_falls_back():
+    """영토가 얇아 띠가 안 나오면 깊이 조건을 풀고 다시 뽑는다.
+
+    ⚠ 폴백이 없으면 좁은 나라는 초소를 **한 기도** 못 짓는다."""
+    b = NationStructureBehavior(0, random.Random(0), "hard")
+    st = make_state()
+    _fill(st, 0, 0, 0, 200, 3)                # 세 칸 두께 — 띠가 존재할 수 없다
+    front = [st.gmap.ref(x, 1) for x in range(0, 200, 5)]
+    tiles = b._sample_near_front(st, front, 25)
+    assert tiles, "폴백이 없어 한 칸도 못 뽑았다"
+    for t in tiles:
+        assert int(st.gmap.owner[t]) == 0, "폴백에서도 남의 땅은 안 된다"
+
+
+def test_no_front_means_no_tiles():
+    b = NationStructureBehavior(0, random.Random(0), "hard")
+    st = make_state()
+    _fill(st, 0, 0, 0, 100, 100)
+    assert b._sample_near_front(st, [], 25) == []

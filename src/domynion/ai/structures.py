@@ -47,7 +47,7 @@ from ..core.buildings import can_place_structure, euclid_sq, structure_tiles
 from ..core.naval import shoreline_tiles
 from ..core.nukes import NUKE_MAGNITUDES, sam_range
 from ..core.units import STRUCTURES, UNIT_INFO, Unit, UnitType
-from .placement import SPAWN_TILE_SAMPLES, Placement
+from .placement import (SPAWN_TILE_SAMPLES, Placement, closest_dist)
 
 # --- 원본 상수 --------------------------------------------------------------
 
@@ -456,12 +456,79 @@ class NationStructureBehavior:
         if p.gold < p.units.cost(UnitType.DEFENSE_POST):
             return False
 
-        n = min(DEFENSE_POST_SAMPLES, len(front))
-        for _ in range(n):
-            near = int(front[self.rng.randrange(len(front))])
-            if st.build(self.pid, UnitType.DEFENSE_POST, near) is not None:
+        for tile in self._sample_near_front(st, front, DEFENSE_POST_SAMPLES):
+            if st.build(self.pid, UnitType.DEFENSE_POST, tile) is not None:
                 return True
         return False
+
+    def _sample_near_front(self, st, front, count: int) -> list:
+        """`sampleTilesNearFront` — 전선 근처에서 **국경 깊이 띠** 안 칸들을 뽑는다.
+
+        ⚠ §5.31 에서 간략화해 뒀던 자리다. 전에는 전선 타일을 그대로 `find_spot`
+        에 넘겨 **가장 가까운 빈자리**를 썼다 — 그러면 초소가 국경에 딱 붙어 서고,
+        여러 기를 지어도 같은 지점에 몰린다.
+
+        세 겹이다:
+
+        1. **퍼뜨리기** — 이미 초소가 있으면, 그 초소에서 `borderSpacing × 1.5`
+           밖인 전선 타일만 기준점으로 쓴다. 없으면 전선 전체를 쓴다.
+        2. **국경 깊이 띠** — 기준점 주변에서 뽑은 칸이 국경에서
+           `borderSpacing × 0.75 ~ 1.5` 안에 있어야 한다. 너무 앞이면 첫 공격에
+           넘어가고, 너무 뒤면 전선을 못 덮는다.
+        3. **폴백** — 띠를 만족하는 칸이 하나도 없으면(영토가 얇아 띠가 안 나오면)
+           깊이 조건을 풀고 다시 뽑는다. 이게 없으면 좁은 나라는 초소를 못 짓는다.
+        """
+        if front is None or not len(front):
+            return []
+        gmap = st.gmap
+        border = border_spacing()
+        search = math.ceil(border * 1.5)
+        lo, hi = math.ceil(border * 0.75), math.ceil(border * 1.5)
+        p = st.players[self.pid]
+
+        # 1) 퍼뜨리기
+        posts = [u.tile for u in p.units.of(UnitType.DEFENSE_POST)]
+        anchors = [int(t) for t in front]
+        if posts:
+            spread_sq = (border * 1.5) ** 2
+            spread = [t for t in anchors
+                      if all(euclid_sq(gmap, t, d) >= spread_sq for d in posts)]
+            if spread:
+                anchors = spread
+
+        border_ts = self._placement(st).border
+
+        def draw(check_depth: bool, tries: int) -> list:
+            out = []
+            for _ in range(tries):
+                if len(out) >= count:
+                    break
+                a = anchors[self.rng.randrange(len(anchors))]
+                ax, ay = a % gmap.width, a // gmap.width
+                x = self.rng.randint(ax - search, ax + search)
+                y = self.rng.randint(ay - search, ay + search)
+                if not (0 <= x < gmap.width and 0 <= y < gmap.height):
+                    continue
+                t = gmap.ref(x, y)
+                if int(gmap.owner[t]) != self.pid:
+                    continue
+                if check_depth:
+                    d = closest_dist(gmap, border_ts, t)
+                    # ⚠ `d > hi` 는 **도달할 수 없는 분기**다(원본도 같다):
+                    # 기준점이 국경 타일이고 탐색 반경이 `hi` 와 같은 값이라
+                    # 뽑힌 칸의 국경 거리가 `hi` 를 넘을 수가 없다. 변이가
+                    # 살아남는 것이 정상이니 이 줄을 파지 말 것.
+                    if d is None or d < lo or d > hi:
+                        continue
+                out.append(t)
+            return out
+
+        # 2) 국경 깊이 띠
+        found = draw(True, count * 6)
+        if found:
+            return found
+        # 3) 폴백 — 띠를 풀고 다시
+        return draw(False, count * 4)
 
     def _front_tiles(self, st):
         """`getAttackFrontTiles` — 공격자 영토에 맞닿은 내 국경 칸.
