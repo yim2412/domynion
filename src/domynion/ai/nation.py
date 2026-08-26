@@ -33,7 +33,8 @@ from ..core.gamemap import TileRef
 from ..core import emoji
 from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
-from ..core.units import STRUCTURES, UnitType
+from ..core.units import STRUCTURES, UnitStore, UnitType
+from .nukes import NationNukeBehavior
 from .structures import NationStructureBehavior
 
 # `getAttackRate()` — 난이도별 반응 주기(tick). 10Hz 이므로 65 tick = 6.5초.
@@ -79,6 +80,8 @@ class NationBot:
     _build_tick: int = field(default=0)
     # 건물 판단은 통째로 여기 들어 있다. `__post_init__` 에서 만든다.
     structures: NationStructureBehavior | None = None
+    # 핵 판단도 통째로 분리돼 있다. `__post_init__` 에서 만든다.
+    nukes: "NationNukeBehavior | None" = None
     # 내가 띄운 무역선들(`trackedTradeShips`). 나포당하면 보복한다.
     _tracked_trade: set = field(default_factory=set)
     # 내가 띄운 수송선들(`trackedTransportShips`). 격침당하면 보복한다.
@@ -95,6 +98,13 @@ class NationBot:
         self.attack_tick = self.rng.randrange(self.attack_rate)
         self._build_tick = self.rng.randrange(self.attack_rate)
         self.structures = NationStructureBehavior(self.pid, self.rng, self.difficulty)
+        # ⚠ 체감 비용의 출발점은 **실비용**이다. 보유량에 따라 오르는 건물 비용과
+        # 달리 핵은 "쏜 횟수"로만 오르므로, 여기서 한 번 잡아 두고 발사마다 곱한다.
+        store = UnitStore()
+        self.nukes = NationNukeBehavior(
+            self.pid, self.rng, self.difficulty,
+            atom_cost=store.cost(UnitType.ATOM_BOMB),
+            hydro_cost=store.cost(UnitType.HYDROGEN_BOMB))
 
     # --- 진입점 -----------------------------------------------------------
 
@@ -655,31 +665,9 @@ class NationBot:
             return
         if self._maybe_spawn_warship(st, p):
             return
-        # 사일로가 있으면 가장 큰 적을 노린다 (`NationNukeBehavior` 의 축소판)
-        #
-        # ⚠ **쏠 수 있는 관이 있는지 먼저 본다.** 원본도 사일로마다
-        # `availableSlots = level - missileTimerQueue.length` 를 보고 0이면 건너뛴다.
-        # 이 검사가 없으면 재장전 중일 때 `launch_nuke` 가 조용히 None 을 돌려주고,
-        # 이 봇의 그 판단 tick 이 통째로 날아간다 — 전함도 안 짓고 아무것도 안 한다.
-        if st.ready_missiles(self.pid) > 0:
-            for utype in (UnitType.HYDROGEN_BOMB, UnitType.ATOM_BOMB):
-                if p.gold < p.units.cost(utype):
-                    continue
-                foes = [q for q in st.alive if q.pid != self.pid
-                        and not st.diplomacy.is_friendly(self.pid, q.pid)]
-                if not foes:
-                    return
-                biggest = max(foes, key=lambda q: st.tiles(q.pid))
-                # 핵에도 같은 봐주기가 걸린다(`NationNukeBehavior` 가
-                # `shouldAttack` 을 먼저 본다). 없으면 easy 에서 사람을 안 치면서
-                # 핵만 떨구는 이상한 AI 가 된다.
-                if not self._should_attack(st, biggest.pid):
-                    return
-                tiles = st.gmap.owned_refs(biggest.pid)
-                if len(tiles):
-                    st.launch_nuke(self.pid, utype,
-                                   int(self.rng.choice(tiles.tolist())))
-                return
+        # 핵은 `NationNukeBehavior` 가 맡는다(§5.44). 전에는 여기 열 줄짜리
+        # 축소판이 있었다 — 영토가 가장 큰 적의 **아무 칸에나** 쐈다.
+        self.nukes.maybe_send(st, self._should_attack)
 
 
 def attach(st: GameState, rng: random.Random,
