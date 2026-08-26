@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import random
+from collections import deque
 
 import pytest
 
@@ -515,10 +516,54 @@ def test_water_path_still_goes_around_land():
     path = water_path(gm, src, dst)
     assert path is not None, "돌아갈 길이 있는데 못 찾았다"
     assert all(gm.terrain[t] == Terrain.OCEAN for t in path[:-1]), "육지를 밟았다"
-    # ⚠ `> 30` 으로는 **휴리스틱을 과대평가하는 변이가 살아남는다** — 돌아가긴
-    # 하되 더 길게 돌아도 참이기 때문이다. 최단 길이를 **정확히** 단언한다:
-    # (5,5) → 아래로 벽 끝(y=15) → 오른쪽 x=35 → 위로 y=5 = 10 + 30 + 10.
-    assert len(path) == 50, f"최단이 아니다({len(path)}) — 휴리스틱이 과대평가한다"
+    # (5,5) → 벽 끝(y=15) → x=35 → y=5 = 10 + 30 + 10
+    assert len(path) == 50, f"최단이 아니다({len(path)})"
+
+
+def test_water_path_matches_bfs_on_random_maps():
+    """**BFS 를 기준으로 무작위 지도에서 대조한다.**
+
+    ⚠ 손으로 만든 지도로는 A* 의 최단성을 못 잰다. 벽 하나짜리 지도에서는
+    휴리스틱을 3배로 부풀려도 답이 같았다 — 돌아가는 길이 하나뿐이라
+    어느 순서로 펼치든 같은 길이가 나온다. 실측으로 확인했다.
+
+    장애물이 흩어진 지도라야 갈린다: 같은 조건 273판에서 정상은 불일치 0,
+    휴리스틱을 3배로 부풀린 변이는 **68판**이 어긋났다."""
+    def bfs_len(gm, src, dst):
+        prev = {src: 0}
+        q = deque([src])
+        while q:
+            cur = q.popleft()
+            for n in gm.neighbors(cur):
+                if n == dst:
+                    return prev[cur] + 1
+                if n in prev or gm.terrain[n] != Terrain.OCEAN:
+                    continue
+                prev[n] = prev[cur] + 1
+                q.append(n)
+        return None
+
+    rng = random.Random(7)
+    checked = 0
+    # ⚠ 표본을 늘리면 **BFS 가 지도를 통째로 훑어** 테스트가 통째로 느려진다.
+    # 40판 × 20×14 로도 변이를 잡는다(273판에서 68판이 어긋났으니 25%다 —
+    # 40판이면 못 잡을 확률이 0.75^40 ≈ 1/100,000 이다).
+    for _ in range(40):
+        rows = ["".join("A" if rng.random() < 0.28 else "~" for _ in range(20))
+                for _ in range(14)]
+        gm = GameMap.from_rows(rows)
+        sea = [t for t in range(gm.size) if gm.terrain[t] == Terrain.OCEAN]
+        if len(sea) < 20:
+            continue
+        src, dst = rng.sample(sea, 2)
+        want = bfs_len(gm, src, dst)
+        if want is None:
+            continue
+        got = water_path(gm, src, dst)
+        assert got is not None, "BFS 는 찾았는데 A* 가 못 찾았다"
+        assert len(got) == want, f"최단이 아니다({len(got)} vs {want})"
+        checked += 1
+    assert checked > 20, f"{checked}판만 재졌다 — 재료가 약하다"
 
 
 def test_water_path_still_rejects_unreachable():
