@@ -441,3 +441,142 @@ def test_a_ship_already_travelling_is_not_recalled():
     near = Warship(owner=0, tile=st.gmap.ref(101, 50), patrol_origin=origin)
     b._move_warship(st, [near], target)
     assert near.patrol_origin == target, "가까운 배를 안 불렀다 — 대조군이 깨졌다"
+
+
+def test_a_sunk_transport_triggers_retaliation():
+    """내 수송선이 **격침당하면** 보복한다.
+
+    ⚠ 무역선보다 관계가 크게 깎인다(−15 대 −7.5) — 병력을 실은 배라서다."""
+    from domynion.core.naval import TransportShip
+    st = _sea_state()
+    _with_port(st)
+    st.players[0].gold = 100_000_000
+    b = bot(difficulty="impossible", seed=1)
+    for i in range(20):
+        boat = TransportShip(owner=0, target=1, troops=100.0,
+                             path=[st.gmap.ref(100 + i, 50)],
+                             dst=st.gmap.ref(100 + i, 50))
+        st.boats.append(boat)
+        b._track_transport_ships(st)          # 추적 시작
+        boat.active, boat.sunk_by = False, 1   # 적 전함이 격침시켰다
+        st.boats.remove(boat)
+        b._track_transport_ships(st)          # 여기서 보복 판단이 돈다
+        if st.warships:
+            break
+    assert st.warships, "20척을 잃었는데 보복을 한 번도 안 했다"
+
+
+def test_an_arrived_transport_does_not_trigger_retaliation():
+    """대조군 — 도착·퇴각으로 빠진 배에는 보복하지 않는다.
+
+    ⚠ 목록에서 빠지는 이유가 셋(도착·퇴각·격침)인데 빠졌다는 것만으로는
+    구별되지 않는다. `sunk_by` 가 없으면 보복도 없다."""
+    from domynion.core.naval import TransportShip
+    st = _sea_state()
+    _with_port(st)
+    st.players[0].gold = 100_000_000
+    b = bot(difficulty="impossible", seed=1)
+    for i in range(30):
+        boat = TransportShip(owner=0, target=1, troops=100.0,
+                             path=[st.gmap.ref(100 + i, 50)],
+                             dst=st.gmap.ref(100 + i, 50))
+        st.boats.append(boat)
+        b._track_transport_ships(st)
+        boat.active = False                    # 도착했다 — sunk_by 는 없다
+        st.boats.remove(boat)
+        b._track_transport_ships(st)
+    assert not st.warships, "도착한 배에 보복했다"
+
+
+def test_engine_marks_who_sank_a_transport():
+    """**배선** 검사 — 엔진이 격침시킬 때 `sunk_by` 를 실제로 남기는가.
+
+    ⚠ 봇만 단위 테스트하면 엔진이 표시를 안 남겨도 통과한다."""
+    from domynion.core.naval import TransportShip, Warship
+    st = _sea_state()
+    boat = TransportShip(owner=1, target=0, troops=100.0,
+                         path=[st.gmap.ref(100, 50)], dst=st.gmap.ref(100, 50))
+    st.boats.append(boat)
+    st.warships.append(Warship(owner=0, tile=st.gmap.ref(101, 50)))
+    st.tick_count += 1
+    st._advance_warships()
+    assert boat not in st.boats, "격침이 안 됐다 — 재료가 잘못됐다"
+    assert boat.active is False and boat.sunk_by == 0, \
+        "엔진이 격침 표시를 안 남겼다"
+
+
+def test_sinking_a_transport_hurts_more_than_capturing_a_trade_ship():
+    """수송선 격침은 −15, 무역선 나포는 −7.5.
+
+    ⚠ 값을 두 자리에 따로 쓰면 한쪽을 다른 쪽으로 바꿔도 "보복했다"는 그대로다.
+    두 경로의 **관계 감소량을 직접 비교**해야 잡힌다."""
+    from domynion.core.naval import TradeShip, TransportShip
+
+    def drop(kind: str) -> float:
+        st = _sea_state()
+        _with_port(st)
+        st.players[0].gold = 100_000_000
+        b = bot(difficulty="impossible", seed=1)
+        # ⚠ `of()` 는 **구간(enum)** 이다 — −15 든 −7.5 든 한 칸 내려가면 같아진다.
+        # 원값을 주는 `value()` 로 재야 두 값의 차이가 보인다.
+        before = st.players[0].relations.value(1)
+        for i in range(40):
+            if kind == "boat":
+                x = TransportShip(owner=0, target=1, troops=100.0,
+                                  path=[st.gmap.ref(100 + i, 50)],
+                                  dst=st.gmap.ref(100 + i, 50))
+                st.boats.append(x)
+                b._track_transport_ships(st)
+                x.active, x.sunk_by = False, 1
+                st.boats.remove(x)
+                b._track_transport_ships(st)
+            else:
+                x = TradeShip(owner=0, src_port=st.gmap.ref(19, 5),
+                              dst_port=st.gmap.ref(19, 9), dst_owner=1,
+                              path=[st.gmap.ref(100 + i, 50)])
+                st.trade_ships.append(x)
+                b._track_trade_ships(st)
+                x.captured_by = 1
+                b._track_trade_ships(st)
+                st.trade_ships.remove(x)
+            if st.warships:
+                break
+        assert st.warships, f"{kind}: 보복을 안 했다 — 재료가 잘못됐다"
+        return before - st.players[0].relations.value(1)
+
+    assert drop("boat") > drop("trade"), "수송선 격침이 더 아프지 않다"
+
+
+def test_an_arrived_boat_is_not_marked_as_sunk():
+    """**배선** 검사 — 도착·퇴각으로 빠진 배에는 `sunk_by` 가 없어야 한다.
+
+    ⚠ 봇만 재면 엔진이 도착한 배까지 격침으로 표시해도 통과한다."""
+    from domynion.core.naval import TransportShip
+    st = _sea_state()
+    boat = TransportShip(owner=0, target=1, troops=100.0,
+                         path=[st.gmap.ref(100, 50), st.gmap.ref(101, 50)],
+                         dst=st.gmap.ref(101, 50))
+    st.boats.append(boat)
+    for _ in range(6):
+        st.tick_count += 1
+        st._advance_boats()
+        if boat not in st.boats:
+            break
+    assert boat not in st.boats, "배가 도착을 안 했다 — 재료가 잘못됐다"
+    assert boat.active is False, "빠졌는데 active 가 그대로다"
+    assert boat.sunk_by is None, "도착한 배를 격침으로 표시했다"
+
+
+def test_a_nuke_marks_who_sank_the_boat():
+    """**배선** 검사 — 핵에 날아간 배도 누가 쐈는지 남긴다."""
+    from domynion.core.naval import TransportShip
+    from domynion.core.nukes import Nuke
+    from domynion.core.units import UnitType
+    st = _sea_state()
+    where = st.gmap.ref(100, 50)
+    boat = TransportShip(owner=0, target=1, troops=100.0, path=[where], dst=where)
+    st.boats.append(boat)
+    n = Nuke(owner=1, utype=UnitType.ATOM_BOMB, src=st.gmap.ref(0, 0), dst=where)
+    st._detonate(n)
+    assert boat not in st.boats, "핵에 안 날아갔다 — 재료가 잘못됐다"
+    assert boat.sunk_by == 1, "핵으로 격침시킨 사람을 안 남겼다"

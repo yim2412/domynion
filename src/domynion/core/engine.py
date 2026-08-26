@@ -425,6 +425,9 @@ class GameState:
                 p.troops += b.troops
             else:
                 self.attacks.append(atk)
+        for b in self.boats:
+            if b not in still:
+                b.active = False      # 도착했거나 퇴각이 끝났다(격침이 아니다)
         self.boats = still
 
     def _conquer_tile(self, pid: int, tile: TileRef, previous: int) -> None:
@@ -850,6 +853,10 @@ class GameState:
         elif isinstance(target, TransportShip):
             # 수송선은 체력이 없다 — 원본은 포탄 한 방에 격침시킨다
             if target in self.boats:
+                # ⚠ 지우기 전에 **누가 격침시켰는지** 남긴다. 봇이 나중에 이걸
+                # 보고 보복을 정한다(도착·퇴각과 구분해야 한다).
+                target.active = False
+                target.sunk_by = w.owner
                 self.boats.remove(target)
                 w.veterancy += 1
                 self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
@@ -1059,6 +1066,11 @@ class GameState:
         for p in self.players.values():
             p.units.units = [u for u in p.units.units
                              if self._dist_sq(n.dst, u.tile) >= outer2]
+        for b in self.boats:
+            if self._dist_sq(n.dst, b.tile) < outer2:
+                # 핵에 날아간 것도 격침이다. **누가 쐈는지**를 남긴다 —
+                # 원본도 `delete(true, destroyer)` 로 같은 자리에 기록한다.
+                b.active, b.sunk_by = False, n.owner
         self.boats = [b for b in self.boats
                       if self._dist_sq(n.dst, b.tile) >= outer2]
         self._rebuild_posts()

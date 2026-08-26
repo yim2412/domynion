@@ -131,6 +131,14 @@ class TransportShip:
     replanned: bool = False
     done: bool = False
 
+    # --- 격침 표시 (`wasDestroyedByEnemy` / `destroyer`) ---------------------
+    #
+    # 배가 목록에서 빠지는 이유는 셋이다: 도착 · 퇴각 완료 · 격침. 봇이 보복할지
+    # 정하려면 셋을 구분해야 한다 — **도착에 보복하면 안 된다.** 원본은 유닛에
+    # 플래그를 남기고 봇이 참조를 들고 있다가 나중에 본다. 같은 구조다.
+    active: bool = True
+    sunk_by: int | None = None
+
     @property
     def tile(self) -> TileRef:
         return self.path[min(self.step_i, len(self.path) - 1)]

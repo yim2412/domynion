@@ -81,6 +81,8 @@ class NationBot:
     structures: NationStructureBehavior | None = None
     # 내가 띄운 무역선들(`trackedTradeShips`). 나포당하면 보복한다.
     _tracked_trade: set = field(default_factory=set)
+    # 내가 띄운 수송선들(`trackedTransportShips`). 격침당하면 보복한다.
+    _tracked_boats: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.trigger_ratio = self.rng.randint(50, 60) / 100
@@ -102,6 +104,7 @@ class NationBot:
         # ⚠ 추적은 **매 tick** 이다. 판단 주기에만 보면 그 사이에 나포됐다가
         # 도착까지 끝난 배를 놓친다(원본도 `trackShipsAndRetaliate` 를 매 tick 부른다).
         self._track_trade_ships(st)
+        self._track_transport_ships(st)
         if st.tick_count % self.attack_rate == self._build_tick:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
@@ -395,6 +398,26 @@ class NationBot:
         for t in st.trade_ships:
             if t.owner == self.pid and t.captured_by is None:
                 self._tracked_trade.add(id(t))
+
+    def _track_transport_ships(self, st: GameState) -> None:
+        """`trackTransportShipsAndRetaliate` — 내 수송선이 **격침당하면** 보복한다.
+
+        ⚠ 도착·퇴각과 구분해야 한다. 목록에서 빠졌다는 것만으로는 셋이 구별되지
+        않으므로 배에 남긴 `sunk_by` 를 본다. 참조를 들고 있어야 목록에서 빠진
+        뒤에도 볼 수 있다 — 원본이 `Set` 에 담아 두는 것과 같은 이유다.
+
+        무역선보다 관계가 더 크게 깎인다(−15 대 −7.5). 병력을 실은 배라서다."""
+        keep = []
+        for b in self._tracked_boats:
+            if b.active:
+                keep.append(b)
+                continue
+            if b.sunk_by is not None:
+                self._retaliate(st, b.tile, b.sunk_by, C.REL_WARSHIP_SANK_OTHER)
+        self._tracked_boats = keep
+        for b in st.boats:
+            if b.owner == self.pid and b not in self._tracked_boats:
+                self._tracked_boats.append(b)
 
     def _retaliate(self, st: GameState, tile: TileRef, enemy: int,
                    rel_hit: float) -> None:
