@@ -147,6 +147,20 @@ REL_ATTACKED_ALLY = -20.0          # AiAttackBehavior — 동맹을 친 벌
 REL_WARSHIP_SANK_TRADE = -7.5      # NationWarshipBehavior
 REL_WARSHIP_SANK_OTHER = -15.0
 
+# --- AI 의 전함 판단 (`NationWarshipBehavior`) --------------------------------
+#
+# ⚠ 이식 누락 스물다섯. 우리는 골드가 되면 무조건 지었다. 실측에서 판 전체
+# 지출의 **85%**(535,000,000 / 2,140척)가 전함으로 갔다. 원본은 두 겹으로 막는다:
+# 판단 tick 마다 50% 확률이고, **전함이 한 척도 없을 때만** 새로 짓는다.
+# 그 뒤로는 보복(`maybeRetaliateWithWarship`)으로만 늘어나고 그것도 10척까지다.
+WARSHIP_SPAWN_CHANCE = 50            # `random.chance(50)`
+WARSHIP_SPAWN_RADIUS = 250           # 항구에서 이 반경 안 바다에 띄운다
+WARSHIP_RETALIATION_CAP = 10         # 보복으로 늘릴 수 있는 상한
+# 보복 확률 — easy 는 아예 안 한다
+WARSHIP_RETALIATION_CHANCE = {"easy": 0, "medium": 15, "hard": 50, "impossible": 80}
+# 이미 순찰 중인 배를 다시 보낼 때 보는 거리(`maybeMoveWarship`)
+WARSHIP_REASSIGN_RANGE = 130
+
 # 공격당하면 얼마나 나빠지는가 — 난이도가 높을수록 더 오래 기억한다.
 REL_ATTACKED: dict[str, float] = {
     "easy": -60.0, "medium": -70.0, "hard": -80.0, "impossible": -100.0,

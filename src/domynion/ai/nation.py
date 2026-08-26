@@ -27,7 +27,9 @@ import random
 from dataclasses import dataclass, field
 
 from ..core import constants as C
+from ..core.constants import Terrain
 from ..core.engine import GameState
+from ..core.gamemap import TileRef
 from ..core import emoji
 from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
@@ -77,6 +79,8 @@ class NationBot:
     _build_tick: int = field(default=0)
     # 건물 판단은 통째로 여기 들어 있다. `__post_init__` 에서 만든다.
     structures: NationStructureBehavior | None = None
+    # 내가 띄운 무역선들(`trackedTradeShips`). 나포당하면 보복한다.
+    _tracked_trade: set = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.trigger_ratio = self.rng.randint(50, 60) / 100
@@ -95,6 +99,9 @@ class NationBot:
         p = st.players.get(self.pid)
         if p is None or not p.alive or st.over:
             return
+        # ⚠ 추적은 **매 tick** 이다. 판단 주기에만 보면 그 사이에 나포됐다가
+        # 도착까지 끝난 배를 놓친다(원본도 `trackShipsAndRetaliate` 를 매 tick 부른다).
+        self._track_trade_ships(st)
         if st.tick_count % self.attack_rate == self._build_tick:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
@@ -368,6 +375,120 @@ class NationBot:
             st.ai_emoji(self.pid, requestor, emoji.HANDSHAKE)
         return ok
 
+    # --- 전함 -------------------------------------------------------------
+
+    def _track_trade_ships(self, st: GameState) -> None:
+        """`trackTradeShipsAndRetaliate` — 내 무역선이 **나포당하면** 보복한다.
+
+        원본은 배가 목록에서 사라졌는지가 아니라 **주인이 바뀌었는지**를 본다.
+        격침·도착과 나포를 구분해야 하기 때문이다 — 도착에 보복하면 안 된다."""
+        alive = {id(t): t for t in st.trade_ships}
+        for key in list(self._tracked_trade):
+            t = alive.get(key)
+            if t is None:
+                self._tracked_trade.discard(key)
+                continue
+            if t.captured_by is not None and t.captured_by != self.pid:
+                self._tracked_trade.discard(key)
+                self._retaliate(st, t.tile, t.captured_by,
+                                C.REL_WARSHIP_SANK_TRADE)
+        for t in st.trade_ships:
+            if t.owner == self.pid and t.captured_by is None:
+                self._tracked_trade.add(id(t))
+
+    def _retaliate(self, st: GameState, tile: TileRef, enemy: int,
+                   rel_hit: float) -> None:
+        """`maybeRetaliateWithWarship` — 당한 자리로 전함을 낸다.
+
+        ⚠ **상한 10척.** 넘으면 새로 짓지 않고 있던 배의 순찰 기점을 그리로 옮긴다
+        (`maybeMoveWarship`). 이게 원본 해군이 커지지 않는 두 번째 장치다.
+        확률은 난이도를 탄다 — easy 는 아예 보복하지 않는다."""
+        if enemy == self.pid:
+            return
+        p = st.players.get(self.pid)
+        if p is None or not p.alive:
+            return
+        mine = [w for w in st.warships if w.owner == self.pid and not w.sunk]
+        if len(mine) >= C.WARSHIP_RETALIATION_CAP:
+            self._move_warship(st, mine, tile)
+            return
+        chance = C.WARSHIP_RETALIATION_CHANCE[self.difficulty]
+        if self.rng.randrange(100) >= chance:
+            return
+        if st.build_warship(self.pid, tile) is None:
+            self._move_warship(st, mine, tile)
+            return
+        # ⚠ `relate` 는 **한 방향**이다 — 당한 쪽만 나빠진다.
+        st.relate(self.pid, enemy, rel_hit)
+
+    def _move_warship(self, st: GameState, mine, tile: TileRef) -> None:
+        """`maybeMoveWarship` — 순찰 기점을 옮긴다.
+
+        ⚠ **이미 이동 중인 배는 안 부른다**(기점에서 130 넘게 떨어진 배).
+        부르면 가던 길을 버리고 되돌아와 아무 데도 못 간다."""
+        if st.gmap.terrain[tile] != Terrain.OCEAN:
+            return
+        w2 = st.gmap.width
+        idle = [w for w in mine
+                if w.patrol_origin is not None
+                and (abs(w.tile % w2 - w.patrol_origin % w2)
+                     + abs(w.tile // w2 - w.patrol_origin // w2))
+                < C.WARSHIP_REASSIGN_RANGE]
+        if not idle:
+            return
+        best = min(idle, key=lambda w: (abs(w.tile % w2 - tile % w2)
+                                        + abs(w.tile // w2 - tile // w2)))
+        best.patrol_origin = tile
+        best.patrol_target = None
+
+
+    def _maybe_spawn_warship(self, st: GameState, p) -> bool:
+        """`maybeSpawnWarship` — **한 척도 없을 때만** 짓는다.
+
+        ⚠ 이식 누락 스물다섯. 전에는 골드가 되면 무조건 지었다. 실측에서 판 전체
+        지출의 **85%**(535,000,000 / 2,140척)가 전함으로 갔고, 그래서 아무도
+        사일로(1,000,000)를 못 샀다. 원본은 두 겹으로 막는다:
+
+          1. 판단 tick 마다 **50% 확률**
+          2. **전함이 한 척도 없을 때만** 새로 짓는다
+
+        그 뒤로 전함이 느는 길은 보복(`_retaliate`)뿐이고 그것도 10척까지다.
+        원본의 해군이 작은 이유가 여기 있다 — 전함은 상비군이 아니라 **대응 수단**이다.
+        """
+        if self.rng.randrange(100) >= C.WARSHIP_SPAWN_CHANCE:
+            return False
+        ports = p.units.of(UnitType.PORT)
+        if not ports:
+            return False
+        if any(not w.sunk and w.owner == self.pid for w in st.warships):
+            return False
+        if p.gold <= p.units.cost(UnitType.WARSHIP):
+            return False
+        tile = self._warship_spawn_tile(st, self.rng.choice(ports).tile,
+                                        C.WARSHIP_SPAWN_RADIUS)
+        if tile is None:
+            return False
+        return st.build_warship(self.pid, tile) is not None
+
+    def _warship_spawn_tile(self, st: GameState, near: TileRef,
+                            radius: int) -> "TileRef | None":
+        """`warshipSpawnTile` — 항구 반경 안 아무 바다 칸. 50번 던져 본다.
+
+        ⚠ 항구 **옆**이 아니다. 반경 250 이면 배가 처음부터 흩어져 뜨고, 그 자리가
+        곧 순찰 기점이 된다(§5.37). 항구 옆에 몰아 두면 순찰 구역이 겹친다."""
+        gmap = st.gmap
+        cx, cy = near % gmap.width, near // gmap.width
+        for _ in range(50):
+            x = self.rng.randint(cx - radius, cx + radius)
+            y = self.rng.randint(cy - radius, cy + radius)
+            if not (0 <= x < gmap.width and 0 <= y < gmap.height):
+                continue
+            tile = gmap.ref(x, y)
+            if gmap.terrain[tile] != Terrain.OCEAN:
+                continue
+            return tile
+        return None
+
     # --- 건설 -------------------------------------------------------------
 
     def _structures(self, st: GameState) -> None:
@@ -381,11 +502,8 @@ class NationBot:
             return
         if self.structures.handle(st):
             return
-        if p.gold >= p.units.cost(UnitType.WARSHIP) and p.units.of(UnitType.PORT):
-            port = self.rng.choice(p.units.of(UnitType.PORT))
-            for n in st.gmap.neighbors(port.tile):
-                if st.build_warship(self.pid, n) is not None:
-                    return
+        if self._maybe_spawn_warship(st, p):
+            return
         # 사일로가 있으면 가장 큰 적을 노린다 (`NationNukeBehavior` 의 축소판)
         #
         # ⚠ **쏠 수 있는 관이 있는지 먼저 본다.** 원본도 사일로마다
