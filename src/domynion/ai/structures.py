@@ -43,10 +43,11 @@ import random
 import numpy as np
 
 from ..core import constants as C
-from ..core.buildings import euclid_sq
+from ..core.buildings import can_place_structure, euclid_sq, structure_tiles
 from ..core.naval import shoreline_tiles
 from ..core.nukes import NUKE_MAGNITUDES, sam_range
 from ..core.units import STRUCTURES, UNIT_INFO, Unit, UnitType
+from .placement import SPAWN_TILE_SAMPLES, Placement
 
 # --- 원본 상수 --------------------------------------------------------------
 
@@ -136,7 +137,8 @@ def border_spacing() -> int:
 class NationStructureBehavior:
     """플레이어 한 명의 건설·업그레이드 판단. `NationBot` 이 하나씩 들고 있다."""
 
-    __slots__ = ("pid", "rng", "difficulty", "placements", "_land_tiles")
+    __slots__ = ("pid", "rng", "difficulty", "placements", "_land_tiles",
+                 "_placer", "_placer_tick")
 
     def __init__(self, pid: int, rng: random.Random, difficulty: str = "medium"):
         self.pid = pid
@@ -145,6 +147,10 @@ class NationStructureBehavior:
         # `placementsCount` — 초소는 **첫 건물이 될 수 없다**. 이 카운터가 그것만 한다.
         self.placements = 0
         self._land_tiles: int | None = None
+        # 값 함수가 쓰는 재료(국경 타일·역 클러스터)를 **판단 한 번에**
+        # 한 번만 모은다. 후보 25칸마다 다시 모으면 판이 통째로 느려진다.
+        self._placer = None
+        self._placer_tick = -1
 
     # --- 진입점 -----------------------------------------------------------
 
@@ -253,24 +259,56 @@ class NationStructureBehavior:
             # 단 이 종류가 하나도 없으면 첫 채는 짓는다. 원본 주석: 작은 섬에
             # 갇혀 밀도가 늘 높은 나라는 이게 없으면 아무것도 못 짓는다.
 
-        near = self._spawn_near(st, utype, coastal)
-        if near is None:
+        tile = self._spawn_tile(st, utype, coastal)
+        if tile is None:
             return False
-        return st.build(self.pid, utype, near) is not None
+        return st.build(self.pid, utype, tile) is not None
 
-    def _spawn_near(self, st, utype: UnitType, coastal):
-        """자리 탐색의 **출발점**만 고른다. 실제 칸은 `find_spot` 이 정한다.
+    def _placement(self, st) -> Placement:
+        """값 함수가 쓰는 재료(국경 타일·역 클러스터)를 **tick 당 한 번만** 모은다.
 
-        ⚠ 항구만 해안에서 출발해야 한다. 내륙 칸에서 출발하면 `find_spot` 의 탐색
-        반경(40) 안에 해안이 없어 조용히 실패하고, **무역선이 한 척도 안 뜬다.**
-        원본이 항구만 `randCoastalTileArray` 를 쓰는 것과 같은 이유다."""
-        if utype is UnitType.PORT:
-            refs = coastal
-        else:
-            refs = st.gmap.owned_refs(self.pid)
-        if not len(refs):
+        ⚠ 영토와 역은 매 tick 바뀌므로 들고 다니면 안 되고, 후보 25칸마다 다시
+        모으면 판이 통째로 느려진다(국경은 지도 전체를 훑는다). 원본도 판단
+        한 번 안에서 `reachableStationsCache` 를 공유한다."""
+        if self._placer is None or self._placer_tick != st.tick_count:
+            self._placer = Placement(st, self.pid, self.rng, self.difficulty)
+            self._placer_tick = st.tick_count
+        return self._placer
+
+    def _spawn_tile(self, st, utype: UnitType, coastal):
+        """`structureSpawnTile` — 후보 25칸을 뽑아 **값 함수로 가장 좋은 칸**을 고른다.
+
+        ⚠ 이식 누락 스물넷. 전에는 무작위 한 칸을 골라 그 근처의 가장 가까운
+        빈자리를 썼다(`find_spot`). 그러면 고도·국경 거리·같은 종류와의 간격이
+        **아무 일도 안 한다** — 산 위 사일로도 국경에 붙은 도시도 그냥 나온다.
+
+        ⚠ 항구만 해안 후보를 쓴다(`randCoastalTileArray`). 내륙 칸을 넘기면
+        `can_place_structure` 가 전부 걸러 **무역선이 한 척도 안 뜬다.**"""
+        refs = coastal if utype is UnitType.PORT else st.gmap.owned_refs(self.pid)
+        n = len(refs)
+        if not n:
             return None
-        return int(refs[self.rng.randrange(len(refs))])
+        # `arraySampler` — 후보가 표본 수보다 적으면 전부 쓴다
+        if n <= SPAWN_TILE_SAMPLES:
+            tiles = [int(t) for t in refs]
+        else:
+            idx = self.rng.sample(range(n), SPAWN_TILE_SAMPLES)
+            tiles = [int(refs[i]) for i in idx]
+
+        value = self._placement(st).value_fn(utype)
+        if value is None:
+            return None
+        existing = structure_tiles(st.players[self.pid].units)
+        best, best_v = None, 0.0
+        for t in tiles:
+            v = value(t)
+            # 원본 그대로 — 더 좋지 않으면 **지을 수 있는지도 안 본다**(비싼 검사다)
+            if v <= best_v and best is not None:
+                continue
+            if not can_place_structure(st.gmap, t, self.pid, existing, utype):
+                continue
+            best, best_v = t, v
+        return best
 
     def _cost(self, st, utype: UnitType) -> int:
         p = st.players[self.pid]
