@@ -1111,19 +1111,32 @@ class GameState:
         매 tick 깎으면 몇 초 만에 −100 에 박혀 풀어도 회복이 안 된다. 원본은
         적용 여부를 따로 기억해 두고(`embargoMalusApplied`) 상태가 바뀔 때만
         움직인다. 푸는 것도 같은 크기로 되돌린다."""
-        alive = [p.pid for p in self.alive]
-        for pid in alive:
+        # ⚠ 전에는 생존자 **전 쌍**을 돌았다(472명이면 tick 당 222,784쌍).
+        # 프로파일에서 `embargoed` 가 1,500 tick 에 **9,878만 번** 불려 판 전체의
+        # 18% 를 먹고 있었다. 금수는 몇 건 안 되므로, **걸린 것만** 돌면 된다.
+        # `embargoes` 는 "내가 막은 대상"이라 역방향을 여기서 만든다.
+        alive = {p.pid for p in self.alive}
+        against: dict[int, set[int]] = {}
+        for by, targets in self.diplomacy.embargoes.items():
+            if by not in alive:
+                continue
+            for t in targets:
+                if t in alive:
+                    against.setdefault(t, set()).add(by)
+
+        # 새로 걸린 것과 풀린 것만 움직인다. 둘의 합집합만 보면 되므로
+        # 살아 있는 사람 수가 아니라 **금수 건수**에 비례한다.
+        for pid in alive | set(self._embargo_malus):
+            if pid not in alive:
+                continue
             applied = self._embargo_malus.setdefault(pid, set())
-            for other in alive:
-                if other == pid:
-                    continue
-                on = self.diplomacy.embargoed(other, pid)   # 상대가 나를 막았나
-                if on and other not in applied:
-                    self.relate(pid, other, C.REL_EMBARGO)
-                    applied.add(other)
-                elif not on and other in applied:
-                    self.relate(pid, other, -C.REL_EMBARGO)
-                    applied.discard(other)
+            now = against.get(pid, frozenset())
+            for other in now - applied:
+                self.relate(pid, other, C.REL_EMBARGO)
+                applied.add(other)
+            for other in applied - now:
+                self.relate(pid, other, -C.REL_EMBARGO)
+                applied.discard(other)
 
     # --- 스폰 -------------------------------------------------------------
 

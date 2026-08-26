@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import random
+import heapq
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -62,13 +63,25 @@ def water_path(gmap: GameMap, src: TileRef, dst: TileRef,
     x0, x1 = min(sx, dx_) - margin, max(sx, dx_) + margin
     y0, y1 = min(sy, dy_) - margin, max(sy, dy_) + margin
 
+    # ⚠ **A* 다. BFS 가 아니다.** 상자만으로는 부족했다 — `margin` 이 거리에
+    # 비례해서(×2.5) 400칸짜리 항로면 상자가 사실상 지도 전체가 되고, BFS 가
+    # 바다를 통째로 훑는다. 프로파일에서 한 번에 **0.3초**, 판 전체의 **63%** 였다.
+    #
+    # 휴리스틱은 맨해튼 거리다. 4방향 이동에 대해 **절대 실제 거리를 넘지 않으므로**
+    # (허용적) A* 가 돌려주는 경로도 BFS 와 같이 최단이다. 다만 같은 길이의 경로가
+    # 여럿일 때 **어느 것을 고르는지는 달라질 수 있다** — 항로가 조금 달라 보여도
+    # 길이는 같다.
+    def h(t: TileRef) -> int:
+        return abs(t % w - dx_) + abs(t // w - dy_)
+
     prev: dict[TileRef, TileRef] = {src: src}
-    q = deque([src])
-    while q:
-        cur = q.popleft()
+    g: dict[TileRef, int] = {src: 0}
+    heap: list[tuple[int, int, TileRef]] = [(h(src), 0, src)]
+    while heap:
+        _f, gc, cur = heapq.heappop(heap)
+        if gc > g.get(cur, 1 << 30):
+            continue                     # 더 짧은 길로 이미 지나간 칸
         for n in gmap.neighbors(cur):
-            if n in prev:
-                continue
             if n == dst:
                 prev[n] = cur
                 path = [n]
@@ -76,13 +89,16 @@ def water_path(gmap: GameMap, src: TileRef, dst: TileRef,
                     path.append(prev[path[-1]])
                 path.reverse()
                 return path[1:]
+            if n in g:
+                continue                 # 4방향 균일 비용이라 다시 볼 일이 없다
             if gmap.terrain[n] != Terrain.OCEAN:
                 continue
             nx, ny = n % w, n // w
             if not (x0 <= nx <= x1 and y0 <= ny <= y1):
                 continue
+            g[n] = gc + 1
             prev[n] = cur
-            q.append(n)
+            heapq.heappush(heap, (gc + 1 + h(n), gc + 1, n))
     return None
 
 
