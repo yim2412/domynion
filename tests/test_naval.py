@@ -485,3 +485,43 @@ def test_more_ports_means_more_trade():
         return total
     few, many = spawns(1), spawns(8)
     assert many > few, f"항구를 8배로 늘렸는데 유통량이 {few} -> {many}"
+
+
+# --- A* 전환 (§5.45) ----------------------------------------------------------
+
+def test_water_path_is_still_shortest():
+    """A* 로 바꿔도 **길이는 최단**이다(맨해튼 휴리스틱은 허용적이다).
+
+    ⚠ 같은 길이의 경로가 여럿일 때 어느 것을 고르는지는 달라질 수 있다.
+    그래서 경로 자체가 아니라 **길이**를 단언한다 — 장애물이 없는 바다에서는
+    최단 길이가 맨해튼 거리와 같다."""
+    gm = GameMap.from_rows(["." + "~" * 60 + "."] * 30)
+    for (sx, sy), (dx, dy) in (((1, 1), (30, 1)), ((1, 1), (30, 20)),
+                               ((5, 25), (55, 3))):
+        src, dst = gm.ref(sx, sy), gm.ref(dx, dy)
+        path = water_path(gm, src, dst)
+        assert path is not None, f"({sx},{sy})->({dx},{dy}) 경로가 없다"
+        assert len(path) == abs(dx - sx) + abs(dy - sy), \
+            f"최단이 아니다 ({len(path)} vs {abs(dx-sx)+abs(dy-sy)})"
+
+
+def test_water_path_still_goes_around_land():
+    """장애물이 있으면 돌아간다 — 그리고 육지를 밟지 않는다."""
+    rows = ["~" * 40 for _ in range(20)]
+    for y in range(0, 15):                      # 위에서 내려오는 벽
+        rows[y] = rows[y][:20] + "A" + rows[y][21:]
+    gm = GameMap.from_rows(rows)
+    src, dst = gm.ref(5, 5), gm.ref(35, 5)
+    path = water_path(gm, src, dst)
+    assert path is not None, "돌아갈 길이 있는데 못 찾았다"
+    assert all(gm.terrain[t] == Terrain.OCEAN for t in path[:-1]), "육지를 밟았다"
+    # ⚠ `> 30` 으로는 **휴리스틱을 과대평가하는 변이가 살아남는다** — 돌아가긴
+    # 하되 더 길게 돌아도 참이기 때문이다. 최단 길이를 **정확히** 단언한다:
+    # (5,5) → 아래로 벽 끝(y=15) → 오른쪽 x=35 → 위로 y=5 = 10 + 30 + 10.
+    assert len(path) == 50, f"최단이 아니다({len(path)}) — 휴리스틱이 과대평가한다"
+
+
+def test_water_path_still_rejects_unreachable():
+    """이어지지 않은 바다는 여전히 None 이다(연결성분 검사)."""
+    gm = GameMap.from_rows(["~~AA~~"] * 10)
+    assert water_path(gm, gm.ref(0, 5), gm.ref(5, 5)) is None

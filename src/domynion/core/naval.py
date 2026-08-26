@@ -53,6 +53,10 @@ def water_path(gmap: GameMap, src: TileRef, dst: TileRef,
     """
     if src == dst:
         return [dst]
+    # ⚠ 이 검사와 아래 상자는 **결과를 안 바꾼다**(순수 성능 가드다):
+    # 길이 있으면 두 칸은 같은 바다 성분이고, 상자는 A* 가 어차피 안 가는
+    # 자리를 자를 뿐이다. 지우는 변이가 살아남는 것이 정상이니 파지 말 것 —
+    # 없으면 닿을 수 없는 목적지에서 바다 전체를 훑는다(판당 15초 → 91초, §5.8).
     if not (_touching_components(gmap, src) & _touching_components(gmap, dst)):
         return None
 

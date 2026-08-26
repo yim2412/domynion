@@ -520,6 +520,8 @@ class GameState:
         return True
 
     def _water_path(self, src: TileRef, dst: TileRef) -> "list[TileRef] | None":
+        # ⚠ 캐시도 **결과를 안 바꾼다**(성능 전용). 지형이 안 변하므로 같은 쌍은
+        # 늘 같은 경로다. 지우는 변이가 살아남는 것이 정상이다.
         key = (src, dst)
         if key not in self._path_cache:
             self._path_cache[key] = water_path(self.gmap, src, dst)
