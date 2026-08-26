@@ -262,38 +262,48 @@ class NationNukeBehavior:
         return best
 
     def _blast_is_clean(self, st, tile: TileRef, radius: int, target_pid: int) -> bool:
-        """`isValidNukeTile` — 반경 안이 **전부 표적의 땅**이어야 한다.
+        """`isValidNukeTile` × `boundingBoxTiles` — 반경이 남의 땅에 안 닿아야 한다.
 
-        ⚠ 이게 없으면 내 땅·동맹 땅을 같이 날린다. easy·medium 은 예외가 없고
-        (원본 주석: *"nuke away from the border"*), hard 이상만 빈 땅을 허용한다.
+        ⚠ **원본은 정사각형 두 개의 "테두리"만 본다**(`boundingBoxTiles`):
+        반경짜리 하나와 반경/2 짜리 하나. 안쪽은 안 본다.
 
-        원본은 반경과 반경/2 두 겹의 상자를 훑는다 — 바깥 반경 안쪽에 낀 남의
-        땅 조각을 놓치지 않으려는 것이다. 우리는 상자 하나를 격자로 훑는다."""
-        gmap = st.gmap
-        w, h = gmap.width, gmap.height
+        ```ts
+        boundingBoxTiles(game, tile, range)
+          .concat(boundingBoxTiles(game, tile, Math.floor(range / 2)))
+        ```
+
+        전에는 원 안을 격자로 통째로 훑었다. **훨씬 엄격해서 거의 아무 데도 못
+        쐈다** — 실측에서 관문 계수가 `깨끗한 자리 없음` 278회 대 `쏠 수 있었다`
+        1회였고, 9,000 tick 판에서 핵이 0~4발밖에 안 나갔다(seed 1·2·3).
+
+        테두리만 보는 것이 허술해 보이지만 의도된 것이다. 원본 주석이 안쪽 상자를
+        두는 이유를 적어 뒀다 — *"in case there is a piece of unwanted territory
+        inside the outer radius that we miss"*. 즉 **완벽한 검사가 아니라 값싼
+        표본**이고, 그래서 핵이 실제로 나간다.
+        """
+        gm = st.gmap
+        w, h = gm.width, gm.height
         cx, cy = tile % w, tile // w
-        r2 = radius * radius
         loose = self.difficulty in ("hard", "impossible")
-        # 반경 전체를 칸마다 보면 비싸다. 상자를 성글게 훑되 반경/2 격자를 겹쳐
-        # 원본의 두 겹과 같은 촘촘함을 낸다.
-        step = max(1, radius // 6)
-        for dy in range(-radius, radius + 1, step):
-            y = cy + dy
-            if not (0 <= y < h):
+
+        def ok(x: int, y: int) -> bool:
+            if not (0 <= x < w and 0 <= y < h):
+                return True                  # 지도 밖은 안 본다
+            owner = int(gm.owner[y * w + x])
+            if owner == target_pid:
+                return True
+            return loose and owner < 0       # hard 이상만 빈 땅을 허용한다
+
+        for r in (radius, radius // 2):
+            if r <= 0:
                 continue
-            for dx in range(-radius, radius + 1, step):
-                if dx * dx + dy * dy > r2:
-                    continue
-                x = cx + dx
-                if not (0 <= x < w):
-                    continue
-                t = y * w + x
-                owner = int(gmap.owner[t])
-                if owner == target_pid:
-                    continue
-                if loose and owner < 0:
-                    continue          # hard 이상은 빈 땅을 허용한다
-                return False
+            x0, x1, y0, y1 = cx - r, cx + r, cy - r, cy + r
+            for x in range(x0, x1 + 1):      # 위·아래 변
+                if not ok(x, y0) or not ok(x, y1):
+                    return False
+            for y in range(y0 + 1, y1):      # 좌·우 변(모서리 제외)
+                if not ok(x0, y) or not ok(x1, y):
+                    return False
         return True
 
     def tile_score(self, st, tile: TileRef, silos, structures, utype) -> float:

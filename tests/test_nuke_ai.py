@@ -403,3 +403,40 @@ def test_structure_tiles_are_always_candidates():
     assert b.maybe_send(st, always_attack), "안 쐈다 — 재료가 잘못됐다"
     assert st.nukes[0].dst == city.tile, \
         "건물 자리를 안 찍었다 — 건물 타일이 후보에 없다"
+
+
+def test_blast_check_samples_two_square_rings_not_the_whole_disc():
+    """`boundingBoxTiles` — 반경짜리 상자와 **반경/2 상자의 테두리**만 본다.
+
+    ⚠ 원 안을 통째로 훑으면 훨씬 엄격해져 **거의 아무 데도 못 쏜다.** 실측에서
+    관문 계수가 `깨끗한 자리 없음` 278회 대 `쏠 수 있었다` 1회였고, 9,000 tick
+    판에서 핵이 0~4발밖에 안 나갔다(seed 1·2·3).
+
+    두 테두리 **사이**(예: 반경×0.75 지점)에 남의 칸을 하나 두고 통과하는지 본다.
+    통과해야 원본과 같다 — 원본은 완벽한 검사가 아니라 **값싼 표본**이다."""
+    st = state()
+    outer = NUKE_MAGNITUDES[UnitType.ATOM_BOMB][1]
+    lo, hi = 100, 100 + outer * 4
+    fill(st, 1, lo, lo, hi, hi)
+    mid = (lo + hi) // 2
+    tile = st.gmap.ref(mid, mid)
+    b = behavior(difficulty="medium")
+    assert b._blast_is_clean(st, tile, outer, 1), "깨끗한데 막혔다 — 재료가 잘못됐다"
+
+    # 두 테두리 사이(반경×0.75)에 남의 칸 하나 — 원본은 여기를 안 본다
+    between = st.gmap.ref(mid + int(outer * 0.75), mid)
+    st.gmap.owner[between] = 2
+    assert b._blast_is_clean(st, tile, outer, 1), \
+        "테두리 사이를 봤다 — 원 전체를 훑고 있다"
+
+    # 바깥 테두리 위에 두면 걸려야 한다
+    st.gmap.owner[between] = 1
+    on_ring = st.gmap.ref(mid + outer, mid)
+    st.gmap.owner[on_ring] = 2
+    assert not b._blast_is_clean(st, tile, outer, 1), "바깥 테두리를 안 본다"
+
+    # 안쪽 테두리(반경/2) 위에 두어도 걸려야 한다
+    st.gmap.owner[on_ring] = 1
+    inner_ring = st.gmap.ref(mid + outer // 2, mid)
+    st.gmap.owner[inner_ring] = 2
+    assert not b._blast_is_clean(st, tile, outer, 1), "안쪽 테두리를 안 본다"
