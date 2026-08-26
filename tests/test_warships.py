@@ -13,6 +13,7 @@ import pytest
 
 from domynion.core import constants as C
 from domynion.core.buildings import DefensePostIndex
+from domynion.core.constants import Terrain
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
 from domynion.core.naval import TradeShip, TransportShip, Warship, shell_damage
@@ -405,3 +406,225 @@ def test_capture_fails_when_the_pirate_has_no_port():
     # 대조군 — 항구가 있으면 성공한다
     port(st, 0, 0, 0)
     assert st._capture_trade_ship(t, 0) is True
+
+
+# --- 순찰 이동 (이식 누락 스물둘) --------------------------------------------
+#
+# 전에는 전함이 태어난 자리에 붙박여 있었다. patrol_origin 이 필드로만 있고
+# 아무도 배를 옮기지 않았다. 붙박이면 순찰 반경(100)이 사거리(130)보다 작다는
+# 규칙 자체가 아무 의미가 없다.
+
+def test_a_warship_with_no_target_patrols():
+    """표적이 없으면 순찰 지점을 잡고 그쪽으로 움직인다."""
+    st = state()
+    w = Warship(owner=0, tile=st.gmap.ref(30, 5))
+    st.warships.append(w)
+    start = w.tile
+    moved = set()
+    for _ in range(40):
+        st.tick_count += 1
+        st._advance_warships()
+        moved.add(w.tile)
+    assert w.tile != start, "전함이 한 칸도 안 움직였다"
+    assert len(moved) > 3, f"제자리를 맴돈다 ({len(moved)}칸)"
+
+
+def _ocean(w: int = 400, h: int = 240) -> GameMap:
+    """넓은 바다. ⚠ 기본 지도(62×30)는 **순찰 반경(100)보다 작다** — 그 위에서는
+    반경·기점·수로 규칙을 지워도 결과가 같아 변이가 전부 살아남는다(실제로 다섯
+    개가 그렇게 살아남았다)."""
+    return GameMap.from_rows(["." + "~" * (w - 2) + "."] * h)
+
+
+def _sea_state(gm: GameMap) -> GameState:
+    ps = {}
+    for pid in (0, 1, 2):
+        t = gm.ref(0, pid)
+        ps[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False, start=t)
+        gm.owner[t] = pid
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts, st._posts = {0: 1, 1: 1, 2: 1}, DefensePostIndex(gm.size)
+    st.fallout = Fallout(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    return st
+
+
+def test_patrol_stays_within_range_of_the_origin():
+    """순찰 지점은 기점 반경의 **절반** 안에서 뽑는다(`warshipPatrolRange / 2`).
+
+    ⚠ 대조군이 필요하다: "안 벗어났다"만 보면 배가 안 움직여도 참이다. 그리고
+    지도가 반경보다 작으면 절반이든 전체든 결과가 같다 — 넓은 바다에서 잰다."""
+    gm = _ocean()
+    st = _sea_state(gm)
+    origin = gm.ref(200, 120)
+    w = Warship(owner=0, tile=origin)
+    st.warships.append(w)
+    half = C.WARSHIP_PATROL_RANGE // 2
+    seen = set()
+    for _ in range(600):                 # 반경 끝까지 갈 시간을 준다
+        st.tick_count += 1
+        st._advance_warships()
+        seen.add(w.tile)
+        dx = abs(w.tile % gm.width - origin % gm.width)
+        dy = abs(w.tile // gm.width - origin // gm.width)
+        assert dx <= half and dy <= half, f"기점에서 {dx},{dy} 나갔다 (한계 {half})"
+    assert len(seen) > 50, f"거의 안 움직였다 ({len(seen)}칸) — 대조군이 깨졌다"
+
+
+def test_patrol_recenters_on_the_origin_not_the_current_tile():
+    """중심은 **순찰 기점**이지 지금 위치가 아니다.
+
+    ⚠ 현재 위치를 중심으로 두면 배가 무작위 보행으로 **표류한다** — 순찰 구역이라는
+    개념 자체가 사라진다. 600 tick 을 돌려 기점 근처에 머무는지 본다."""
+    gm = _ocean()
+    st = _sea_state(gm)
+    origin = gm.ref(200, 120)
+    w = Warship(owner=0, tile=origin)
+    st.warships.append(w)
+    far = 0
+    for _ in range(600):
+        st.tick_count += 1
+        st._advance_warships()
+        dx = abs(w.tile % gm.width - origin % gm.width)
+        dy = abs(w.tile // gm.width - origin // gm.width)
+        far = max(far, dx + dy)
+    assert far <= C.WARSHIP_PATROL_RANGE, f"기점에서 {far} 까지 표류했다"
+    assert far > 10, f"안 움직였다({far}) — 대조군이 깨졌다"
+
+
+def test_patrol_target_is_cleared_on_arrival():
+    """목표에 닿으면 비운다. 안 비우면 그 자리에 굳는다.
+
+    ⚠ 위치만 보면 안 잡힌다 — 굳어도 "범위 안"이고 "바다 위"다.
+    **닿은 뒤에도 계속 움직이는지**를 봐야 한다."""
+    gm = _ocean()
+    st = _sea_state(gm)
+    w = Warship(owner=0, tile=gm.ref(200, 120))
+    st.warships.append(w)
+    for _ in range(400):                 # 목표를 여러 번 갈아탈 만큼
+        st.tick_count += 1
+        st._advance_warships()
+    late = set()
+    for _ in range(200):
+        st.tick_count += 1
+        st._advance_warships()
+        late.add(w.tile)
+    assert len(late) > 20, f"400 tick 뒤에 굳었다 ({len(late)}칸만 밟았다)"
+
+
+def test_patrol_never_picks_a_tile_across_land():
+    """수로가 안 이어진 칸은 순찰 지점이 되지 않는다(`hasWaterComponent`).
+
+    ⚠ 이어지지 않은 바다가 있는 지도라야 이 규칙이 재진다 — 가운데를 육지로 막는다."""
+    w_, h_ = 400, 240
+    rows = []
+    for y in range(h_):
+        row = ["."] + ["~"] * (w_ - 2) + ["."]
+        row[w_ // 2] = "#"               # 통행불가 벽이 바다를 둘로 가른다
+        rows.append("".join(row))
+    gm = GameMap.from_rows(rows)
+    st = _sea_state(gm)
+    # ⚠ 벽에서 멀면 반경(절반 50) 안에 벽 너머가 안 들어와 규칙이 안 재진다.
+    # 벽 바로 옆에 둬야 후보에 건너편이 실제로 뽑힌다(재료 문제로 한 번 놓쳤다).
+    ship = Warship(owner=0, tile=gm.ref(190, 120))
+    st.warships.append(ship)
+    left = gm.width // 2
+    for _ in range(600):
+        st.tick_count += 1
+        st._advance_warships()
+        assert ship.tile % gm.width < left, "벽 너머로 넘어갔다"
+        if ship.patrol_target is not None:
+            assert ship.patrol_target % gm.width < left,                 "이어지지 않은 바다를 순찰 지점으로 골랐다"
+
+
+def test_a_warship_shooting_still_patrols():
+    """원본은 **쏘고 나서도 순찰한다**(`shootTarget(); patrol();`).
+
+    ⚠ 포격 분기에서 순찰을 빼면 교전 중인 배가 굳는다. 무역선 추격만 예외다
+    (그쪽은 이미 목표를 향해 움직인다)."""
+    st = state()
+    mine = Warship(owner=0, tile=st.gmap.ref(30, 5))
+    foe = Warship(owner=1, tile=st.gmap.ref(32, 5))
+    st.warships += [mine, foe]
+    start = mine.tile
+    for _ in range(30):
+        st.tick_count += 1
+        st._advance_warships()
+        if foe.sunk:
+            break
+    assert mine.tile != start, "적을 쏘는 동안 제자리에 굳었다"
+
+
+def test_hunting_a_trade_ship_skips_patrol():
+    """추격 중에는 순찰하지 않는다 — 목표 쪽으로만 간다."""
+    st = state()
+    port(st, 0, 0, 0)
+    w = Warship(owner=0, tile=st.gmap.ref(30, 5))
+    st.warships.append(w)
+    t = TradeShip(owner=1, src_port=st.gmap.ref(59, 5), dst_port=st.gmap.ref(1, 5),
+                  dst_owner=2, path=[st.gmap.ref(45, 5)])
+    st.trade_ships.append(t)
+    st.tick_count += 1
+    st._advance_warships()
+    # 정확히 2칸, 목표 쪽으로만 (순찰이 끼면 방향이 흐트러진다)
+    assert w.tile == st.gmap.ref(32, 5), f"추격이 순찰에 흔들렸다 ({w.tile % st.gmap.width})"
+    assert w.patrol_target is None, "추격 중에 순찰 목표를 잡았다"
+
+
+def test_patrol_never_picks_land_or_shoreline():
+    """순찰 지점은 바다여야 하고, 해안선은 피한다(원본 `allowShoreline=false`).
+
+    ⚠ 좁은 지도에서는 이 규칙을 지워도 안 잡힌다 — 탐욕 이동이 육지 이웃을
+    애초에 안 고르므로 **목표가 육지여도 배는 바다에 남는다.** 그러면
+    "육지에 안 올라갔다"가 늘 참이다. 목표 자체를 함께 봐야 한다."""
+    w_, h_ = 400, 240
+    rows = []
+    for y in range(h_):
+        row = ["."] + ["~"] * (w_ - 2) + ["."]
+        if 100 <= y < 140:                    # 가운데 섬 — 육지 후보가 실제로 뽑힌다
+            for x in range(180, 220):
+                row[x] = "."
+        rows.append("".join(row))
+    gm = GameMap.from_rows(rows)
+    st = _sea_state(gm)
+    ship = Warship(owner=0, tile=gm.ref(160, 120))
+    st.warships.append(ship)
+    for _ in range(600):
+        st.tick_count += 1
+        st._advance_warships()
+        assert gm.terrain[ship.tile] == Terrain.OCEAN, "육지로 올라갔다"
+        if ship.patrol_target is not None:
+            assert gm.terrain[ship.patrol_target] == Terrain.OCEAN, \
+                "육지를 순찰 지점으로 골랐다"
+            assert not gm.is_shoreline(ship.patrol_target), \
+                "해안선을 순찰 지점으로 골랐다"
+
+
+def test_patrol_tile_is_never_land_even_in_the_shoreline_fallback():
+    """`randomTile()` 계약 — **해안선을 허용하는 폴백에서도 육지는 안 고른다.**
+
+    ⚠ 보통 경로로는 이 규칙이 안 재진다. 안쪽 육지는 수로 검사가 먼저 걷어내고
+    (바다 이웃이 없어 성분이 비어 있다), 물가 육지는 해안선 검사가 걷어낸다 —
+    **다른 두 검사가 이 검사를 가려 준다.** 해안선을 허용하는 폴백에서는 물가
+    육지가 성분 검사를 통과하므로, 그때 지형 검사만이 유일한 관문이다.
+
+    작은 못은 칸이 전부 해안선이라 1차 통과가 반드시 실패하고 폴백으로 간다."""
+    w_, h_ = 40, 24
+    rows = []
+    for y in range(h_):
+        row = ["."] * w_
+        if 10 <= y < 12:
+            for x in range(18, 20):
+                row[x] = "~"             # 2×2 못 — 모든 칸이 물가라 전부 해안선이다
+                                         # (3×3 이상이면 가운데가 해안선이 아니다)
+        rows.append("".join(row))
+    gm = GameMap.from_rows(rows)
+    st = _sea_state(gm)
+    pond = [gm.ref(x, y) for y in range(10, 12) for x in range(18, 20)]
+    assert all(gm.is_shoreline(t) for t in pond), "못이 전부 해안선이어야 폴백을 탄다"
+    ship = Warship(owner=0, tile=pond[0])
+    st.warships.append(ship)
+    for _ in range(40):
+        t = st._random_patrol_tile(ship)
+        assert t is not None, "폴백에서도 못 찾았다"
+        assert gm.terrain[t] == Terrain.OCEAN, "폴백에서 육지를 골랐다"

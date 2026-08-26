@@ -173,6 +173,12 @@ class Warship:
     patrol_origin: TileRef | None = None
     cooldown: int = 0
     veterancy: int = 0            # 격침 횟수. 포탄 피해에 실린다
+    # 지금 향하는 순찰 지점(`targetTile`). 닿으면 비우고 새로 뽑는다.
+    #
+    # ⚠ 이식 누락 스물둘. 이게 없어서 전함이 **태어난 자리에 붙박여 있었다** —
+    # `patrol_origin` 은 필드로만 있고 아무도 배를 옮기지 않았다. 격침에서는
+    # 안 드러난다(사거리 안이면 그 자리에서 쏘면 된다). 나포를 붙이니 드러났다.
+    patrol_target: TileRef | None = None
 
     def __post_init__(self) -> None:
         if self.patrol_origin is None:

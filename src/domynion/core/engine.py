@@ -26,7 +26,8 @@ from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
-                    manhattan, port_check_due, trade_gold, trade_spawn_rate,
+                    _touching_components, manhattan, port_check_due,
+                    trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
 from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
@@ -591,9 +592,13 @@ class GameState:
                 # `huntDownTradeShip` — 무역선은 **쏘는 게 아니라 쫓아가 잡는다.**
                 # 포격 쿨다운을 쓰지 않는다(원본도 이 분기에서 안 쓴다).
                 self._hunt_trade_ship(w, target)
-            elif target is not None:
-                w.cooldown = C.WARSHIP_SHELL_ATTACK_RATE
-                self._fire_shell(w, target)
+            else:
+                if target is not None:
+                    w.cooldown = C.WARSHIP_SHELL_ATTACK_RATE
+                    self._fire_shell(w, target)
+                # ⚠ 원본은 **쏘고 나서도 순찰한다**(`shootTarget(); patrol();`).
+                # 무역선 추격만 순찰을 건너뛴다 — 그쪽은 이미 목표로 움직인다.
+                self._patrol(w)
             alive_ships.append(w)
         self.warships = [w for w in alive_ships if not w.sunk]
 
@@ -624,6 +629,60 @@ class GameState:
                     continue          # 순찰 구역 밖까지 쫓아가지는 않는다
                 if self._dist_sq(w.tile, t.tile) <= r2:
                     return t
+        return None
+
+    def _patrol(self, w: Warship) -> None:
+        """`patrol()` — 순찰 지점을 하나 잡고 그쪽으로 한 칸 간다. 닿으면 새로 뽑는다.
+
+        ⚠ 이식 누락 스물둘. 이게 없어서 전함이 태어난 자리에 붙박여 있었다.
+        붙박이면 순찰 반경(100)이 사거리(130)보다 작다는 규칙이 아무 의미가 없고,
+        바다가 통째로 비어 있어도 아무도 그리로 가지 않는다."""
+        if w.patrol_target is None:
+            w.patrol_target = self._random_patrol_tile(w)
+            if w.patrol_target is None:
+                return
+        # 닿았거나(더 가까운 이웃이 없다) 길이 막혔으면 목표를 비운다.
+        # ⚠ 도착 검사를 따로 두지 않는다 — `_step_toward` 가 목표 칸에서 None 을
+        # 돌려주므로 같은 조건이고, 두 벌로 두면 한쪽을 지워도 다른 쪽이 가려 준다.
+        step = self._step_toward(w.tile, w.patrol_target)
+        if step is None:
+            w.patrol_target = None
+            return
+        w.tile = step
+
+    def _random_patrol_tile(self, w: Warship) -> "TileRef | None":
+        """`randomTile()` — 순찰 기점 주변 **반경의 절반** 안에서 바다 칸 하나.
+
+        해안선은 피한다(원본 `allowShoreline=false` 가 기본). 500번 실패할 때마다
+        반경을 1.5배로 넓히고, 세 번까지 넓힌다 — 작은 만에 갇힌 배가 영원히
+        후보를 못 찾는 것을 막는 장치다. 그래도 못 찾으면 해안선을 허용해 한 번 더.
+        """
+        gm = self.gmap
+        comp = _touching_components(gm, w.tile) or None
+        origin = w.patrol_origin if w.patrol_origin is not None else w.tile
+        ox, oy = origin % gm.width, origin // gm.width
+        for allow_shore in (False, True):
+            rng_r = C.WARSHIP_PATROL_RANGE
+            attempts = expands = 0
+            while expands < C.PATROL_MAX_EXPANDS:
+                half = max(1, rng_r // 2)
+                x = ox + self.rng.randint(-half, half)
+                y = oy + self.rng.randint(-half, half)
+                if not (0 <= x < gm.width and 0 <= y < gm.height):
+                    continue
+                tile = gm.ref(x, y)
+                bad = (gm.terrain[tile] != Terrain.OCEAN
+                       or (not allow_shore and gm.is_shoreline(tile))
+                       or (comp is not None
+                           and not (comp & _touching_components(gm, tile))))
+                if bad:
+                    attempts += 1
+                    if attempts == C.PATROL_ATTEMPTS_BEFORE_EXPAND:
+                        expands += 1
+                        attempts = 0
+                        rng_r += rng_r // 2
+                    continue
+                return tile
         return None
 
     def _hunt_trade_ship(self, w: Warship, t: TradeShip) -> None:

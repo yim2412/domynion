@@ -351,6 +351,11 @@ PIRACY_CAPTURE_RANGE = 5
 # `huntDownTradeShip` 은 tick 당 루프를 **2번** 돈다 — 무역선과 같은 속도(1칸/tick)
 # 로는 영원히 못 따라잡기 때문이다. 추격이 성립하려면 더 빨라야 한다.
 PIRACY_HUNT_STEPS = 2
+# 순찰 목표를 뽑을 때 몇 번 실패하면 반경을 1.5배로 넓히는지, 그리고 몇 번까지
+# 넓히는지 (`maxAttemptBeforeExpand` · `expandCount < 3`). 작은 만에 갇힌 배가
+# 영원히 후보를 못 찾는 것을 막는 장치다.
+PATROL_ATTEMPTS_BEFORE_EXPAND = 500
+PATROL_MAX_EXPANDS = 3
 WARSHIP_TARGETTING_RANGE = 130
 WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
 WARSHIP_DOCKING_RANGE = 5
