@@ -4264,6 +4264,33 @@ AI 도 그걸 읽어 `assistAllies` 로 도우러 간다. 그런데 **사람 화
 > **원본에 있는 코드가 다 도는 것은 아니다.** `decreaseLevel`(§5.49 — 아무도
 > 안 부른다)에 이어 두 번째다. 옮기기 전에 **호출부와 주석 처리 여부**를 본다.
 
+#### 실행부 훑기 — 어디까지 봤나
+
+이번 세션에 `core/execution/*.ts` 를 크기순으로 훑었다. **확인이 끝난 것**:
+
+| 파일 | 줄 | 결과 |
+|---|---|---|
+| `WarshipExecution` | 825 | §5.58(사람 쪽 경로 하나) |
+| `NukeExecution` | 528 | §5.49(요격 창 · 대기) |
+| `PlayerExecution` | 507 | **§5.58(둘)** |
+| `AttackExecution` | 428 | §5.58(요청 거절) |
+| `DoomsdayClockExecution` | 388 | **§5.56(여섯)** |
+| `TrainExecution` · `TrainStationExecution` | 386 | **§5.60(셋)** |
+| `SAMLauncherExecution` | 364 | §5.49(요격 창만) |
+| `TransportShipExecution` | 337 | §5.58(요청 거절, 조건 다름) |
+| `MIRVExecution` | 283 | **§5.57(둘)** |
+| `WinCheckExecution` | 188 | **§5.61(값 셋)** |
+| `DonateGoldExecution` | 133 | **§5.63(둘)** |
+| `TribeExecution` | 129 | 이미 옮겨져 있었다 |
+| `DefensePostExecution` | 108 | **원본이 꺼 뒀다** |
+| `ConstructionExecution` · `PortExecution` | 326 | 같은 구조 |
+
+**아직 안 본 것**: `ShellExecution`(107 — 초소 포격이 꺼져 있으므로 뒤) ·
+`SAMMissileExecution`(98) · `DeleteUnitExecution`(93) · `QuickChatExecution`(80,
+멀티 전용) · `EmojiExecution`(66) · `MoveWarshipExecution`(53) ·
+`UpgradeStructureExecution`(50) · `FactoryExecution`(48) ·
+`MissileSiloExecution`(47) · `CityExecution`(44) 그 아래.
+
 ---
 
 ## 7. 다음 세션 재개 지점 (2026-08-27 기준)
