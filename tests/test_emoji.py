@@ -206,11 +206,26 @@ def test_ai_answers_a_donation_and_says_when_it_was_too_small():
 
 
 def test_ai_shakes_hands_when_it_accepts():
-    st = state({0: "human", 1: "nation"})
-    bot = NationBot(pid=1, rng=random.Random(0), difficulty="medium")
-    st.players[1].relations.update(0, 80)       # 우호 → 대체로 수락
-    assert bot._accepts_alliance(st, 0)
-    assert chats(st) and chats(st)[0] in emoji.HANDSHAKE
+    """수락하면 악수를 보낸다 — 다만 **1/3 확률**이다.
+
+    ⚠ §5.53 에서 바뀐 전제다. 옛 축소판은 수락할 때마다 보냈는데 원본은
+    `if (this.random.chance(3)) sendEmoji(HANDSHAKE)` 다. seed 를 여러 개 돌려
+    "적어도 가끔은 보낸다"로 재고, 수락 자체는 매번 확인한다."""
+    shook = accepted = 0
+    for seed in range(12):
+        st = state({0: "human", 1: "nation"})
+        bot = NationBot(pid=1, rng=random.Random(seed), difficulty="medium")
+        st.players[1].relations.update(0, 80)   # 우호 → 대체로 수락
+        if bot._accepts_alliance(st, 0):
+            accepted += 1
+            said = chats(st)
+            if said:
+                assert said[0] in emoji.HANDSHAKE, said
+                shook += 1
+    # ⚠ 우호여도 **매번 수락하지는 않는다** — medium 은 5% 로 혼란에 빠진다
+    # (§5.53 의 첫 관문). 실측: seed 9 만 거절한다.
+    assert accepted >= 10, f"우호인데 {accepted}/12 만 수락 — 관계를 안 본다"
+    assert 0 < shook < accepted, f"악수가 {shook}/{accepted} — 확률이 안 걸렸다"
 
 
 # --- 배신자 규칙(이모지와 같이 들어온 것) -----------------------------------

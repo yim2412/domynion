@@ -35,6 +35,7 @@ from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
 from .nukes import NationNukeBehavior
+from .alliance import NationAllianceBehavior
 from .chatter import NationChatter
 from .mirv import NationMIRVBehavior
 from .structures import NationStructureBehavior
@@ -102,6 +103,8 @@ class NationBot:
         self.structures = NationStructureBehavior(self.pid, self.rng, self.difficulty)
         self.mirv = NationMIRVBehavior(self.pid, self.rng, self.difficulty)
         self.chatter = NationChatter(self.pid, self.rng)
+        self.alliance = NationAllianceBehavior(self.pid, self.rng,
+                                              self.difficulty)
         # ⚠ 체감 비용의 출발점은 **실비용**이다. 보유량에 따라 오르는 건물 비용과
         # 달리 핵은 "쏜 횟수"로만 오르므로, 여기서 한 번 잡아 두고 발사마다 곱한다.
         store = UnitStore()
@@ -133,6 +136,9 @@ class NationBot:
         # 빈도가 된다 — 매 tick 부르면 반응 주기(수십 tick)만큼 수다스러워진다.
         self.chatter.tick(st)
         self._embargoes(st)
+        # 연장 요청에 답하는 것은 **동맹 요청을 받는 것과 같은 판단**이다
+        # (원본도 `getAllianceDecision(human, true)` 를 그대로 쓴다).
+        self._alliance_extensions(st)
         self._maybe_attack(st)
 
     # --- 금수 -------------------------------------------------------------
@@ -447,25 +453,35 @@ class NationBot:
                 st.request_alliance(self.pid, foe.pid)
 
     def _accepts_alliance(self, st: GameState, requestor: int) -> bool:
-        """받을 것인가. 관계보다 **배신자 낙인이 먼저**다.
+        """`getAllianceDecision(other, isResponse=true)` — `ai/alliance.py` 로 옮겼다.
 
-        원본은 배신자를 90% 거절한다(`nextInt(0, 100) >= 10`). 관계만 보면 방금
-        남을 배신한 자가 관계가 중립이라는 이유로 받아들여진다 — 그러면 배신에
-        비용이 없어져 동맹 자체가 의미를 잃는다."""
-        if st.is_traitor(requestor) and self.rng.randrange(100) >= 10:
-            st.ai_emoji(self.pid, requestor, emoji.CONFUSED)
-            return False
-        rel = st.relation_of(self.pid, requestor)
-        if rel < Relation.NEUTRAL:
-            st.ai_emoji(self.pid, requestor, emoji.CONFUSED)
-            return False                       # 사이가 나쁘면 무조건 거절
-        if rel >= Relation.FRIENDLY:
-            ok = self.rng.randrange(3) != 0    # 우호면 대체로 받는다
-        else:
-            ok = self.rng.random() < 0.5       # 중립은 여전히 반반
-        if ok:
-            st.ai_emoji(self.pid, requestor, emoji.HANDSHAKE)
-        return ok
+        ⚠ 전에는 관문 셋짜리 축소판이었다(배신자 90% · 관계 · **동전 던지기**).
+        그 동전 던지기 자리에 원본은 판단 넷을 갖고 있다 — 위협이면 오히려 받고,
+        동맹이 너무 많은 상대는 거절하고, 초반이면 그냥 받고, 마지막엔 비슷하게
+        강한지를 본다(§5.53)."""
+        return self.alliance.decide(st, requestor, is_response=True)
+
+    def _alliance_extensions(self, st: GameState) -> None:
+        """`handleAllianceExtensionRequests` — **사람이 연장을 요청한 동맹**에만
+        답한다.
+
+        ⚠ 이식 누락 서른셋의 나머지 절반. `Alliance.request_extension` 과
+        `both_agreed_to_extend` 는 `diplomacy.py` 에 **있었는데 아무도 안 불렀다.**
+        사람 쪽 버튼도, AI 쪽 동의도 없어서 모든 동맹이 예외 없이 만료됐다."""
+        for al in st.diplomacy.alliances:
+            if not al.involves(self.pid):
+                continue
+            # 한쪽만 동의한 상태 = 상대가 요청해 둔 상태다. 둘 다면 이미 끝났고,
+            # 아무도 안 했으면 답할 것이 없다.
+            if al.both_agreed_to_extend:
+                continue
+            other = al.other(self.pid)
+            mine = al._extend_a if self.pid == al.a else al._extend_b
+            theirs = al._extend_b if self.pid == al.a else al._extend_a
+            if mine or not theirs:
+                continue
+            if self.alliance.decide(st, other, is_response=True):
+                al.request_extension(self.pid)
 
     # --- 전함 -------------------------------------------------------------
 

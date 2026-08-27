@@ -59,6 +59,9 @@ CONGRATULATE = ("👏",)
 BORED = ("🥱",)
 GREET = ("👋",)
 
+# 동맹 판단(§5.53). 위협적인 상대에게 손을 내밀 때 — 원본 `EMOJI_SCARED_OF_THREAT`.
+SCARED_OF_THREAT = ("🙏", "🥺")
+
 # 표적 요청에 대한 답. **거절에도 말이 있어야** 왜 안 도와주는지 안다.
 ASSIST_ACCEPT = ("👍", "🤝", "🎯")
 ASSIST_RELATION_TOO_LOW = ("🥱", "🤦")
