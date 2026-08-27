@@ -183,7 +183,73 @@ class NationBot:
                 return
             self._alliance_requests(st, enemies)
 
+        # 배신은 **중립 확장 뒤, 최선 표적 앞**이다(원본 `AiAttackBehavior` 의
+        # 판단 사슬 순서). 앞으로 당기면 빈 땅이 남았는데도 동맹을 깨고, 뒤로
+        # 미루면 배신할 만한 상대를 그냥 이웃으로 두고 지나간다.
+        friends = [q for q in others
+                   if st.diplomacy.allied(self.pid, q.pid)]
+        if self._maybe_betray_and_attack(st, friends, enemies):
+            return
+
         self._attack_best(st, enemies)
+
+    def _maybe_betray_and_attack(self, st: GameState, friends: list,
+                                 enemies: list) -> bool:
+        """`maybeBetrayAndAttack` → `maybeBetray`.
+
+        ⚠ **이식 누락 서른하나.** 배신의 *대가*는 정성껏 옮겨 놓고(배신자는 동맹
+        요청의 90% 를 거절당하고 방어와 속도가 깎인다) 나라 AI 가 배신하는 *행동*
+        자체가 없었다. 그래서 그 상태에 들어가는 나라가 한 명도 없었다 — 봇이
+        배신자를 칠 때(`tribe.py`)와 사람이 직접 깰 때만 쓰이던 규칙이다.
+
+        원본은 네 가지 이유로 깬다. **난이도가 문턱이 아니라 이유의 개수로
+        들어간다** — easy 는 아래 둘째 하나만 본다:
+
+        1. (medium 초과) **거의 죽은 동맹**을 친다 — 병력 + 진행 중인 공격이
+           상한의 20% 미만이고 나보다 약하면. 원본 주석: *"For example MIRVed ones"*
+        2. (easy·medium) 내 병력이 **열 배** 이상이면. 원본 주석이 이 조건이
+           엉성하다는 것을 인정한다 — *"isn't really smart. It makes nations
+           vulnerable, but that's intended."* easy 는 **사람은 안 친다.**
+        3. (easy 제외) 상대가 **배신자**이고 나보다 1.2배 이상 강하지 않으면
+        4. (easy 제외) 이웃이 **그 하나뿐**이고 내가 세 배 이상 강하면
+        """
+        # ⚠ 이 조기 탈출은 **변이로 안 잡힌다. 정상이다** — 지워도 아래 루프가
+        # 빈 목록을 돌 뿐이라 관찰 가능한 차이가 없다(원본에도 같은 검사가 있고
+        # 같은 이유로 무동작이다). 성능용이니 파지 말 것.
+        if not friends:
+            return False
+        bordering = len(friends) + len(enemies)
+        me = st.players[self.pid]
+        for friend in friends:
+            if not self._betrays(st, me, friend, bordering):
+                continue
+            if st.break_alliance(self.pid, friend.pid):
+                if self._send_attack(st, friend.pid):
+                    return True
+        return False
+
+    def _betrays(self, st: GameState, me, other, bordering: int) -> bool:
+        """`maybeBetray` 의 판정만. 깨는 것은 부르는 쪽이 한다."""
+        easy_side = self.difficulty in ("easy", "medium")
+        if not easy_side:
+            outgoing = sum(a.troops for a in st.attacks if a.attacker == other.pid)
+            cap = other.max_troops(max(1, st.tiles(other.pid)))
+            if (other.troops + outgoing < cap * C.BETRAY_WEAK_TROOP_RATIO
+                    and other.troops < me.troops):
+                return True
+        if easy_side:
+            # easy 는 사람을 봐준다 — §5.27 의 `shouldAttack` 과 같은 성격이다
+            if not (self.difficulty == "easy" and other.kind == "human"):
+                if me.troops >= other.troops * C.BETRAY_STRONGER_MULTIPLE:
+                    return True
+        if self.difficulty != "easy":
+            if (st.is_traitor(other.pid)
+                    and other.troops < me.troops * C.BETRAY_TRAITOR_MARGIN):
+                return True
+            if (bordering == 1
+                    and other.troops * C.BETRAY_LONE_NEIGHBOUR_MULTIPLE < me.troops):
+                return True
+        return False
 
     def _assist_allies(self, st: GameState) -> bool:
         """`assistAllies` — 동맹이 찍은 표적을 대신 친다.

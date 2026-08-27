@@ -347,6 +347,13 @@ STRUCTURE_BULK_STEPS: tuple[int, ...] = (5, 10)
 # 핵은 더 작은 묶음이다. 원본 주석: *"x2 is the standard play against a single SAM"*.
 NUKE_BULK_STEPS: tuple[int, ...] = (2, 5)
 
+# NationAllianceBehavior.maybeBetray — AI 가 동맹을 깨는 네 가지 이유의 문턱.
+# 난이도는 문턱이 아니라 **어느 이유를 보는가**로 들어간다(§5.51).
+BETRAY_WEAK_TROOP_RATIO = 0.2        # 상한의 20% 미만이면 "거의 죽었다"
+BETRAY_STRONGER_MULTIPLE = 10.0      # easy·medium — 내가 열 배면 깬다
+BETRAY_TRAITOR_MARGIN = 1.2          # 배신자가 나보다 1.2배 넘게 강하면 참는다
+BETRAY_LONE_NEIGHBOUR_MULTIPLE = 3.0 # 이웃이 하나뿐이고 내가 세 배면 깬다
+
 # Config.ts :: SAM_CONSTRUCTION_TICKS
 SAM_CONSTRUCTION_TICKS = 30 * 10
 
