@@ -142,3 +142,41 @@ def test_owner_starts_neutral():
     gm = GameMap.load(MAPS[0])
     assert (gm.owner == -1).all()
     assert gm.owner.dtype == np.int16      # 8명이면 int8 도 되지만 여유를 둔다
+
+
+# --- 통행 마스크 캐시 (§5.50) -------------------------------------------------
+
+def test_the_passable_mask_is_cached():
+    """같은 배열을 돌려준다. **매번 새로 만들면 판의 28% 를 여기서 쓴다**(실측).
+
+    막지 않았으면: 원본 크기 지도에서 1,200 tick 에 11,138번, 매번 200만 칸
+    불린 배열을 새로 만든다."""
+    gm = GameMap.from_rows(["..." , "...", "..."])
+    first = gm.passable_mask()
+    assert gm.passable_mask() is first, "매번 새 배열을 만든다"
+
+
+def test_terrain_changes_drop_every_derived_cache():
+    """지형이 바뀌면 **파생 캐시를 전부** 버린다 — 마스크도, 바다 성분도, 접촉 성분도.
+
+    ⚠ `_touch_cc` 는 그동안 안 버려지고 있었다(주석이 경고만 하고 있었다).
+    셋을 한 함수에 모은 이유가 그것이다."""
+    gm = GameMap.from_rows(["...", "...", "..."])
+    before = gm.passable_mask()
+    gm.ocean_components()
+    gm._touch_cc[0] = frozenset({1})
+    assert gm._ocean_cc is not None
+
+    gm.invalidate_terrain_caches()
+    assert gm._ocean_cc is None
+    assert gm._touch_cc == {}
+    assert gm.passable_mask() is not before, "마스크가 그대로 남았다"
+
+
+def test_the_mask_follows_the_terrain_after_invalidation():
+    """캐시가 **옛 지형을 들고 있으면 안 된다.** 값까지 확인한다."""
+    gm = GameMap.from_rows(["...", "...", "..."])
+    assert int(gm.passable_mask().sum()) == 9
+    gm.terrain[4] = Terrain.OCEAN
+    gm.invalidate_terrain_caches()
+    assert int(gm.passable_mask().sum()) == 8

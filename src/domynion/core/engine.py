@@ -1071,8 +1071,9 @@ class GameState:
                     gm.raw[t] = C.OCEAN_BIT
                     gm.land_count -= 1
                 self.fallout.clear(t)
-            # 지형이 바뀌었다 — 바다 성분과 경로 캐시를 버린다(P4 의 전제가 깨진다)
-            gm._ocean_cc = None
+            # 지형이 바뀌었다 — 바다 성분·통행 마스크·경로 캐시를 버린다
+            # (P4 의 전제가 깨진다). 무효화 목록은 `GameMap` 안에 모아 뒀다.
+            gm.invalidate_terrain_caches()
             self._path_cache.clear()
         else:
             self.fallout.add([t for t in tiles if gm.terrain[t] != Terrain.OCEAN])

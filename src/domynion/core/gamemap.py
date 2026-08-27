@@ -92,7 +92,7 @@ class GameMap:
 
     __slots__ = ("width", "height", "size", "raw", "owner",
                  "terrain", "land_count", "name", "_ocean_cc", "nations",
-                 "_touch_cc")
+                 "_touch_cc", "_passable")
 
     def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
         if raw.size != width * height:
@@ -105,6 +105,7 @@ class GameMap:
         self.raw = raw
         self.terrain = _terrain_from_raw(raw)
         self.owner = np.full(self.size, -1, dtype=np.int16)   # -1 = 중립
+        self._passable: np.ndarray | None = None
         self.land_count = int(self.passable_mask().sum())
         self._ocean_cc: np.ndarray | None = None
         # 칸이 접한 바다 연결성분. 지형이 안 바뀌므로 한 번 재면 끝이다.
@@ -204,7 +205,26 @@ class GameMap:
         return C.Terrain.PLAINS <= self.terrain[t] <= C.Terrain.MOUNTAIN
 
     def passable_mask(self) -> np.ndarray:
-        return (self.terrain >= Terrain.PLAINS) & (self.terrain <= Terrain.MOUNTAIN)
+        """통행 가능한 칸의 불린 배열. **한 번 재고 캐시한다.**
+
+        ⚠ 실측(§5.50): 원본 크기 판에서 이 함수가 **전체 시간의 28%** 였다.
+        1,200 tick 에 11,138번 불리는데 매번 200만 칸 배열을 새로 만들고 있었다.
+        지형은 `WATER_NUKES` 로 육지가 바다가 될 때만 바뀌고, 그 자리에는 이미
+        `_ocean_cc` 와 경로 캐시를 버리는 코드가 있다 — 거기에 이 캐시를 얹었다.
+
+        돌려주는 배열을 **쓰는 쪽이 고치면 안 된다.** 지금은 아무도 안 고친다
+        (`border_targets` 는 reshape 해서 읽기만 한다)."""
+        if self._passable is None:
+            self._passable = ((self.terrain >= Terrain.PLAINS)
+                              & (self.terrain <= Terrain.MOUNTAIN))
+        return self._passable
+
+    def invalidate_terrain_caches(self) -> None:
+        """지형이 바뀌었을 때 버려야 하는 것 전부. **한 곳에 모아 둔다** —
+        새 캐시를 늘릴 때 무효화를 빠뜨리는 것이 이 자리의 유일한 위험이다."""
+        self._ocean_cc = None
+        self._passable = None
+        self._touch_cc.clear()
 
     def ocean_components(self) -> np.ndarray:
         """바다 연결성분 라벨(육지는 -1). 처음 부를 때 한 번 계산해 둔다."""
