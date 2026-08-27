@@ -4285,11 +4285,18 @@ AI 도 그걸 읽어 `assistAllies` 로 도우러 간다. 그런데 **사람 화
 | `DefensePostExecution` | 108 | **원본이 꺼 뒀다** |
 | `ConstructionExecution` · `PortExecution` | 326 | 같은 구조 |
 
-**아직 안 본 것**: `ShellExecution`(107 — 초소 포격이 꺼져 있으므로 뒤) ·
-`SAMMissileExecution`(98) · `DeleteUnitExecution`(93) · `QuickChatExecution`(80,
-멀티 전용) · `EmojiExecution`(66) · `MoveWarshipExecution`(53) ·
-`UpgradeStructureExecution`(50) · `FactoryExecution`(48) ·
-`MissileSiloExecution`(47) · `CityExecution`(44) 그 아래.
+100줄 아래도 훑었다 — `UpgradeStructureExecution` · `DeleteUnitExecution` ·
+`EmojiExecution` · `MissileSiloExecution` · `CityExecution` · `FactoryExecution`
+전부 **우리와 같은 구조**였다(역 생성은 §5.60 에서 옮겼고, 이모지 응답
+`respondToEmoji` 는 `core/emoji.py` 의 `reply_to` 다).
+
+**남은 것**: `ShellExecution`(107 — 초소 포격이 꺼져 있으므로 뒤) ·
+`SAMMissileExecution`(98 — SAM 미사일의 **비행**. 우리 SAM 은 즉시 요격하므로
+대응물이 없다, §5.49) · `QuickChatExecution`(80 — 멀티 전용) ·
+`MoveWarshipExecution`(53 — §5.58 에서 사람 쪽 경로로 옮겼다).
+
+즉 **`core/execution` 훑기는 사실상 끝났다.** 남은 셋은 우리 이식 방식에서
+대응물이 없거나(SAM 즉시 요격 · 초소 포격 꺼짐) 멀티 전용이다.
 
 ---
 
