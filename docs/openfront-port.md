@@ -4247,6 +4247,23 @@ AI 도 그걸 읽어 `assistAllies` 로 도우러 간다. 그런데 **사람 화
 
 `donate_troops` 도 같은 조건이다(`canDonateTroops`).
 
+#### 방어초소의 포격은 **원본이 스스로 꺼 뒀다**
+
+`DefensePostExecution.ts`(108줄)에 `shoot()` 과 `ShellExecution` 이 있어서
+"초소가 포격을 하는데 우리에겐 없다"고 볼 뻔했다. 그런데 표적을 고르는 코드가
+**통째로 주석 처리돼 있다:**
+
+```ts
+// TODO: Reconsider how/if defense posts target ships.
+// const ships = this.mg.nearbyUnits(...)
+```
+
+`target` 이 영영 `null` 이므로 `shoot()` 은 아무 일도 안 한다. **우리에게 없는
+것이 맞다.**
+
+> **원본에 있는 코드가 다 도는 것은 아니다.** `decreaseLevel`(§5.49 — 아무도
+> 안 부른다)에 이어 두 번째다. 옮기기 전에 **호출부와 주석 처리 여부**를 본다.
+
 ---
 
 ## 7. 다음 세션 재개 지점 (2026-08-27 기준)
