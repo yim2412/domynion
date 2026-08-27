@@ -1759,8 +1759,14 @@ class GameState:
         # 요구 점유율(전체의 2~35%)에 못 미치는 봇이 전부 표시돼 판이 클락으로
         # 정리돼 버린다 — 원본에서 클락은 **나라들의 교착 해결기**다.
         contenders = [p for p in self.alive if not p.is_bot]
+        # ⚠ 바의 분모는 **낙진을 뺀 땅**이다(원본: `numLandTiles() -
+        # numTilesWithFallout()`). 썩음이 낙진을 만들므로 판이 갈수록 분모가
+        # 줄고 바가 상대적으로 높아진다 — 전부 세면 후반에 클락이 헐거워진다.
+        # `fallout` 이 없는 상태(옛 테스트가 만드는 최소 상태)도 견딘다
+        burnt = int(self.fallout.mask.sum()) if self.fallout is not None else 0
+        usable = self.gmap.land_count - burnt
         self.clock.update(elapsed, {p.pid: self.tiles(p.pid) for p in contenders},
-                          self.gmap.land_count, team_game)
+                          max(1, usable), team_game)
         for p in contenders:
             if not p.alive:
                 continue

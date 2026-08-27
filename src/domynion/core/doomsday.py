@@ -111,12 +111,29 @@ class DoomsdayClock:
                land_count: int, team_game: bool = False) -> None:
         """바 아래면 표시하고, 다시 올라오면 표시를 지운다.
 
-        원본 주석: "the drain stops the moment it climbs back" — 되돌아오면 회복된다."""
+        원본 주석: "the drain stops the moment it climbs back" — 되돌아오면 회복된다.
+
+        ⚠ **1등은 절대 표시되지 않는다**(§5.56). 원본 주석이 이유를 적어 뒀다:
+        *"the leader always keeps its army: the game can never freeze with every
+        remaining side crippled at the floor, and the final wave squeezes out
+        everyone but the leader -> a single winner."* 즉 클락은 **도전자들을
+        선두 쪽으로 몰아 정리하는 장치**이지 모두를 깎는 장치가 아니다.
+
+        ⚠ `land_count` 는 **낙진을 뺀 땅**이어야 한다. 썩음이 낙진을 만들므로
+        판이 진행될수록 분모가 줄고 바가 상대적으로 높아진다."""
         if not self.cfg.enabled:
             return
+        # 남은 편이 하나뿐이면 아무도 표시하지 않는다(원본: 승자가 정해졌거나
+        # 임박한 상태 — `sides.length < 2` 면 전부 지운다).
+        # ⚠ **변이로 안 잡힌다. 정상이다** — 혼자 남으면 그가 곧 선두라 아래
+        # 면제가 이미 같은 일을 한다. 원본에 있는 분기라 남긴다.
+        if len(tiles_of) < 2:
+            self.marked_at.clear()
+            return
+        leader = max(tiles_of, key=lambda pid: tiles_of[pid])
         bar = self.bar_tiles(elapsed, land_count, team_game)
         for pid, n in tiles_of.items():
-            if n < bar:
+            if pid != leader and n < bar:
                 self.marked_at.setdefault(pid, elapsed)
             else:
                 self.marked_at.pop(pid, None)

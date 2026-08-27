@@ -99,16 +99,16 @@ def test_climbing_back_over_the_bar_clears_the_mark():
     """원본 주석: "the drain stops the moment it climbs back"."""
     c = DoomsdayClock()
     c.cfg.enabled = True
-    c.update(1200, {0: 1}, land_count=10_000)
+    c.update(1200, {0: 1, 1: 9_000}, land_count=10_000)   # 1번이 선두
     assert 0 in c.marked_at
-    c.update(1210, {0: 9_999}, land_count=10_000)
+    c.update(1210, {0: 9_999, 1: 1}, land_count=10_000)   # 0번이 올라섰다
     assert 0 not in c.marked_at, "바 위로 올라왔는데 표시가 남았다"
 
 
 def test_warning_window_delays_the_drain():
     c = DoomsdayClock()
     c.cfg.enabled = True
-    c.update(1000, {0: 0}, land_count=10_000)
+    c.update(1000, {0: 0, 1: 9_000}, land_count=10_000)   # 1번이 선두
     assert c.drain_fraction(0, 1000 + c.cfg.warn_seconds - 1) == 0.0, "경고 중엔 안 샌다"
     assert c.drain_fraction(0, 1000 + c.cfg.warn_seconds + 1) > 0.0
 
@@ -116,7 +116,7 @@ def test_warning_window_delays_the_drain():
 def test_drain_ramps_from_two_to_five_percent():
     c = DoomsdayClock()
     c.cfg.enabled = True
-    c.update(1000, {0: 0}, land_count=10_000)
+    c.update(1000, {0: 0, 1: 9_000}, land_count=10_000)   # 1번이 선두
     start = c.drain_fraction(0, 1000 + c.cfg.warn_seconds)
     full = c.drain_fraction(0, 1000 + c.cfg.warn_seconds + c.cfg.drain_ramp_seconds)
     assert start == pytest.approx(c.cfg.drain_start_percent / 100)
@@ -127,7 +127,7 @@ def test_troop_floor_decays_leaving_one_comeback_window():
     """바닥이 40% 에서 5% 로 내려간다 — 반격 기회를 한 번 주되 영구히 살리지 않는다."""
     c = DoomsdayClock()
     c.cfg.enabled = True
-    c.update(1000, {0: 0}, land_count=10_000)
+    c.update(1000, {0: 0, 1: 9_000}, land_count=10_000)   # 1번이 선두
     early = c.troop_floor_fraction(0, 1000 + c.cfg.warn_seconds)
     late = c.troop_floor_fraction(0, 1000 + c.cfg.warn_seconds + c.cfg.floor_decay_seconds)
     assert early == pytest.approx(0.40)
@@ -139,7 +139,7 @@ def test_rot_is_a_deadline_not_a_rate():
     바 아래에 있어도 판이 안 끝난다."""
     c = DoomsdayClock()
     c.cfg.enabled = True
-    c.update(1000, {0: 0}, land_count=10_000)
+    c.update(1000, {0: 0, 1: 9_000}, land_count=10_000)   # 1번이 선두
     deadline = 1000 + c.cfg.warn_seconds + c.cfg.rot_death_seconds
     assert not c.is_dead(0, deadline - 1)
     assert c.is_dead(0, deadline)
@@ -149,7 +149,7 @@ def test_disabled_clock_does_nothing():
     """원본 기본값도 꺼져 있다."""
     c = DoomsdayClock()
     assert not c.cfg.enabled
-    c.update(5000, {0: 0}, land_count=10_000)
+    c.update(5000, {0: 0, 1: 9_000}, land_count=10_000)   # 1번이 선두
     assert c.marked_at == {}
 
 
@@ -411,3 +411,63 @@ def test_the_fleet_curve_is_convex():
     assert early < late < top
     # 볼록: 절반 지점이 천장의 **2.4%**(실측). 선형이면 50% 근처여야 한다.
     assert early < top * 0.05, f"절반 지점이 {early / top * 100:.1f}% — 선형이다"
+
+
+def test_the_leader_is_never_doomed():
+    """⚠ **1등은 절대 표시되지 않는다.**
+
+    원본 주석: *"the leader always keeps its army: the game can never freeze with
+    every remaining side crippled at the floor, and the final wave squeezes out
+    everyone but the leader -> a single winner."*
+
+    막지 않았으면: 마지막 파도(35%)에서 **모두가** 바 아래로 떨어져 전원이 바닥에
+    묶인 채 판이 얼어붙는다."""
+    c_ = DoomsdayClock()
+    c_.cfg.enabled = True
+    # 셋 다 바(1200초 시점 ≈ 7%) 아래다 — 1등도 700칸에 못 미친다
+    c_.update(1200, {0: 600, 1: 300, 2: 100}, land_count=10_000)
+    assert 0 not in c_.marked_at, "1등이 표시됐다 — 판이 얼어붙는다"
+    assert 1 in c_.marked_at and 2 in c_.marked_at
+
+
+def test_the_bar_ignores_fallout_land():
+    """바의 분모는 **낙진을 뺀 땅**이다. 썩음이 낙진을 만들므로 판이 갈수록
+    분모가 줄고 바가 상대적으로 높아진다.
+
+    막지 않았으면: 후반에 클락이 헐거워져 교착이 안 풀린다."""
+    c_ = DoomsdayClock()
+    c_.cfg.enabled = True
+    full = c_.bar_tiles(1200, 10_000)
+    burnt = c_.bar_tiles(1200, 5_000)           # 절반이 낙진이 됐다면
+    assert burnt < full
+    assert burnt == pytest.approx(full / 2, rel=0.02)
+
+
+def test_a_lone_survivor_is_never_doomed():
+    """편이 하나만 남으면 아무도 표시하지 않는다(원본: `sides.length < 2`)."""
+    c_ = DoomsdayClock()
+    c_.cfg.enabled = True
+    c_.update(1200, {0: 1, 1: 9_000}, land_count=10_000)
+    assert 0 in c_.marked_at
+    c_.update(1210, {0: 1}, land_count=10_000)  # 1번이 사라졌다
+    assert c_.marked_at == {}, "혼자 남았는데 표시가 남아 있다"
+
+
+def test_the_engine_passes_fallout_adjusted_land_to_the_bar():
+    """⚠ **로직과 배선을 따로 잰다.** 위 테스트는 `bar_tiles` 를 직접 불러
+    분모만 봤다 — 엔진이 그 값을 실제로 넘기는지는 안 봤고, 그래서 배선을
+    지우는 변이(P3)가 살아남았다.
+
+    낙진을 절반 깔면 요구치가 절반이 돼 **바 위로 올라서는** 나라가 생긴다."""
+    st = doomed(40)
+    st.clock.marked_at.clear()
+    st.tick()
+    assert 1 in st.clock.marked_at, "재료가 바 아래를 안 만든다"
+
+    # 낙진을 깔아 분모를 줄인다 — 요구치가 내려가 40칸이 바 위가 된다
+    w = st.gmap.width
+    burn = [i for i in range(500, 1000)]        # 0번 땅 쪽 절반을 태운다
+    st.fallout.add(burn)
+    st.clock.marked_at.clear()
+    st.tick()
+    assert 1 not in st.clock.marked_at,         "낙진을 뺀 분모를 엔진이 안 넘긴다 — 요구치가 그대로다"
