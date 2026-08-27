@@ -35,6 +35,7 @@ from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
 from .nukes import NationNukeBehavior
+from .mirv import NationMIRVBehavior
 from .structures import NationStructureBehavior
 
 # `getAttackRate()` — 난이도별 반응 주기(tick). 10Hz 이므로 65 tick = 6.5초.
@@ -98,6 +99,7 @@ class NationBot:
         self.attack_tick = self.rng.randrange(self.attack_rate)
         self._build_tick = self.rng.randrange(self.attack_rate)
         self.structures = NationStructureBehavior(self.pid, self.rng, self.difficulty)
+        self.mirv = NationMIRVBehavior(self.pid, self.rng, self.difficulty)
         # ⚠ 체감 비용의 출발점은 **실비용**이다. 보유량에 따라 오르는 건물 비용과
         # 달리 핵은 "쏜 횟수"로만 오르므로, 여기서 한 번 잡아 두고 발사마다 곱한다.
         store = UnitStore()
@@ -660,6 +662,11 @@ class NationBot:
         거기서 끝이다 — 골드를 이미 썼으므로 전함·핵까지 이어 가면 안 된다."""
         p = st.players[self.pid]
         if not len(st.gmap.owned_refs(self.pid)):
+            return
+        # ⚠ **MIRV 가 건물보다 먼저다**(원본 `NationExecution` 의 호출 순서).
+        # 건물에 골드를 써 버린 뒤에 보면 MIRV 는 영원히 못 산다 — 그래서
+        # `getSaveUpTarget` 이 MIRV 값을 목표로 잡아도 아무 일이 안 일어났다.
+        if self.mirv.consider(st):
             return
         if self.structures.handle(st):
             return

@@ -27,7 +27,7 @@ from domynion.core.engine import GameState                    # noqa: E402
 from domynion.core.gamemap import GameMap                     # noqa: E402
 from domynion.core.state import PlayerState                   # noqa: E402
 from domynion.core.units import UNIT_INFO, UnitType           # noqa: E402
-from domynion.ui.actions import build_items                   # noqa: E402
+from domynion.ui.actions import attack_items, build_items     # noqa: E402
 
 
 def state() -> GameState:
@@ -318,3 +318,92 @@ def test_the_count_beside_the_name_is_the_level_sum():
     u = a_city(st, x=10, y=10)
     st.upgrade(0, u)
     assert city_item(st, st.gmap.ref(11, 11)).label.startswith("도시·2")
+
+
+# --- 핵 대량 구매 (§5.49) ----------------------------------------------------
+
+def a_silo(st: GameState, x=10, y=10, pid=0, level=1):
+    u = st.build(pid, UnitType.MISSILE_SILO, st.gmap.ref(x, y))
+    assert u is not None
+    while u.under_construction:
+        st.tick()
+    for _ in range(level - 1):
+        st.upgrade(pid, u, 1)
+    # 발사관을 전부 비운다 — 방금 지은 사일로는 재장전 중일 수 있다
+    for _ in range(C.SILO_COOLDOWN_TICKS + 2):
+        st.tick()
+    return u
+
+
+def nuke_item(st, tile, name="원폭"):
+    return next(i for i in attack_items(st, 0, tile, noop) if i.label == name)
+
+
+def test_only_atom_bombs_can_be_bought_in_bulk():
+    """원본은 겹쳐 사는 것을 **원자탄에만** 연다(`isStackableNuke`)."""
+    st = state()
+    a_silo(st, level=5)
+    tile = st.gmap.ref(60, 20)                    # 상대 땅
+    assert nuke_item(st, tile, "원폭").submenu is not None
+    for name in ("수폭", "MIRV"):
+        assert nuke_item(st, tile, name).submenu is None, f"{name} 이 겹쳐 산다"
+
+
+def test_nuke_bulk_slots_use_2_and_5():
+    """핵의 고정 단계는 **2·5** 다(건물은 5·10). 자리는 늘 넷이다."""
+    st = state()
+    a_silo(st, level=5)
+    st.players[0].gold = st.players[0].units.bulk_cost(UnitType.ATOM_BOMB, 3)
+    sub = nuke_item(st, st.gmap.ref(60, 20)).submenu()
+    assert [i.label for i in sub] == ["×1", "×2", "×5", "×3"], [i.label for i in sub]
+    assert [i.enabled for i in sub] == [True, True, False, True]
+
+
+def test_ready_tubes_cap_the_bulk_amount():
+    """상한은 골드만이 아니다 — **발사관 수**가 같이 자른다(§5.34).
+
+    막지 않았으면: 골드만 있으면 Lv1 사일로 하나로 50발을 한 번에 지른다."""
+    st = state()
+    silo = a_silo(st, level=1)                    # 관 한 개
+    st.players[0].gold = 100_000_000              # 골드는 넘친다
+    assert st.max_bulk_nuke(0, UnitType.ATOM_BOMB) == 1
+    assert nuke_item(st, st.gmap.ref(60, 20)).submenu is None,         "관이 하나인데 하위 메뉴를 열었다"
+
+    # 대조군 — 레벨을 올리면 관이 늘어 그만큼 열린다.
+    # ⚠ 새로 생긴 관은 **재장전부터 시작한다**(§5.34). 게다가 사일로는 tick 당
+    # 맨 앞 관 하나만 비우므로(원본이 `if`) 네 관을 비우는 데 네 tick 이 더 든다 —
+    # `+2` 로 뒀다가 4 를 받고 규칙이 틀린 줄 알았다.
+    st.upgrade(0, silo, 4)
+    for _ in range(C.SILO_COOLDOWN_TICKS + 6):
+        st.tick()
+    assert st.max_bulk_nuke(0, UnitType.ATOM_BOMB) == 5
+
+
+def test_a_bulk_slot_launches_that_many_nukes():
+    """×2 칸이 실제로 두 발을 쏘고 두 발치를 결제한다."""
+    st = state()
+    a_silo(st, level=5)
+    p = st.players[0]
+    p.gold = p.units.bulk_cost(UnitType.ATOM_BOMB, 2)
+    tile = st.gmap.ref(60, 20)
+    slot = next(i for i in nuke_item(st, tile).submenu() if i.label == "×2")
+    slot.action()
+    assert len(st.nukes) == 2, [n.utype for n in st.nukes]
+    assert p.gold == 0
+
+
+def test_a_bulk_launch_stops_when_the_tubes_run_out():
+    """요청보다 적게 나가면 **그 사실을 말해 준다.** 조용히 삼키면 안 된다."""
+    st = state()
+    a_silo(st, level=2)
+    p = st.players[0]
+    p.gold = 100_000_000
+    said = []
+    tile = st.gmap.ref(60, 20)
+    item = next(i for i in attack_items(st, 0, tile, said.append)
+                if i.label == "원폭")
+    # 관이 둘뿐인데 ×5 를 누른다 — 하위 메뉴는 골드 기준으로 열려 있다
+    slot = next(i for i in item.submenu() if i.label == "×5")
+    slot.action()
+    assert len(st.nukes) == 2
+    assert said and "5발 중 2발" in said[-1], said

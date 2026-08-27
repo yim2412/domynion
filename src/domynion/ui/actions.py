@@ -121,17 +121,52 @@ def attack_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
     ]
     silos = [u for u in mine.units.of(UnitType.MISSILE_SILO)
              if not u.under_construction]
+    ready = st.ready_missiles(me)
     for ut in NUKES:
         cost = st.nuke_cost(me, ut)
-        ok = bool(silos) and mine.gold >= cost
+        ok = bool(silos) and mine.gold >= cost and ready > 0
+        # **원자탄만 겹쳐 산다**(원본 `isStackableNuke`). 수폭·MIRV 는 한 발씩이다 —
+        # SAM 하나를 뚫는 표준 수가 ×2 라 원본 주석이 그 자리를 설명해 뒀다.
+        top = st.max_bulk_nuke(me, ut) if ut is UnitType.ATOM_BOMB else 1
         items.append(Item(
-            NAMES[ut], action=(lambda u=ut: _nuke(st, me, u, tile, notify)),
+            NAMES[ut],
+            action=(None if top > 1 else
+                    (lambda u=ut: _nuke(st, me, u, tile, notify))),
+            submenu=((lambda u=ut: _nuke_amounts(st, me, u, tile, notify))
+                     if top > 1 else None),
             enabled=ok,
             hint=("사일로가 없다" if not silos else
+                  "발사관이 전부 재장전 중이다" if ready <= 0 else
                   f"골드 {_gold(cost)} 필요 (보유 {_gold(mine.gold)})"
-                  if mine.gold < cost else f"골드 {_gold(cost)}"),
+                  if mine.gold < cost else
+                  f"골드 {_gold(cost)}" + (f" · 최대 ×{top}" if top > 1 else "")),
             colour=COL_ATTACK))
     return items
+
+
+def _nuke_amounts(st: GameState, me: int, ut: UnitType, tile: TileRef,
+                  notify) -> list[Item]:
+    """핵 대량 구매 하위 메뉴 — 원본 `RadialMenuElements` 의 `NUKE_BULK_STEPS`.
+
+    건물 쪽(`_upgrade_amounts`)과 **같은 네 칸 배치**다: `[1, 2, 5, 최대]`.
+    단계 숫자만 다르다(건물은 5·10). 살 수 없는 칸도 회색으로 남기고, 중복도
+    지우지 않는다 — 자리가 밀리면 "늘 같은 자리"라는 목적 자체가 깨진다."""
+    mine = st.players[me]
+    top = st.max_bulk_nuke(me, ut)
+    slots = [1, *C.NUKE_BULK_STEPS, top]
+    out: list[Item] = []
+    for n in slots:
+        price = mine.units.bulk_cost(ut, n)
+        ok = n <= top
+        out.append(Item(
+            f"×{n}",
+            action=(lambda a=n: _nuke(st, me, ut, tile, notify, a)),
+            enabled=ok,
+            hint=(f"{n}발 · 골드 {_gold(price)}" if ok else
+                  f"골드 {_gold(price)} · 발사관 {n}개 필요 "
+                  f"(지금 {st.ready_missiles(me)}개)"),
+            colour=COL_ATTACK))
+    return out
 
 
 def _attack(st: GameState, me: int, target, notify) -> None:
@@ -141,9 +176,22 @@ def _attack(st: GameState, me: int, target, notify) -> None:
         notify(f"공격 개시 → {'중립' if target is None else f'P{target}'}")
 
 
-def _nuke(st: GameState, me: int, ut: UnitType, tile: TileRef, notify) -> None:
-    if st.launch_nuke(me, ut, tile) is None:
+def _nuke(st: GameState, me: int, ut: UnitType, tile: TileRef, notify,
+          amount: int = 1) -> None:
+    """`amount` 발을 같은 칸으로 쏜다. **요청한 수보다 적게 나갈 수 있다** —
+    골드나 발사관이 중간에 떨어지면 거기서 멈춘다(`_upgrade` 와 같은 규칙).
+    몇 발이 실제로 나갔는지를 그대로 알려 준다."""
+    sent = 0
+    for _ in range(amount):
+        if st.launch_nuke(me, ut, tile) is None:
+            break
+        sent += 1
+    if sent == 0:
         notify(f"{NAMES[ut]} 발사 실패 — 사일로와 골드를 확인하세요")
+    elif sent < amount:
+        notify(f"{NAMES[ut]} {amount}발 중 {sent}발만 나갔다 — 골드·발사관 부족")
+    elif amount > 1:
+        notify(f"{NAMES[ut]} {sent}발 발사")
     else:
         notify(f"{NAMES[ut]} 발사")
 

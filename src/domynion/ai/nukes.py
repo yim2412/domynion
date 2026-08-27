@@ -81,6 +81,12 @@ IMPOSSIBLE_CROWN_SHARE = 0.5
 # 높은 밀도 표적을 실제로 고를 확률 1/2(`chance(2)`).
 HIGH_DENSITY_CHANCE = 2
 
+# `maybeDestroyEnemySam` — impossible 이 물량으로 SAM 을 뚫을 때.
+# 레벨 N 짜리 SAM 은 N 발을 막고 재장전에 들어가므로 **N+1 발**이 필요하다.
+# 날아가는 동안 상대가 SAM 을 더 지을 수 있으니 5발마다 한 발을 더 얹는다.
+MAX_NATION_SILO_UPGRADE_LEVEL = 5
+SAM_OVERWHELM_EXTRA_PER = 5
+
 # FFA 왕관을 노리는 문턱 — 내 점유율보다 이만큼 앞서 있으면 친다.
 FFA_CROWN_THRESHOLD = {"easy": 0.4, "medium": 0.3, "hard": 0.2, "impossible": 0.1}
 
@@ -127,13 +133,162 @@ class NationNukeBehavior:
         if utype is None:
             return False
 
-        tile = self._pick_tile(st, p, target, silos, utype)
-        if tile is None:
+        tile, value = self._pick_tile_scored(st, p, target, silos, utype)
+        # ⚠ impossible 은 **점수가 0 이하인 칸에는 안 쏜다.** 대신 SAM 을 물량으로
+        # 뚫는 쪽으로 간다(`maybeDestroyEnemySam`). 다른 난이도는 값이 -1 이어도
+        # 그냥 쏜다 — 원본이 `bestValue > 0 || difficulty !== Impossible` 이다.
+        if tile is None or (self.difficulty == "impossible" and value <= 0):
+            if self.difficulty == "impossible":
+                return self._destroy_enemy_sam(st, p, target)
             return False
         if st.launch_nuke(self.pid, utype, tile) is None:
             return False
         self._record(st.tick_count, tile, utype)
         return True
+
+    # --- SAM 을 물량으로 뚫기 (impossible) --------------------------------
+
+    def _destroy_enemy_sam(self, st, p, target) -> bool:
+        """`maybeDestroyEnemySam` — 쏠 만한 자리가 없으면 **SAM 부터 없앤다.**
+
+        레벨 N 짜리 SAM 은 N 발을 막고 재장전에 들어간다. 그 칸을 사거리에 넣는
+        적 SAM 들의 **레벨 합 + 1** 발을 재장전 안에 몰아 넣으면 마지막 한 발이
+        들어간다. 그래서 이 함수의 어려움은 발사가 아니라 **도착 시각 맞추기**다.
+
+        ⚠ 계획은 엔진의 발사 순서를 그대로 흉내 내야 한다. `launch_nuke` 가
+        표적에서 가까운 사일로부터 고르므로 같은 순서로 줄을 세운다(원본은
+        맨해튼 거리, 우리 엔진은 유클리드다 — **엔진 쪽에 맞춘다.** 계획과 실제가
+        어긋나면 몇 발이 엉뚱한 사일로에서 나가 일제 사격이 흩어진다).
+
+        막히는 궤적의 사일로도 엔진은 그대로 고른다. 그 발은 요격돼 사라지지만
+        **관과 골드는 쓴다** — 그래서 계획에서 빼지 않고 "낭비되는 발"로 센다."""
+        if any(n.owner == self.pid and n.utype is UnitType.ATOM_BOMB
+               for n in st.nukes):
+            return False                      # 이미 날아가는 원자탄이 있다
+        atom_cost = p.units.cost(UnitType.ATOM_BOMB)
+        enemy_sams = [u for u in target.units.of(UnitType.SAM_LAUNCHER)
+                      if not u.under_construction]
+        if not enemy_sams:
+            return False
+        silos = [u for u in p.units.of(UnitType.MISSILE_SILO)
+                 if not u.under_construction]
+        if not silos:
+            return False
+
+        all_sams = self._enemy_sams(st)
+        speed = NUKE_SPEED[UnitType.ATOM_BOMB]
+        max_spread = C.SAM_COOLDOWN_TICKS // 2
+        failed = None
+        needs_more_silos = False
+
+        for target_sam in sorted(enemy_sams, key=lambda u: u.level):
+            tt = target_sam.tile
+            covering = self._sams_covering(st, tt)
+            covering_ids = {id(u) for u in covering}
+            bombs_needed = sum(u.level for u in covering) + 1
+            total_bombs = bombs_needed + bombs_needed // SAM_OVERWHELM_EXTRA_PER
+
+            # 엔진이 고를 순서대로 줄을 세운다
+            plan = []
+            for silo in sorted(silos, key=lambda u: self._d2(st, u.tile, tt)):
+                slots = silo.ready_tubes
+                if slots <= 0:
+                    continue
+                blocked = self._trajectory_interceptable(
+                    st, silo.tile, tt, UnitType.ATOM_BOMB, all_sams,
+                    excluded=covering_ids)
+                flight = max(1, math.ceil(
+                    math.sqrt(self._d2(st, silo.tile, tt)) / speed))
+                plan.extend([(flight, blocked)] * slots)
+
+            free = [(i, f) for i, (f, blocked) in enumerate(plan) if not blocked]
+            if len(free) < total_bombs:
+                failed = failed or (tt, covering_ids, total_bombs)
+                needs_more_silos = True
+                continue
+
+            # 도착 시각이 `max_spread` 안에 들어오는 창을 가장 크게 잡는다
+            by_flight = sorted(free, key=lambda b: b[1])
+            best_start, best_count = 0, 0
+            for s in range(len(by_flight)):
+                e = s
+                while (e < len(by_flight)
+                       and by_flight[e][1] - by_flight[s][1] <= max_spread):
+                    e += 1
+                if e - s > best_count:
+                    best_start, best_count = s, e - s
+            if best_count < total_bombs:
+                failed = failed or (tt, covering_ids, total_bombs)
+                needs_more_silos = True
+                continue
+
+            window = sorted(by_flight[best_start:best_start + best_count])
+            chosen = window[:total_bombs]
+            chosen_idx = {i for i, _f in chosen}
+            fire_count = chosen[-1][0] + 1
+            first_flight = min(f for _i, f in chosen)
+            stagger = max(1, max_spread // total_bombs)
+
+            if p.gold < atom_cost * fire_count:
+                continue                      # 골드가 모자라면 다음 SAM 을 본다
+
+            k = 0
+            sent = 0
+            for i in range(fire_count):
+                if i in chosen_idx:
+                    wait = max(0, first_flight + k * stagger - plan[i][0])
+                    k += 1
+                else:
+                    wait = 0                  # 낭비되는 발 — 바로 쏜다
+                if st.launch_nuke(self.pid, UnitType.ATOM_BOMB, tt,
+                                  wait_ticks=wait) is None:
+                    break
+                # ⚠ **발마다** 기록한다. 원본도 `sendNuke` 를 발마다 부르므로
+                # 체감 비용이 그만큼 오른다 — 한 번만 올리면 일제 사격이 공짜에
+                # 가까워져 다음 판단이 계속 이쪽으로 쏠린다.
+                self._record(st.tick_count, tt, UnitType.ATOM_BOMB)
+                sent += 1
+            return sent > 0
+
+        if needs_more_silos and failed is not None:
+            self._upgrade_helpful_silo(st, p, failed)
+        return False
+
+    def _upgrade_helpful_silo(self, st, p, failed) -> bool:
+        """`maybeUpgradeHelpfulSilo` — **그 계획에 실제로 보탬이 되는** 사일로만 올린다.
+
+        조건 셋: 실패한 표적으로 가는 궤적이 (뚫으려는 SAM 말고) 다른 SAM 에
+        안 막힐 것 · 레벨이 상한 미만일 것 · 최대 레벨까지 올려도 발 수가 모자라면
+        **아예 안 올릴 것**(그건 낭비다). 그중에서 **내 SAM 이 가장 잘 지켜 주는**
+        것을 고른다 — 사일로가 반격에 먼저 죽으면 계획 자체가 사라진다."""
+        tt, covering_ids, total_bombs = failed
+        silos = [u for u in p.units.of(UnitType.MISSILE_SILO) if u.active]
+        if not silos:
+            return False
+        all_sams = self._enemy_sams(st)
+        free = [u for u in silos
+                if not self._trajectory_interceptable(
+                    st, u.tile, tt, UnitType.ATOM_BOMB, all_sams,
+                    excluded=covering_ids)]
+        if not free:
+            return False
+        if len(free) * MAX_NATION_SILO_UPGRADE_LEVEL < total_bombs:
+            return False                      # 최대까지 올려도 모자란다
+        my_sams = [u for u in p.units.of(UnitType.SAM_LAUNCHER)]
+        best, best_cover = None, -1
+        for silo in free:
+            if silo.level >= MAX_NATION_SILO_UPGRADE_LEVEL:
+                continue
+            if not st.can_upgrade(self.pid, silo):
+                continue
+            cover = sum(s.level for s in my_sams
+                        if self._d2(st, silo.tile, s.tile)
+                        <= sam_range(s.level) ** 2)
+            if cover > best_cover:
+                best, best_cover = silo, cover
+        if best is None:
+            return False
+        return st.upgrade(self.pid, best, 1) > 0
 
     # --- 표적 나라 --------------------------------------------------------
 
@@ -323,13 +478,17 @@ class NationNukeBehavior:
     # --- 타일 -------------------------------------------------------------
 
     def _pick_tile(self, st, p, target, silos, utype):
+        """가장 좋은 칸만 돌려주는 얇은 겉면. 점수까지 필요하면 아래를 쓴다."""
+        return self._pick_tile_scored(st, p, target, silos, utype)[0]
+
+    def _pick_tile_scored(self, st, p, target, silos, utype):
         """후보를 모아 `nukeTileScore` 로 가장 좋은 칸을 고른다.
 
         후보 = 무작위 영토 칸 + **상대 건물이 선 칸 전부**. 건물 칸을 빼면
         알짜를 영영 못 맞힌다 — 무작위로 건물 위를 찍을 확률은 거의 0이다."""
         tiles = st.gmap.owned_refs(target.pid)
         if not len(tiles):
-            return None
+            return None, -1.0
         n = (NUKE_RANDOM_TILES_IMPOSSIBLE if self.difficulty == "impossible"
              else NUKE_RANDOM_TILES)
         n = min(n, len(tiles))
@@ -358,14 +517,14 @@ class NationNukeBehavior:
             v = self.tile_score(st, t, silos, structures, utype)
             if v > best_v:
                 best, best_v = t, v
-        return best
+        return best, best_v
 
     def _d2(self, st, a: TileRef, b: TileRef) -> int:
         w = st.gmap.width
         return (a % w - b % w) ** 2 + (a // w - b // w) ** 2
 
     def _enemy_sams(self, st) -> list:
-        """궤적 검사에 쓸 (타일, 사거리²) 목록. 후보 칸마다 다시 모으면 안 된다."""
+        """궤적 검사에 쓸 (유닛, 사거리²) 목록. 후보 칸마다 다시 모으면 안 된다."""
         out = []
         for q in st.alive:
             if q.pid == self.pid or st.diplomacy.is_friendly(self.pid, q.pid):
@@ -374,11 +533,19 @@ class NationNukeBehavior:
                 if u.under_construction:
                     continue
                 r = sam_range(u.level)
-                out.append((u.tile, r * r))
+                out.append((u, r * r))
         return out
 
+    def _sams_covering(self, st, tile: TileRef) -> list:
+        """`findEnemySamsCoveringTile` — 이 칸을 사거리에 넣는 적 SAM 전부.
+
+        일제 사격으로 뚫어야 할 요격 용량이 **이들 레벨의 합**이다."""
+        return [u for u, r2 in self._enemy_sams(st)
+                if self._d2(st, u.tile, tile) <= r2]
+
     def _trajectory_interceptable(self, st, src: TileRef, dst: TileRef,
-                                  utype, enemy_sams: list) -> bool:
+                                  utype, enemy_sams: list,
+                                  excluded: set | None = None) -> bool:
         """`isTrajectoryInterceptableBySam` — 이 궤적이 SAM 에 걸리는가.
 
         원본은 포물선 경로를 뽑아 훑지만 **우리 핵은 직선으로 난다**(`Nuke.tile`).
@@ -399,8 +566,11 @@ class NationNukeBehavior:
             n.advance()
             here = n.tile(gm)
             if is_targetable(gm, src, dst, here):
-                for tile, r2 in enemy_sams:
-                    if self._d2(st, tile, here) <= r2:
+                for u, r2 in enemy_sams:
+                    # 일부러 물량으로 뚫으려는 SAM 은 장애물로 세지 않는다
+                    if excluded is not None and id(u) in excluded:
+                        continue
+                    if self._d2(st, u.tile, here) <= r2:
                         return True
             if n.arrived(gm):
                 break

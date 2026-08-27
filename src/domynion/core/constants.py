@@ -344,6 +344,8 @@ MAX_UPGRADE_AMOUNT = 50
 # 자리를 고정하는 이유가 주석에 적혀 있다 — "muscle memory". 살 수 없는 칸도
 # 숨기지 않고 회색으로 남긴다.
 STRUCTURE_BULK_STEPS: tuple[int, ...] = (5, 10)
+# 핵은 더 작은 묶음이다. 원본 주석: *"x2 is the standard play against a single SAM"*.
+NUKE_BULK_STEPS: tuple[int, ...] = (2, 5)
 
 # Config.ts :: SAM_CONSTRUCTION_TICKS
 SAM_CONSTRUCTION_TICKS = 30 * 10

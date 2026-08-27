@@ -381,3 +381,36 @@ def test_sam_near_the_launch_site_also_intercepts():
         if n not in st.nukes:
             break
     assert not st.fallout.at(dst), "발사점 옆 SAM 이 못 막았다"
+
+
+# --- 겹쳐 산 핵의 대기 (§5.49) -----------------------------------------------
+
+def test_stacked_launches_from_one_silo_trail_each_other():
+    """같은 사일로에서 한 tick 에 여러 발을 쏘면 **한 발씩 밀려 나간다.**
+
+    막지 않았으면: 다섯 발이 겹쳐 날아 같은 칸에 동시에 떨어진다 — 뒤의 넷은
+    이미 바다가 된 자리를 다시 때리는 셈이고, SAM 쪽에서도 한 번에 처리된다."""
+    st = wide_state()
+    st.players[0].gold = 10_000_000
+    src = st.gmap.ref(20, 20)
+    silo = give_silo(st, 0, src)
+    silo.level = 5                                # 관 다섯
+    dst = st.gmap.ref(120, 20)
+
+    fired = [st.launch_nuke(0, UnitType.ATOM_BOMB, dst) for _ in range(3)]
+    assert all(n is not None for n in fired), "관이 모자라 세 발이 안 나갔다"
+    assert [n.wait_ticks for n in fired] == [0, 1, 2],         [n.wait_ticks for n in fired]
+
+    # 대기 중에는 제자리다 — 첫 tick 뒤에도 두·세 번째는 발사점에 있다
+    st.tick()
+    assert fired[0].tile(st.gmap) != src
+    assert fired[2].tile(st.gmap) == src, "대기 중인 핵이 움직였다"
+
+
+def test_a_fresh_silo_launches_with_no_delay():
+    """대조군 — 큐가 빈 사일로는 밀리지 않는다. 늘 미는 것이 아니다."""
+    st = wide_state()
+    st.players[0].gold = 10_000_000
+    give_silo(st, 0, st.gmap.ref(20, 20))
+    n = st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(120, 20))
+    assert n.wait_ticks == 0

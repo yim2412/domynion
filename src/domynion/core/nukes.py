@@ -131,6 +131,13 @@ class Nuke:
     src: TileRef
     dst: TileRef
     progress: float = 0.0
+    # `NukeExecution.waitTicks` — **겹쳐 산 핵은 한 발씩 밀려 나간다.** 같은
+    # 사일로에서 한 tick 에 여러 발을 쏘면 원본은 발사 시각을 하나씩 뒤로 민다
+    # (원본 주석: *"delay each missile so launches from the same silo trail each
+    # other instead of overlapping"*). 미는 동안에도 핵은 발사점에 떠 있으므로
+    # SAM 의 표적이 될 수 있다.
+    wait_ticks: int = 0
+
 
     def tile(self, gmap: GameMap) -> TileRef:
         w = gmap.width

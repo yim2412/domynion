@@ -883,8 +883,14 @@ class GameState:
 
     # --- 핵 ---------------------------------------------------------------
 
-    def launch_nuke(self, pid: int, utype: UnitType, dst: TileRef) -> Nuke | None:
-        """미사일 사일로에서 쏜다. 사일로가 없으면 못 쏜다."""
+    def launch_nuke(self, pid: int, utype: UnitType, dst: TileRef,
+                    wait_ticks: int = 0) -> Nuke | None:
+        """미사일 사일로에서 쏜다. 사일로가 없으면 못 쏜다.
+
+        `wait_ticks` 는 **부르는 쪽이 더 미는 시간**이다(원본 `NukeExecution` 의
+        생성자 인자). 사일로 큐 때문에 자동으로 밀리는 양에 **더해진다** — 원본도
+        `this.waitTicks += ...` 로 더한다. 도착 시각을 맞추는 일제 사격
+        (`maybeDestroyEnemySam`)이 이 인자를 쓴다."""
         p = self.players.get(pid)
         if p is None or not p.alive or self.over:
             return None
@@ -904,9 +910,20 @@ class GameState:
         if utype is UnitType.MIRV:
             self.mirvs_launched += 1
         silo = min(silos, key=lambda u: self._dist_sq(u.tile, dst))
+        # ⚠ **관을 막기 전에** 대기 tick 을 계산한다. 같은 사일로에서 한 tick 에
+        # 여러 발을 쏘면(대량 구매) 원본은 발사를 하나씩 뒤로 민다. 큐 전체를
+        # 봐야 한다 — 원본 주석: *"even if nukes have waitticks, the silo queue
+        # will be filled with the same tick"*.
+        wait = 0
+        last_dep = 0
+        for launch_tick in silo.missile_queue:
+            last_dep = max(launch_tick + 1, last_dep + 1)
+        if last_dep > self.tick_count:
+            wait = last_dep - self.tick_count
         silo.fire(self.tick_count)          # `silo.launch()` — 관 하나가 막힌다
         src = silo.tile
-        n = Nuke(owner=pid, utype=utype, src=src, dst=dst)
+        n = Nuke(owner=pid, utype=utype, src=src, dst=dst,
+                 wait_ticks=wait + max(0, wait_ticks))
         self.nukes.append(n)
         kind = {UnitType.HYDROGEN_BOMB: EventKind.HYDROGEN_BOMB_INBOUND,
                 UnitType.MIRV: EventKind.MIRV_INBOUND}.get(
@@ -952,6 +969,13 @@ class GameState:
     def _advance_nukes(self) -> None:
         still: list[Nuke] = []
         for n in self.nukes:
+            # 대기 중인 핵은 **발사점에 떠 있다.** 움직이지 않지만 요격은 된다
+            # (원본도 대기 분기에서 이동만 건너뛰고 유닛은 살아 있다).
+            if n.wait_ticks > 0:
+                n.wait_ticks -= 1
+                if not self._sam_intercepts(n):
+                    still.append(n)
+                continue
             n.advance()
             if self._sam_intercepts(n):
                 continue
@@ -1448,6 +1472,22 @@ class GameState:
                 break
             best = n
         return best
+
+    def max_bulk_nuke(self, pid: int, utype: UnitType) -> int:
+        """`maxBulkAmount` + **발사관 상한**. 한 번에 살 수 있는 핵 수다.
+
+        원본은 겹쳐 사는 것을 **원자탄에만** 연다(`isStackableNuke`) — 수폭·MIRV
+        는 한 발씩이다. 상한이 둘인 것이 핵심이다: 골드로 살 수 있는 수와
+        `readyMissileCount()`(§5.34 의 발사관) 중 **작은 쪽**."""
+        p = self.players.get(pid)
+        if p is None:
+            return 0
+        best = 0
+        for n in range(1, C.MAX_UPGRADE_AMOUNT + 1):
+            if p.units.bulk_cost(utype, n) > p.gold:
+                break
+            best = n
+        return min(best, self.ready_missiles(pid))
 
     # --- 철거 -------------------------------------------------------------
 

@@ -20,7 +20,7 @@ from domynion.core.attack import Attack
 from domynion.core.buildings import DefensePostIndex
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
-from domynion.core.nukes import NUKE_MAGNITUDES, Fallout
+from domynion.core.nukes import NUKE_MAGNITUDES, NUKE_SPEED, Fallout
 from domynion.core.relations import Relation
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitStore, UnitType
@@ -636,3 +636,109 @@ def test_sams_under_construction_do_not_block_trajectories():
     assert b._enemy_sams(st) == []
     assert not b._trajectory_interceptable(st, silo.tile, dst,
                                            UnitType.ATOM_BOMB, b._enemy_sams(st))
+
+
+# --- SAM 을 물량으로 뚫기 (§5.49 · impossible) --------------------------------
+
+def sam_material(sam_level: int = 1, silo_level: int = 5):
+    """내 사일로 하나 · 표적의 SAM 하나. **쏠 만한 자리가 없는 상태**로 만든다 —
+    표적 영토가 폭발 반경보다 좁아 `_blast_is_clean` 이 전부 막는다."""
+    st = state(players=2)
+    fill(st, 0, 0, 190, 40, 210)
+    silo = unit(st, 0, UnitType.MISSILE_SILO, 20, 200, level=silo_level)
+    fill(st, 1, 300, 195, 310, 205)              # 10×10 — 원자탄 반경 30 보다 좁다
+    s = unit(st, 1, UnitType.SAM_LAUNCHER, 305, 200, level=sam_level)
+    st.players[0].gold = 100_000_000
+    st.players[0].relations.update(1, -200)
+    return st, silo, s
+
+
+def test_impossible_overwhelms_a_sam_when_no_tile_scores():
+    """쏠 자리가 없으면 impossible 은 **SAM 을 물량으로 뚫는다.**
+
+    레벨 2 SAM 은 두 발을 막으므로 세 발이 필요하다(+보정 0)."""
+    st, silo, s = sam_material(sam_level=2)
+    b = behavior(pid=0, difficulty="impossible")
+    # 막지 않았으면 — 쏠 만한 칸이 하나도 없다
+    tile, value = b._pick_tile_scored(st, st.players[0], st.players[1],
+                                      [silo], UnitType.ATOM_BOMB)
+    assert tile is None or value <= 0, (tile, value)
+
+    assert b.maybe_send(st, always_attack) is True
+    assert len(st.nukes) == 3, [(n.dst, n.wait_ticks) for n in st.nukes]
+    assert all(n.dst == s.tile for n in st.nukes), "SAM 자리를 안 겨눴다"
+
+
+def test_the_salvo_is_sized_by_the_sam_level():
+    """발 수는 **덮는 SAM 레벨의 합 + 1**, 거기에 **5발마다 하나**를 더한다.
+
+    ⚠ 보정 항을 잊고 5발을 기대했다가 틀렸다. 레벨 4 SAM 은 5발이 필요하고
+    5//5 = 1 발이 더 붙어 **6발**이다. 관도 그만큼 있어야 한다."""
+    st, silo, s = sam_material(sam_level=4, silo_level=8)
+    b = behavior(pid=0, difficulty="impossible")
+    assert b.maybe_send(st, always_attack) is True
+    assert len(st.nukes) == 6, len(st.nukes)      # 4+1 = 5, +5//5 = 6
+
+    st2, silo2, s2 = sam_material(sam_level=1)
+    b2 = behavior(pid=0, difficulty="impossible")
+    assert b2.maybe_send(st2, always_attack) is True
+    assert len(st2.nukes) == 2, len(st2.nukes)    # 1+1 = 2, 보정 0
+
+
+def test_the_salvo_arrives_together():
+    """도착 시각을 **재장전 창 안에 고르게** 편다.
+
+    두 가지를 함께 재야 한다. 창을 넘으면 SAM 이 재장전을 끝내 다시 막고,
+    반대로 **한 tick 에 몰리면** 관을 동시에 쓰는 것이라 창을 쓰는 의미가 없다.
+    ⚠ 위쪽만 재면 `wait = 0` 변이가 그대로 통과한다(변이 G6 이 그랬다)."""
+    st, silo, s = sam_material(sam_level=2, silo_level=8)
+    b = behavior(pid=0, difficulty="impossible")
+    b.maybe_send(st, always_attack)
+    assert len(st.nukes) == 3
+    speed = NUKE_SPEED[UnitType.ATOM_BOMB]
+    arrivals = sorted(n.wait_ticks + (st._dist_sq(n.src, n.dst) ** 0.5) / speed
+                      for n in st.nukes)
+    spread = arrivals[-1] - arrivals[0]
+    window = C.SAM_COOLDOWN_TICKS // 2
+    assert spread <= window, arrivals
+    # 세 발이면 간격이 `window // 3` 씩이라 전체가 그 두 배는 벌어져 있어야 한다
+    assert spread >= window // 3, arrivals
+
+
+def test_no_second_salvo_while_bombs_are_in_flight():
+    """이미 원자탄이 날아가는 중이면 또 쏘지 않는다 — 골드를 두 번 버린다.
+
+    ⚠ 관을 넉넉히 준다. 딱 맞게 주면 두 번째 판단이 **관이 없어서** 멈추는 것이라
+    비행 중 검사를 안 재게 된다(변이 G4 가 이 재료에서 살아남았다)."""
+    st, silo, s = sam_material(sam_level=2, silo_level=8)
+    b = behavior(pid=0, difficulty="impossible")
+    assert b.maybe_send(st, always_attack) is True
+    n = len(st.nukes)
+    assert b.maybe_send(st, always_attack) is False
+    assert len(st.nukes) == n, "두 번째 일제 사격이 나갔다"
+
+
+def test_other_difficulties_never_overwhelm():
+    """hard 이하는 이 경로를 아예 안 탄다 — impossible 전용이다."""
+    for diff in ("easy", "medium", "hard"):
+        st, silo, s = sam_material(sam_level=2)
+        b = behavior(pid=0, difficulty=diff)
+        b.maybe_send(st, always_attack)
+        assert all(n.dst != s.tile for n in st.nukes), f"{diff} 가 뚫으려 했다"
+
+
+def test_a_helpful_silo_is_upgraded_when_tubes_are_short():
+    """발사관이 모자라서 실패했으면 **그 계획에 보탬이 되는** 사일로를 올린다."""
+    st, silo, s = sam_material(sam_level=2, silo_level=1)   # 관 하나, 3발 필요
+    b = behavior(pid=0, difficulty="impossible")
+    assert b.maybe_send(st, always_attack) is False
+    assert st.nukes == []
+    assert silo.level == 2, "보탬이 되는 사일로를 안 올렸다"
+
+
+def test_no_upgrade_when_it_could_never_be_enough():
+    """최대 레벨까지 올려도 발 수가 모자라면 **올리지 않는다.** 그건 낭비다."""
+    st, silo, s = sam_material(sam_level=9, silo_level=1)   # 10+2 = 12발 필요
+    b = behavior(pid=0, difficulty="impossible")
+    assert b.maybe_send(st, always_attack) is False
+    assert silo.level == 1, "닿지도 못할 계획에 골드를 썼다"
