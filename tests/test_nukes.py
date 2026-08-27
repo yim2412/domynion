@@ -16,8 +16,9 @@ from domynion.core.buildings import DefensePostIndex
 from domynion.core.constants import Terrain
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
-from domynion.core.nukes import (NUKE_MAGNITUDES, NUKE_SPEED, Fallout, Nuke,
-                                 blast_tiles, death_factor, sam_range)
+from domynion.core.nukes import (NUKE_MAGNITUDES, NUKE_SPEED, SAM_TARGETABLE_TYPES,
+                                 Fallout, Nuke, blast_tiles, death_factor,
+                                 is_targetable, sam_range)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
 
@@ -254,3 +255,129 @@ def test_fallout_modifier_weakens_as_the_map_gets_dirtier():
     assert f.modifier(1000) == pytest.approx(5.0 - 0.01 * 2)
     f.add(list(range(1000)))
     assert f.modifier(1000) == pytest.approx(3.0)
+
+
+# --- 요격 창 (§5.49 · 이식 누락 스물일곱) -------------------------------------
+
+def wide_state(width: int = 600, height: int = 40, players: int = 2) -> GameState:
+    """가로로 긴 지도. **요격 창(150)을 재려면 비행거리가 300 을 넘어야 한다** —
+    80×80 짜리 손지도에서는 모든 칸이 발사점이나 표적에서 150 안이라 이 규칙이
+    무동작이 된다(CLAUDE.md 8번 함정)."""
+    gm = GameMap.from_rows(["." * width] * height)
+    ps = {}
+    for pid in range(players):
+        t = gm.ref(pid * 10 + 5, 5)
+        ps[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False, start=t)
+        gm.owner[t] = pid
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {pid: 1 for pid in ps}
+    st._posts = DefensePostIndex(gm.size)
+    st.fallout = Fallout(gm.size)
+    return st
+
+
+def test_midflight_nuke_is_untargetable():
+    """발사점 150 · 표적 150 **밖**을 나는 동안에는 SAM 이 못 건드린다."""
+    st = wide_state()
+    st.players[0].gold = 10_000_000
+    src, dst = st.gmap.ref(20, 20), st.gmap.ref(520, 20)
+    give_silo(st, 0, src)
+    sam_tile = st.gmap.ref(270, 20)      # 양쪽에서 250 씩 — 중간 구간
+    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=sam_tile, level=1)
+    st.players[1].units.units.append(sam)
+    st.players[1].units.record_constructed(UnitType.SAM_LAUNCHER)
+
+    # 막지 않았으면 무엇이 일어났을 것인가 — SAM 사거리 안을 실제로 지나간다
+    r = sam_range(1)
+    n0 = Nuke(owner=0, utype=UnitType.ATOM_BOMB, src=src, dst=dst)
+    passes_in_range = False
+    for _ in range(200):
+        n0.advance()
+        here = n0.tile(st.gmap)
+        if st._dist_sq(sam_tile, here) <= r * r:
+            passes_in_range = True
+            assert not is_targetable(st.gmap, src, dst, here), \
+                "이 칸은 요격 창 밖이어야 한다"
+        if n0.arrived(st.gmap):
+            break
+    assert passes_in_range, "SAM 사거리를 아예 안 지나가면 아무것도 안 재는 테스트다"
+
+    n = st.launch_nuke(0, UnitType.ATOM_BOMB, dst)
+    assert n is not None
+    for _ in range(200):
+        st.tick()
+        if n not in st.nukes:
+            break
+    assert st.fallout.at(dst), "중간 구간에서 요격됐다 — 요격 창이 안 걸렸다"
+
+
+def test_sam_near_the_target_still_intercepts():
+    """요격 창은 **표적 근처**에서 열린다. SAM 을 무력화한 것이 아니다."""
+    st = wide_state()
+    st.players[0].gold = 10_000_000
+    src, dst = st.gmap.ref(20, 20), st.gmap.ref(520, 20)
+    give_silo(st, 0, src)
+    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=st.gmap.ref(490, 20), level=1)
+    st.players[1].units.units.append(sam)
+    st.players[1].units.record_constructed(UnitType.SAM_LAUNCHER)
+
+    n = st.launch_nuke(0, UnitType.ATOM_BOMB, dst)
+    for _ in range(200):
+        st.tick()
+        if n not in st.nukes:
+            break
+    assert not st.fallout.at(dst), "표적 옆 SAM 이 못 막았다"
+
+
+def test_mirv_carrier_cannot_be_intercepted():
+    """`SAMLauncherExecution` 의 표적 목록에 **MIRV 본체가 없다.**
+
+    본체를 막을 수 있으면 탄두 여러 발이 한 방에 사라져 MIRV 가 의미를 잃는다."""
+    assert UnitType.MIRV not in SAM_TARGETABLE_TYPES
+    assert UnitType.MIRV_WARHEAD in SAM_TARGETABLE_TYPES
+
+    st = wide_state()
+    st.players[0].gold = 500_000_000
+    src, dst = st.gmap.ref(20, 20), st.gmap.ref(120, 20)
+    give_silo(st, 0, src)
+    # 표적 바로 위 SAM — 창은 열려 있다. 막히는 이유가 있다면 종류뿐이다.
+    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=dst, level=5)
+    st.players[1].units.units.append(sam)
+    st.players[1].units.record_constructed(UnitType.SAM_LAUNCHER)
+
+    n = st.launch_nuke(0, UnitType.MIRV, dst)
+    assert n is not None
+    for _ in range(60):
+        st.tick()
+        if n not in st.nukes:
+            break
+    else:
+        raise AssertionError("MIRV 가 아직 날고 있다 — 테스트 tick 이 모자라다")
+    # ⚠ 우리 탄두는 갈라지는 자리에서 **즉시 터진다**(`_split_mirv`) — 원본처럼
+    # 날아가지 않는다. 그래서 판정은 낙진으로 한다.
+    assert bool(st.fallout.mask.any()), "MIRV 본체가 요격돼 갈라지지 못했다"
+
+
+def test_sam_near_the_launch_site_also_intercepts():
+    """요격 창은 **양쪽**에 열린다 — 표적뿐 아니라 발사점 150 안에서도.
+
+    ⚠ 이 배치가 없으면 `d2(here, src) < r2` 를 지워도 아무 테스트가 안 깨진다
+    (실제로 안 깨졌다). 표적 쪽만 재는 재료로는 절반만 검사하는 셈이다."""
+    st = wide_state()
+    st.players[0].gold = 10_000_000
+    src, dst = st.gmap.ref(20, 20), st.gmap.ref(520, 20)
+    give_silo(st, 0, src)
+    # 발사점에서 60 — 창이 열려 있고, 표적에서는 440 이라 표적 쪽 창은 닫혀 있다
+    sam_tile = st.gmap.ref(80, 20)
+    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=sam_tile, level=1)
+    st.players[1].units.units.append(sam)
+    st.players[1].units.record_constructed(UnitType.SAM_LAUNCHER)
+    assert st._dist_sq(sam_tile, dst) > C.NUKE_TARGETABLE_RANGE ** 2, \
+        "표적 쪽 창까지 열려 있으면 발사점 쪽을 안 재는 테스트가 된다"
+
+    n = st.launch_nuke(0, UnitType.ATOM_BOMB, dst)
+    for _ in range(200):
+        st.tick()
+        if n not in st.nukes:
+            break
+    assert not st.fallout.at(dst), "발사점 옆 SAM 이 못 막았다"

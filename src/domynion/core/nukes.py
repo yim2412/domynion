@@ -96,6 +96,32 @@ def death_factor(utype: UnitType, troops: float, tiles_left: int,
         1.0 - math.exp(-C.MIRV_DEATH_STEEPNESS * excess / max_troops))
 
 
+# SAM 이 노릴 수 있는 종류. **MIRV 본체는 없다** — 원본 `SAMLauncherExecution` 의
+# `nearbyUnits(..., [AtomBomb, HydrogenBomb, MIRVWarhead])` 에 MIRV 가 빠져 있다.
+# 본체를 막을 수 있으면 탄두 여러 발이 한 방에 사라져 MIRV 가 의미를 잃는다.
+SAM_TARGETABLE_TYPES = frozenset({
+    UnitType.ATOM_BOMB, UnitType.HYDROGEN_BOMB, UnitType.MIRV_WARHEAD,
+})
+
+
+def is_targetable(gmap: GameMap, src: TileRef, dst: TileRef,
+                  here: TileRef) -> bool:
+    """`NukeExecution.isTargetable` — **발사점 150 안 또는 표적 150 안**일 때만
+    요격 대상이다. 그 사이의 중간 비행 구간은 SAM 이 손댈 수 없다.
+
+    ⚠ 이식 누락 스물일곱. `NUKE_TARGETABLE_RANGE = 150` 이 상수 파일에 적혀만
+    있고 **아무도 읽지 않았다**(상륙 퇴각 25% 와 같은 자리다). 그동안 우리 SAM 은
+    지나가는 모든 핵을 경로 어디서든 떨궜다 — 장거리 핵이 남의 SAM 옆을 스치기만
+    해도 사라졌다는 뜻이다."""
+    w = gmap.width
+    r2 = C.NUKE_TARGETABLE_RANGE * C.NUKE_TARGETABLE_RANGE
+
+    def d2(a: TileRef, b: TileRef) -> int:
+        return (a % w - b % w) ** 2 + (a // w - b // w) ** 2
+
+    return d2(here, dst) < r2 or d2(here, src) < r2
+
+
 @dataclass
 class Nuke:
     """비행 중인 핵. `speed` 칸씩 직선으로 날아간다."""

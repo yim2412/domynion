@@ -29,7 +29,8 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     _touching_components, manhattan, port_check_due,
                     trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
-from .nukes import Fallout, Nuke, NUKE_MAGNITUDES, blast_tiles, death_factor, sam_range
+from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
+                    blast_tiles, death_factor, is_targetable, sam_range)
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
@@ -989,8 +990,16 @@ class GameState:
         return sum(u.ready_tubes for u in p.units.of(UnitType.MISSILE_SILO))
 
     def _sam_intercepts(self, n: Nuke) -> bool:
-        """SAM 은 **자기 것이 아닌** 핵만 요격한다. 사거리는 레벨에 따라 70~150."""
+        """SAM 은 **자기 것이 아닌** 핵만 요격한다. 사거리는 레벨에 따라 70~150.
+
+        ⚠ 관문이 둘 앞에 붙는다(§5.49). **MIRV 본체는 아예 못 노리고**, 노릴 수
+        있는 종류라도 **발사점이나 표적에서 150 안**에 있어야 한다. 둘 다 없어서
+        우리 SAM 은 지나가는 모든 핵을 경로 어디서든 떨구고 있었다."""
+        if n.utype not in SAM_TARGETABLE_TYPES:
+            return False
         here = n.tile(self.gmap)
+        if not is_targetable(self.gmap, n.src, n.dst, here):
+            return False
         for p in self.alive:
             if p.pid == n.owner or self.diplomacy.is_friendly(p.pid, n.owner):
                 continue
