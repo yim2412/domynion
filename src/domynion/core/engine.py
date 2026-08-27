@@ -1754,9 +1754,16 @@ class GameState:
             return
         elapsed = self.elapsed
         team_game = any(t is not None for t in self.diplomacy.teams.values())
-        self.clock.update(elapsed, {p.pid: self.tiles(p.pid) for p in self.alive},
+        # ⚠ **봇은 클락에 안 걸린다**(§5.56). 원본이 `players().filter(p =>
+        # p.type() !== PlayerType.Bot)` 로 후보를 추린다. 봇 400 을 같이 넣으면
+        # 요구 점유율(전체의 2~35%)에 못 미치는 봇이 전부 표시돼 판이 클락으로
+        # 정리돼 버린다 — 원본에서 클락은 **나라들의 교착 해결기**다.
+        contenders = [p for p in self.alive if not p.is_bot]
+        self.clock.update(elapsed, {p.pid: self.tiles(p.pid) for p in contenders},
                           self.gmap.land_count, team_game)
-        for p in list(self.alive):
+        for p in contenders:
+            if not p.alive:
+                continue
             frac = self.clock.drain_fraction(p.pid, elapsed)
             cap = p.max_troops(self.tiles(p.pid))
             if frac > 0.0:
@@ -1768,6 +1775,17 @@ class GameState:
                 p.troops = max(floor, p.troops - chunk)
             # ⚠ **썩음은 마감이 지나서가 아니라 바닥에 닿아서 시작한다**(§5.56).
             # 반격 창에서 병력을 지켜 낸 나라는 아직 안 썩는다.
+            # 함대도 같은 경사로 닳는다 — **가라앉히지 않고 바닥까지 두들긴다.**
+            # 회복 억제(`_heal_warship`)만 옮겨 놓고 정작 깎는 쪽이 없었다(§5.56).
+            wfrac = self.clock.warship_drain_fraction(p.pid, elapsed)
+            if wfrac > 0.0:
+                ship_floor = (C.WARSHIP_MAX_HEALTH
+                              * self.clock.cfg.drain_floor_percent / 100.0)
+                dmg = C.WARSHIP_MAX_HEALTH * wfrac * C.TICK_DT
+                for w in self.warships:
+                    if w.owner == p.pid and w.health > ship_floor:
+                        w.health = max(ship_floor, w.health - dmg)
+
             if self.clock.rotting(p.pid, elapsed, p.troops, cap):
                 self._rot_step(p.pid, elapsed)
             elif p.pid in self._rot:

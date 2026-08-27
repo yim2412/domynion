@@ -88,6 +88,12 @@ class DoomsdayDefaults:
     rot_death_seconds: int = 150    # **비율이 아니라 마감 시각**이다
     rot_grain_seconds: int = 10
     rot_speckle_percent: float = 15.0
+    # 전함은 **같은 경사를 훨씬 높은 천장까지** 오른다. 그리고 곡선이 볼록해서
+    # (지수 8) 초반에는 완만하다가 끝에서 치솟는다 — 원본 주석: 처음 표시됐을 때
+    # 잡힌 배는 병력만큼 버티지만, 경사를 다 오른 쪽은 **2초 만에** 배를 잃는다.
+    warship_drain_start_percent: float = 1.0
+    warship_drain_max_percent: float = 50.0
+    warship_drain_curve_exponent: int = 8
 
 
 @dataclass
@@ -147,6 +153,28 @@ class DoomsdayClock:
         t = max(0.0, elapsed - since - c.warn_seconds)
         f = min(1.0, t / c.floor_decay_seconds)
         pct = c.floor_start_percent + (c.drain_floor_percent - c.floor_start_percent) * f
+        return pct / 100.0
+
+    def warship_drain_fraction(self, pid: int, elapsed: float) -> float:
+        """전함이 이번 초에 잃는 **최대 체력의 비율**(§5.56).
+
+        병력과 같은 경사를 타지만 천장이 50% 로 훨씬 높고, **볼록 곡선**(지수 8)
+        이라 초반에는 거의 안 닳다가 끝에서 치솟는다. 바닥은 병력과 같은
+        `drain_floor_percent` 다 — **가라앉히는 것이 아니라 두들겨 놓는 것**이다."""
+        since = self.marked_at.get(pid)
+        if since is None:
+            return 0.0
+        c = self.cfg
+        t = elapsed - since - c.warn_seconds
+        if t < 0:
+            return 0.0
+        span = c.warship_drain_max_percent - c.warship_drain_start_percent
+        r = c.drain_ramp_seconds
+        if r > 0 and t < r:
+            # (t/r)^지수 — 볼록하게 오른다
+            pct = c.warship_drain_start_percent + span * (t / r) ** c.warship_drain_curve_exponent
+        else:
+            pct = c.warship_drain_max_percent
         return pct / 100.0
 
     # --- 영토 썩음 (§5.56) ------------------------------------------------

@@ -343,3 +343,71 @@ def test_the_drain_uses_max_troops_not_current():
             break
     assert reached, ("바닥에 영영 안 닿는다 — 현재 병력에 곱하면 유출이 수입과 "
                      "균형을 이뤄 멈춘다(실측 62,139 대 바닥 5,100)")
+
+
+def test_bots_are_not_subject_to_the_clock():
+    """⚠ **봇은 클락에 안 걸린다**(원본이 후보에서 뺀다).
+
+    막지 않았으면: 봇 400 이 전부 요구 점유율 아래라 판이 클락으로 정리된다.
+    원본에서 클락은 나라들의 **교착 해결기**이지 청소기가 아니다."""
+    st = doomed(40)
+    st.players[1].kind = "bot"
+    st.players[1].is_bot = True
+    st.clock.marked_at.clear()
+    st.tick()
+    assert 1 not in st.clock.marked_at, "봇이 클락에 걸렸다"
+
+    # 대조군 — 나라로 되돌리면 걸린다
+    st.players[1].kind = "nation"
+    st.players[1].is_bot = False
+    st.tick()
+    assert 1 in st.clock.marked_at
+
+
+def test_the_fleet_bleeds_but_is_not_sunk():
+    """함대도 같은 경사로 닳되 **바닥까지만** 간다 — 가라앉히지 않는다.
+
+    ⚠ 회복 억제(`_heal_warship`)는 옮겨 놓고 정작 깎는 쪽이 없었다. 그 주석이
+    "그래야 클락의 유출이 실제로 배를 가라앉힌다"고 적혀 있었는데 그 유출이
+    없었다(§5.56 과 같은 모양)."""
+    from domynion.core.naval import Warship
+    st = doomed(40)
+    # ⚠ 체력을 **999** 로 둔다. 1,000 이면 tick 당 50 으로 딱 나눠떨어져 바닥에
+    # 정확히 멈추고, 그러면 `max(floor, ...)` 클램프가 무동작이 돼 변이(O3)가
+    # 살아남는다 — 앞의 `> ship_floor` 관문이 이미 막아 주기 때문이다.
+    w = Warship(owner=1, tile=st.gmap.ref(50, 9), health=C.WARSHIP_MAX_HEALTH - 1)
+    st.warships.append(w)
+    floor = C.WARSHIP_MAX_HEALTH * st.clock.cfg.drain_floor_percent / 100.0
+
+    # ⚠ **곡선 끝에서 잰다.** 볼록이라 초반에는 거의 안 닳아서, 처음부터 돌리면
+    # 이 테스트 하나가 62초 걸린다(실측 — 다른 테스트는 0.03초다). 표시 시각을
+    # 뒤로 당겨 천장에서 시작하게 하면 같은 규칙을 30 tick 으로 잰다.
+    st.clock.marked_at[1] = st.elapsed - st.clock.cfg.warn_seconds         - st.clock.cfg.drain_ramp_seconds * 2
+    # ⚠ 썩음을 끈다. 표시 시각을 뒤로 당기면 쿼터가 `⌈40/1⌉` = 40칸이 돼 **나라가
+    # 1초 만에 사라지고**, 배는 8 tick 만에 측정이 끊긴다(실측: 체력 549 에서 멈췄다).
+    # 함대 규칙을 재는 자리이므로 썩음을 빼는 것이 맞다.
+    st.clock.cfg.rot_death_seconds = 0
+    # ⚠ **바닥에 닿아도 안 멈추고 계속 돌린다.** 닿자마자 끊으면 바닥 아래로 갈
+    # 기회가 없어 클램프를 지워도 안 깨진다(변이 O3 가 그렇게 살아남았다).
+    # 천장에서 tick 당 50 씩 깎이므로 19 tick 이면 바닥이고, 60 tick 이면
+    # 클램프 없이는 −2,000 까지 간다.
+    for _ in range(60):
+        st.tick()
+    assert w.health < C.WARSHIP_MAX_HEALTH - 1, "함대가 하나도 안 닳았다"
+    assert w.health >= floor - 1e-6, f"바닥({floor}) 아래로 내려갔다: {w.health}"
+
+
+def test_the_fleet_curve_is_convex():
+    """전함 곡선은 **볼록**하다(지수 8) — 초반엔 거의 안 닳다가 끝에서 치솟는다.
+
+    원본 주석: 처음 잡힌 배는 병력만큼 버티지만, 경사를 다 오른 쪽은 2초 만에
+    배를 잃는다."""
+    st = doomed(40)
+    c = st.clock.cfg
+    base = st.clock.marked_at[1] + c.warn_seconds
+    early = st.clock.warship_drain_fraction(1, base + c.drain_ramp_seconds * 0.5)
+    late = st.clock.warship_drain_fraction(1, base + c.drain_ramp_seconds * 0.95)
+    top = st.clock.warship_drain_fraction(1, base + c.drain_ramp_seconds * 2)
+    assert early < late < top
+    # 볼록: 절반 지점이 천장의 **2.4%**(실측). 선형이면 50% 근처여야 한다.
+    assert early < top * 0.05, f"절반 지점이 {early / top * 100:.1f}% — 선형이다"
