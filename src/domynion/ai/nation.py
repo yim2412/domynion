@@ -35,6 +35,7 @@ from ..core.relations import Relation
 from ..core.naval import shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
 from .nukes import NationNukeBehavior
+from .chatter import NationChatter
 from .mirv import NationMIRVBehavior
 from .structures import NationStructureBehavior
 
@@ -100,6 +101,7 @@ class NationBot:
         self._build_tick = self.rng.randrange(self.attack_rate)
         self.structures = NationStructureBehavior(self.pid, self.rng, self.difficulty)
         self.mirv = NationMIRVBehavior(self.pid, self.rng, self.difficulty)
+        self.chatter = NationChatter(self.pid, self.rng)
         # ⚠ 체감 비용의 출발점은 **실비용**이다. 보유량에 따라 오르는 건물 비용과
         # 달리 핵은 "쏜 횟수"로만 오르므로, 여기서 한 번 잡아 두고 발사마다 곱한다.
         store = UnitStore()
@@ -125,6 +127,11 @@ class NationBot:
             self._structures(st)
         if st.tick_count % self.attack_rate != self.attack_tick:
             return
+        # 잡담이 판단 사슬의 **맨 앞**이다(원본 `NationExecution.tick` 순서:
+        # `maybeSendCasualEmoji` → `updateRelationsFromEmbargos` → 동맹 → MIRV → …).
+        # 확률(1/16 ~ 1/10000)이 **판단 tick 기준**이라 여기서 불러야 원본과 같은
+        # 빈도가 된다 — 매 tick 부르면 반응 주기(수십 tick)만큼 수다스러워진다.
+        self.chatter.tick(st)
         self._embargoes(st)
         self._maybe_attack(st)
 

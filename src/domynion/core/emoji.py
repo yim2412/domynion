@@ -48,6 +48,17 @@ DONATION_OK = ("👍",)
 DONATION_TOO_SMALL = ("❓", "🥱")
 OVERWHELMED = ("💀", "🆘", "😱", "🥺", "😭", "😞", "🫡", "👋")
 
+# AI 가 **먼저 거는 말**에 쓰는 묶음들(§5.52). 원본 `NationEmojiBehavior` 상단.
+# ⚠ `🤦‍♂️` 는 원본 값이지만 우리 `EMOJI_TABLE` 에는 `🤦` 로 들어 있다 — 표에
+# 없는 글자를 쓰면 UI 격자에서 못 찾는다. 표 쪽 글자로 맞춘다.
+BRAG = ("👑", "🥇", "💪")
+CHARM_ALLIES = ("🤝", "😇", "💪")
+CLOWN_POOL = ("🤡", "🤦")
+RAT = ("🐀",)
+CONGRATULATE = ("👏",)
+BORED = ("🥱",)
+GREET = ("👋",)
+
 # 표적 요청에 대한 답. **거절에도 말이 있어야** 왜 안 도와주는지 안다.
 ASSIST_ACCEPT = ("👍", "🤝", "🎯")
 ASSIST_RELATION_TOO_LOW = ("🥱", "🤦")

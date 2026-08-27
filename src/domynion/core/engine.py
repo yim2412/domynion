@@ -1299,15 +1299,22 @@ class GameState:
             self.emit(EventKind.CHAT, who=pid, other=to, text=reply)
         return True
 
-    def ai_emoji(self, pid: int, to: int, pool: tuple[str, ...]) -> bool:
+    def ai_emoji(self, pid: int, to: int, pool: tuple[str, ...],
+                 after_game_over: bool = False) -> bool:
         """AI 가 **먼저** 말을 건다.
 
         `shouldSendEmoji` 의 두 조건을 그대로 지킨다: 봇은 안 보내고, **받는 쪽이
         사람이 아니면 안 보낸다.** AI 끼리 주고받지 않는다는 뜻이라, 화면에 뜨는
         이모지는 전부 나에게 온 말이 된다.
+
+        ⚠ **축하만 판이 끝난 뒤에도 나간다**(`congratulateWinner`). 원본은 승자가
+        정해진 뒤에 보내므로 `over` 를 무조건 막으면 그 말이 영영 안 나온다.
+        나머지 잡담은 여기서 멈추는 것이 맞다.
         """
         me, them = self.players.get(pid), self.players.get(to)
-        if me is None or them is None or self.over:
+        if me is None or them is None:
+            return False
+        if self.over and not after_game_over:
             return False
         if me.kind == "bot" or them.kind != "human":
             return False
@@ -1320,6 +1327,29 @@ class GameState:
         self.emojis.record(pid, to, self.tick_count)
         self.emit(EventKind.CHAT, who=to, other=pid, text=self.rng.choice(pool))
         return True
+
+    def ai_broadcast(self, pid: int, pool: tuple[str, ...]) -> bool:
+        """AI 가 **전체에 대고** 하는 말(`sendEmoji(AllPlayers, ...)`).
+
+        ⚠ **30초 제한(`ai_may_speak`)을 안 받는다.** 원본 `shouldSendEmoji` 가
+        받는 쪽이 `AllPlayers` 면 맨 앞에서 true 를 돌려주기 때문이다. 개인에게
+        거는 말만 제한을 받는다 — 비명(`EMOJI_OVERWHELMED`)이 제한에 걸려 안
+        나가면 사람은 어디가 무너지는지 영영 알 수 없다.
+
+        받는 사람이 없으면(헤드리스) 아무 일도 안 한다."""
+        me = self.players.get(pid)
+        if me is None or not me.alive or self.over:
+            return False
+        if me.kind == "bot":
+            return False
+        text = self.rng.choice(pool)
+        sent = False
+        for q in self.alive:
+            if q.kind != "human" or q.pid == pid:
+                continue
+            self.emit(EventKind.CHAT, who=q.pid, other=pid, text=text)
+            sent = True
+        return sent
 
     # --- 기부 -------------------------------------------------------------
 
