@@ -3930,8 +3930,7 @@ relate · targets_of
 
 ```python
 # 다시 셀 때 쓸 것
-pub  = re.findall(r"
-    def ([a-z][a-z0-9_]*)\(", engine_src)
+pub  = re.findall(r"^    def ([a-z][a-z0-9_]*)", engine_src, re.M)
 dead = [m for m in pub if callers.count(f".{m}(") - engine_src.count(f".{m}(") <= 0]
 ```
 
