@@ -480,11 +480,18 @@ DONATE_COOLDOWN_TICKS = 10 * 10
 
 # --- 판 ------------------------------------------------------------------
 #
-# ⚠ 아래 셋은 **원본 값이 아니다.** openfront 는 시간 제한도 지배 승리도 없고,
-# 마지막까지 살아남는 것으로 끝난다. 헤드리스 측정을 끝내려면 종료 조건이 필요해서
-# 우리가 둔 것이다. P6 에서 원본의 종료 규칙(둠스데이 클락)으로 교체한다.
-
-MATCH_SECONDS = 900.0
-DOMINATION_TILE_RATIO = 0.80
+# 종료 조건 — WinCheckExecution.ts :: checkWinnerFFA
+#
+# ⚠ **주석이 오래 틀려 있었다**(§5.61). "openfront 는 시간 제한도 지배 승리도
+# 없다"고 적혀 있었는데 **둘 다 있다.** `checkWinnerFFA` 가 매 tick 셋 중 하나를
+# 본다: 점유율 초과 · 방 설정의 타이머 · **하드 시간 제한**.
+#
+#   percentageTilesOwnedToWin() = 80  (FFA. 분모는 **낙진을 뺀 땅**)
+#   HARD_TIME_LIMIT_SECONDS     = 170 * 60 = 10,200초
+#
+# 틀린 것은 조건이 아니라 **값**이었다. 우리 900초는 원본의 **1/11** 이라,
+# §5.55 에서 "MIRV 가 안 나간다"고 본 것이 사실은 그 자리였다.
+MATCH_SECONDS = 10_200.0        # 170분 — 원본 `HARD_TIME_LIMIT_SECONDS`
+DOMINATION_TILE_RATIO = 0.80    # 원본 `percentageTilesOwnedToWin` (FFA)
 MIN_PLAYERS = 2
 MAX_PLAYERS = 8

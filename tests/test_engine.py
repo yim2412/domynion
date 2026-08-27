@@ -344,3 +344,46 @@ def test_border_targets_does_not_wrap_around_the_map_edge():
     gm.owner[gm.ref(0, 1)] = 1            # 둘째 줄 왼쪽 끝 — 인덱스로는 바로 옆이다
     st._counts = {0: 1, 1: 1}
     assert 1 not in st.border_targets(0), "지도 오른쪽 끝에서 반대편으로 샜다"
+
+
+# --- 종료 조건이 원본 값인가 (§5.61) ------------------------------------------
+
+def test_the_end_conditions_match_the_original():
+    """⚠ **주석이 오래 틀려 있었다.**
+
+    "openfront 는 시간 제한도 지배 승리도 없다"고 적혀 있었는데 `checkWinnerFFA`
+    가 매 tick 셋 중 하나를 본다. 틀린 것은 **조건이 아니라 값**이었다 —
+    우리 900초는 원본 170분의 **1/11** 이었다."""
+    assert C.DOMINATION_TILE_RATIO == 0.80      # percentageTilesOwnedToWin (FFA)
+    assert C.MATCH_SECONDS == 170 * 60          # HARD_TIME_LIMIT_SECONDS
+
+
+def test_domination_uses_land_without_fallout():
+    """⚠ 분모는 **낙진을 뺀 땅**이다(`numLandTiles() - numTilesWithFallout()`).
+
+    전체 육지로 나누면 **핵이 많이 터진 판일수록 승리가 멀어진다** — 남은 땅을
+    다 가져도 80% 가 안 된다."""
+    from domynion.core.nukes import Fallout
+    st = make_state(["." * 10] * 10, {0: (0, 0), 1: (9, 9)})
+    st.fallout = Fallout(st.gmap.size)
+    st._counts = {0: 60, 1: 5}                   # 100칸 중 60 → 60%, 아직 아니다
+    st.tick()
+    assert not st.over
+
+    # 절반이 낙진이 되면 분모가 50 이 돼 60/50 > 80% 다
+    st.fallout.add(list(range(50, 100)))
+    st.tick()
+    assert st.over and st.victory is Victory.DOMINATION and st.winner == 0
+
+
+def test_domination_still_needs_the_share_without_fallout():
+    """대조군 — 낙진이 없으면 문턱 그대로다."""
+    from domynion.core.nukes import Fallout
+    st = make_state(["." * 10] * 10, {0: (0, 0), 1: (9, 9)})
+    st.fallout = Fallout(st.gmap.size)
+    st._counts = {0: 79, 1: 5}
+    st.tick()
+    assert not st.over
+    st._counts[0] = 80
+    st.tick()
+    assert st.over and st.victory is Victory.DOMINATION

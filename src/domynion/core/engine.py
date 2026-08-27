@@ -2059,7 +2059,12 @@ class GameState:
         if self.clock.cfg.enabled:
             return
         top = max(alive, key=lambda p: self.tiles(p.pid))
-        if self.share(top.pid) >= C.DOMINATION_TILE_RATIO:
+        # ⚠ 분모는 **낙진을 뺀 땅**이다(원본 `numLandTiles() -
+        # numTilesWithFallout()`). `share()` 는 전체 육지로 나누므로 여기서
+        # 쓰면 안 된다 — 핵이 많이 터진 판일수록 승리가 멀어진다(§5.61).
+        burnt = int(self.fallout.mask.sum()) if self.fallout is not None else 0
+        usable = max(1, self.gmap.land_count - burnt)
+        if self.tiles(top.pid) / usable >= C.DOMINATION_TILE_RATIO:
             self._finish(top.pid, Victory.DOMINATION)
             return
         if self.elapsed >= C.MATCH_SECONDS:
