@@ -27,6 +27,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+# ⚠ **파이프로 넘어갈 때 파이썬은 stdout 을 버퍼링한다.** 진행을 로그로 보려고
+# 1,000 tick 마다 찍었는데 **11분 동안 머리줄조차 안 나왔다**(실측). 작업은
+# CPU 615초를 쓰며 정상 진행 중이었다 — 함정 9("로그가 멈춘 것인지 작업이 멈춘
+# 것인지 먼저 가른다")를 도구 쪽에서 다시 만난 셈이다. 여기서 못 박는다.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:          # 파이프가 없는 환경
+    pass
+
 from domynion.ai import nation                       # noqa: E402
 from domynion.core.engine import GameState           # noqa: E402
 from domynion.core.units import UnitType             # noqa: E402

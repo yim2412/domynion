@@ -23,6 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+# 파이프로 넘어갈 때의 버퍼링을 끈다(`tools/gold_flow.py` 의 주석 참조).
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:
+    pass
+
 from domynion.ai import nation                       # noqa: E402
 from domynion.core.engine import GameState           # noqa: E402
 from domynion.core.units import UnitType             # noqa: E402
