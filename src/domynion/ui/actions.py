@@ -119,6 +119,18 @@ def attack_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
         Item(f"{who} 치기", action=lambda: _attack(st, me, target, notify),
              hint=f"보낼 병력 {mine.attack_troops():,.0f}", colour=COL_ATTACK),
     ]
+    # ⚠ **루트가 아니라 여기다.** 루트는 원본의 넷(공격·건설·상륙·외교)으로
+    # 고정이고, 원본은 전함을 라디얼이 아니라 **직접 선택해 클릭**한다
+    # (`WarshipSelectionController`). 우리는 그 조작 계층이 없어 공격 메뉴에 둔다.
+    my_ships = [w for w in st.warships if w.owner == me]
+    items.append(Item(
+        "전함 부르기", action=lambda: _patrol(st, me, tile, notify),
+        enabled=bool(my_ships),
+        hint=("전함이 없다" if not my_ships else
+              f"가장 가까운 전함({len(my_ships)}척 중)을 이 자리로 보낸다 · "
+              "수리 후퇴는 취소된다"),
+        colour=COL_BOAT))
+
     silos = [u for u in mine.units.of(UnitType.MISSILE_SILO)
              if not u.under_construction]
     ready = st.ready_missiles(me)
@@ -358,6 +370,27 @@ def _warship(st: GameState, me: int, notify) -> None:
                 notify("전함 건조")
                 return
     notify("전함을 띄울 바다가 없다 — 항구 옆이 막혀 있다")
+
+
+def _patrol(st: GameState, me: int, tile: TileRef, notify) -> None:
+    """`handleManualPatrolOverride` — 사람이 전함의 순찰 지점을 찍는다.
+
+    ⚠ 이식 누락 마흔. 전함은 §5.37~5.43 에서 스스로 움직이게 됐는데 **사람이
+    조종할 수단이 없었다.** 원본은 순찰 지점을 찍을 수 있고, 찍는 순간
+    **수리 후퇴가 취소된다** — 급할 때 다친 배도 불러올 수 있어야 한다."""
+    mine = [w for w in st.warships if w.owner == me]
+    if not mine:
+        notify("전함이 없다")
+        return
+    w = min(mine, key=lambda x: st._dist_sq(x.tile, tile))
+    w.patrol_origin = tile
+    w.patrol_target = None
+    if w.retreat_port is not None:
+        w.retreat_port = None
+        w.docked = False
+        notify("전함을 부른다 — 수리 후퇴를 취소했다")
+    else:
+        notify("전함 순찰 지점을 옮겼다")
 
 
 def _boat(st: GameState, me: int, tile: TileRef, notify) -> None:

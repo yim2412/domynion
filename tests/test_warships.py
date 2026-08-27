@@ -840,3 +840,70 @@ def test_retreat_ends_when_fully_healed_even_while_docked():
             break
     assert w.health == C.WARSHIP_MAX_HEALTH
     assert w.retreat_port is None and not w.docked, "다 나았는데 정박을 안 푼다"
+
+
+# --- 사람이 전함을 부른다 (§5.58 · 이식 누락 마흔) -----------------------------
+
+def test_the_player_can_call_a_warship_to_a_tile():
+    """⚠ **사람이 전함을 조종할 수단이 없었다.**
+
+    §5.37~5.43 에서 전함이 스스로 움직이게 됐는데, 사람 쪽 경로가 없어 내 함대가
+    무엇을 하든 지켜볼 수밖에 없었다. 원본은 전함을 **직접 선택해 클릭**한다
+    (`WarshipSelectionController`) — 우리는 그 조작 계층이 없어 공격 메뉴에 뒀다."""
+    from domynion.ui.actions import attack_items
+    st = state()
+    st.players[0].troops = 50_000.0
+    w = Warship(owner=0, tile=st.gmap.ref(20, 10),
+                patrol_origin=st.gmap.ref(20, 10))
+    st.warships.append(w)
+    dst = st.gmap.ref(40, 20)
+
+    item = next(i for i in attack_items(st, 0, dst, lambda _m: None)
+                if i.label == "전함 부르기")
+    assert item.enabled
+    item.action()
+    assert w.patrol_origin == dst, "전함이 안 움직였다"
+
+
+def test_calling_a_warship_cancels_its_repair_retreat():
+    """⚠ **부르면 수리 후퇴가 취소된다**(`handleManualPatrolOverride`).
+
+    급할 때 다친 배도 불러올 수 있어야 한다. 안 그러면 함대의 절반이 항구에
+    묶인 채 사람은 아무것도 못 한다."""
+    from domynion.ui.actions import attack_items
+    st = state()
+    w = Warship(owner=0, tile=st.gmap.ref(20, 10),
+                patrol_origin=st.gmap.ref(20, 10))
+    w.retreat_port = st.gmap.ref(0, 5)
+    w.docked = True
+    st.warships.append(w)
+
+    said = []
+    item = next(i for i in attack_items(st, 0, st.gmap.ref(40, 20), said.append)
+                if i.label == "전함 부르기")
+    item.action()
+    assert w.retreat_port is None and not w.docked, "후퇴가 안 취소됐다"
+    assert said and "취소" in said[-1]
+
+
+def test_the_nearest_warship_answers():
+    """여러 척이면 **가장 가까운** 배가 온다."""
+    from domynion.ui.actions import attack_items
+    st = state()
+    near = Warship(owner=0, tile=st.gmap.ref(38, 20))
+    far = Warship(owner=0, tile=st.gmap.ref(2, 2))
+    st.warships += [far, near]
+    dst = st.gmap.ref(40, 20)
+    next(i for i in attack_items(st, 0, dst, lambda _m: None)
+         if i.label == "전함 부르기").action()
+    assert near.patrol_origin == dst
+    assert far.patrol_origin != dst
+
+
+def test_no_warship_no_button():
+    """대조군 — 전함이 없으면 회색으로 남고 이유가 붙는다."""
+    from domynion.ui.actions import attack_items
+    st = state()
+    item = next(i for i in attack_items(st, 0, st.gmap.ref(40, 20), lambda _m: None)
+                if i.label == "전함 부르기")
+    assert not item.enabled and "전함이 없다" in item.hint
