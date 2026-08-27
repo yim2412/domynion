@@ -317,7 +317,13 @@ def test_sam_near_the_target_still_intercepts():
     st.players[0].gold = 10_000_000
     src, dst = st.gmap.ref(20, 20), st.gmap.ref(520, 20)
     give_silo(st, 0, src)
-    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=st.gmap.ref(490, 20), level=1)
+    sam_tile = st.gmap.ref(490, 20)
+    # ⚠ **그 칸을 실제로 소유하게 한다.** §5.58 부터 "땅을 잃으면 건물도 잃는다"가
+    # 매 tick 돌아서, 주인 없는 칸의 건물은 부서진다. 원본에서는 애초에 만들 수
+    # 없는 상태였는데 테스트가 그렇게 세워 두고 있었다.
+    st.gmap.owner[sam_tile] = 1
+    st._counts[1] = st._counts.get(1, 0) + 1
+    sam = Unit(UnitType.SAM_LAUNCHER, 1, tile=sam_tile, level=1)
     st.players[1].units.units.append(sam)
     st.players[1].units.record_constructed(UnitType.SAM_LAUNCHER)
 

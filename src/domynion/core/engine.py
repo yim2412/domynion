@@ -1677,6 +1677,8 @@ class GameState:
         self._advance_trade()
         self._advance_rail()
         self._advance_attacks()
+        # 땅이 넘어간 뒤에 정리한다 — 공격·핵·썩음이 전부 끝난 자리를 본다
+        self._reassign_lost_structures()
         self._tick_clock()
         self._check_end()
 
@@ -1800,6 +1802,40 @@ class GameState:
         if taken:
             self.emit(EventKind.GOLD_FROM_CONQUEST, who=winner.pid,
                       other=loser.pid, amount=taken)
+
+    def _reassign_lost_structures(self) -> None:
+        """`PlayerExecution.tick` 앞부분 — **땅을 잃으면 건물도 잃는다.**
+
+        ⚠ 이식 누락 서른일곱. 우리는 칸 주인만 바꾸고 건물은 그대로 뒀다. 그래서
+        영토를 통째로 뺏겨도 **도시가 원래 주인 것으로 남아 병력 상한과 수입을
+        계속 냈다**(실측으로 확인). §5.56 의 썩음이 만든 낙진 위 건물도 마찬가지다 —
+        원본 주석이 *"Anything built on it is deleted by PlayerExecution"* 이라고
+        그 처리를 여기로 미뤄 두고 있었다.
+
+        규칙이 종류마다 다르다:
+
+        - 칸이 **중립**이 되면(낙진·썩음) 건물은 **사라진다.**
+        - 칸이 **남의 것**이 되면 그 사람이 **가져간다.**
+        - 단 **방어초소만 부서진다** — 뺏은 쪽이 남의 방어선을 그대로 쓰면
+          국경이 영영 안 밀린다.
+        """
+        for p in list(self.alive):
+            lost = [u for u in p.units.units
+                    if u.active and u.utype in STRUCTURES
+                    and int(self.gmap.owner[u.tile]) != p.pid]
+            for u in lost:
+                owner = int(self.gmap.owner[u.tile])
+                new_owner = self.players.get(owner) if owner >= 0 else None
+                if new_owner is None or not new_owner.alive:
+                    u.active = False          # 중립이 된 땅 — 부서진다
+                    continue
+                if u.utype is UnitType.DEFENSE_POST:
+                    u.active = False          # 방어선은 안 넘겨준다
+                    continue
+                p.units.units.remove(u)
+                u.owner = new_owner.pid
+                new_owner.units.units.append(u)
+                new_owner.units.record_constructed(u.utype)
 
     def _tick_clock(self) -> None:
         """둠스데이 클락 — 원본의 진짜 종료 규칙. 기본은 꺼져 있다(원본도 그렇다)."""
