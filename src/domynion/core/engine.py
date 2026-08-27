@@ -29,6 +29,7 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     _touching_components, manhattan, port_check_due,
                     trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
+from . import enclave
 from .rot import RotState, rot_tiles
 from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
                     blast_tiles, death_factor, is_targetable, sam_range)
@@ -71,6 +72,10 @@ class GameState:
     _path_cache: dict = field(default_factory=dict)
     # 둠스데이 썩음 진행(pid → RotState). 회복하면 버린다.
     _rot: dict = field(default_factory=dict)
+    # pid → 영토가 마지막으로 바뀐 tick(`lastTileChange`). 둘러싸임 검사가
+    # **바뀐 나라만** 보게 하는 데 쓴다 — 안 그러면 판 시간의 절반을 먹는다.
+    _tile_changed: dict = field(default_factory=dict)
+    _enclave_checked: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
     mirvs_launched: int = 0        # 판 전체. MIRV 값이 이 수에 따라 오른다
     fallout: Fallout | None = None
@@ -437,8 +442,10 @@ class GameState:
     def _conquer_tile(self, pid: int, tile: TileRef, previous: int) -> None:
         self.gmap.owner[tile] = pid
         self._counts[pid] = self._counts.get(pid, 0) + 1
+        self._tile_changed[pid] = self.tick_count
         if previous >= 0:
             self._counts[previous] = max(0, self._counts.get(previous, 0) - 1)
+            self._tile_changed[previous] = self.tick_count
 
     def _advance_trade(self) -> None:
         """항구마다 따로 스폰을 굴린다. 도착하면 **양쪽 항구 주인이 함께** 번다.
@@ -1679,6 +1686,7 @@ class GameState:
         self._advance_attacks()
         # 땅이 넘어간 뒤에 정리한다 — 공격·핵·썩음이 전부 끝난 자리를 본다
         self._reassign_lost_structures()
+        self._absorb_enclaves()
         self._tick_clock()
         self._check_end()
 
@@ -1758,6 +1766,8 @@ class GameState:
         if len(refs):
             self.gmap.owner[refs] = attacker
             self._counts[attacker] = self._counts.get(attacker, 0) + len(refs)
+            self._tile_changed[attacker] = self.tick_count
+            self._tile_changed[target] = self.tick_count
         self._counts[target] = 0
         d.alive = False
         d.troops = 0.0
@@ -1837,6 +1847,82 @@ class GameState:
                 new_owner.units.units.append(u)
                 new_owner.units.record_constructed(u.utype)
 
+    def _absorb_enclaves(self) -> None:
+        """`removeClusters` — **둘러싸인 영토는 흡수된다.**
+
+        ⚠ 이식 누락 서른여덟. 우리에겐 이 규칙이 통째로 없어서, 남의 영토 안에
+        갇힌 조각이 **영원히 남았다.** 갇힌 조각은 국경이 한 쪽뿐이라 공격 부대가
+        거의 안 가므로 실제로는 지도에 점처럼 박힌 채 끝까지 살아 있는다.
+
+        ⚠ **20 tick 에 한 번만 돈다**(원본 `ticksPerClusterCalc = 20`). 국경
+        타일을 전부 묶는 계산이라 매 tick 돌리면 비싸다. 나라마다 시작 tick 을
+        어긋나게 해 한 tick 에 몰리지 않게 한다(원본도 pid 해시로 흩는다)."""
+        gm = self.gmap
+        for p in list(self.alive):
+            if (self.tick_count + p.pid) % C.ENCLAVE_CHECK_TICKS != 0:
+                continue
+            # ⚠ **영토가 안 바뀐 나라는 건너뛴다**(원본 `lastTileChange >=
+            # lastCalc`). 이걸 빼면 판 시간의 절반이 여기로 간다(실측:
+            # 138ms/tick 중 대부분). 대부분의 나라는 대부분의 20 tick 동안
+            # 국경이 그대로다.
+            # ⚠ 이 관문 자체는 **변이로 안 잡힌다. 정상이다** — 지워도 결과가
+            # 같고 느려질 뿐이다(순수 성능). 다만 **시각을 찍는 쪽**을 빠뜨리면
+            # 규칙이 조용히 안 돌므로 그쪽은 테스트로 못 박아 뒀다.
+            last = self._enclave_checked.get(p.pid, -1)
+            if self._tile_changed.get(p.pid, 0) < last:
+                continue
+            self._enclave_checked[p.pid] = self.tick_count
+            owned = [int(t) for t in gm.owned_refs(p.pid)]
+            if not owned:
+                continue
+            border = enclave.border_tiles(gm, p.pid, owned)
+            if not border:
+                continue
+            groups = enclave.clusters(gm, border)
+            if not groups:
+                continue
+            biggest = max(range(len(groups)), key=lambda i: len(groups[i]))
+            for i, group in enumerate(groups):
+                # 가장 큰 덩어리는 **적이 정확히 하나**여야 한다(원본이 그렇다)
+                enemies = enclave.surrounded_by(gm, p.pid, group,
+                                                single_enemy=(i == biggest))
+                if enemies is None:
+                    continue
+                captor = enclave.capturing_player(gm, p.pid, group, self.attacks)
+                if captor is None:
+                    continue
+                if not self.diplomacy.is_friendly(p.pid, captor):
+                    self._absorb_cluster(p.pid, captor, group)
+                    break                     # 영토가 통째로 넘어갔을 수 있다
+
+    def _absorb_cluster(self, pid: int, captor: int, group: list) -> None:
+        """덩어리가 얹힌 **영토 전체**를 넘긴다.
+
+        ⚠ 넘기기 전에 `is_enclosed` 로 한 번 더 본다. 국경 덩어리 검사는 국경
+        타일만 봤는데 실제로 넘어가는 것은 그 덩어리가 얹힌 땅 전체라, 넓은
+        제국 한가운데 뚫린 구멍을 감싼 덩어리가 검사를 통과할 수 있다(원본 주석)."""
+        gm = self.gmap
+        start = group[0]
+        if int(gm.owner[start]) != pid:
+            return
+        if not enclave.is_enclosed(gm, pid, start):
+            return
+        tiles = enclave.territory_from(gm, pid, start)
+        if not tiles:
+            return
+        taker = self.players.get(captor)
+        if taker is None or not taker.alive:
+            return
+        for t in tiles:
+            gm.owner[t] = captor
+        self._counts[pid] = max(0, self._counts.get(pid, 0) - len(tiles))
+        self._counts[captor] = self._counts.get(captor, 0) + len(tiles)
+        self._tile_changed[pid] = self.tick_count
+        self._tile_changed[captor] = self.tick_count
+        # 영토가 통째로 넘어갔으면 정복 경로(골드 이전 · 건물 이전)를 태운다.
+        # `_maybe_absorb` 가 남은 타일 수를 보고 판단한다.
+        self._maybe_absorb(captor, pid)
+
     def _tick_clock(self) -> None:
         """둠스데이 클락 — 원본의 진짜 종료 규칙. 기본은 꺼져 있다(원본도 그렇다)."""
         if not self.clock.cfg.enabled:
@@ -1912,6 +1998,8 @@ class GameState:
         for t in eaten:
             self.gmap.owner[t] = -1
             self._counts[pid] = max(0, self._counts.get(pid, 0) - 1)
+        if eaten:
+            self._tile_changed[pid] = self.tick_count
         # ⚠ **썩은 칸은 낙진이다.** 원본 주석: *"Wasteland, not a prize"* —
         # 그냥 중립으로 두면 가장 큰 이웃이 공짜로 먹는다.
         if eaten:
@@ -1936,6 +2024,7 @@ class GameState:
         if len(refs):
             self.gmap.owner[refs] = -1
         self._counts[pid] = 0
+        self._tile_changed[pid] = self.tick_count
         p = self.players[pid]
         p.alive = False
         p.troops = 0.0

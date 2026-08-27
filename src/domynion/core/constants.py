@@ -449,6 +449,12 @@ MIRV_MIN_SPREAD = 55
 # 떨어진다.
 MIRV_TARGET_ATTEMPTS = 1000 + 500
 
+# 둘러싸인 영토 흡수 — PlayerExecution.ts :: ticksPerClusterCalc
+#
+# 국경 타일을 전부 덩어리로 묶는 계산이라 비싸다. 원본도 20 tick 에 한 번만 돌고,
+# 나라마다 시작 tick 을 해시로 흩어 한 tick 에 몰리지 않게 한다.
+ENCLAVE_CHECK_TICKS = 20
+
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 TRADE_SPAWN_SIGMOID_MID = 400
 
