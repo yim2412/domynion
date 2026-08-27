@@ -1787,17 +1787,24 @@ class GameState:
         한 번에 119ms 가 든다(실측, cProfile) — 원본 크기 지도에서 이 함수 하나가
         시뮬레이션 전체보다 6배 비쌌다. 배열을 네 방향으로 밀어 한 번에 본다."""
         gm = self.gmap
-        h, w = gm.height, gm.width
-        o = gm.owner.reshape(h, w)
-        mine = o == pid
-        if not mine.any():
+        w, size = gm.width, gm.size
+        refs = gm.owned_refs(pid)
+        if not len(refs):
             return set()
-        passable = gm.passable_mask().reshape(h, w)
-        vals = []
-        # 내 칸의 오른쪽/왼쪽/아래/위 이웃 중 통행 가능한 것들의 소유자
-        vals.append(o[:, 1:][mine[:, :-1] & passable[:, 1:]])
-        vals.append(o[:, :-1][mine[:, 1:] & passable[:, :-1]])
-        vals.append(o[1:, :][mine[:-1, :] & passable[1:, :]])
-        vals.append(o[:-1, :][mine[1:, :] & passable[:-1, :]])
-        found = np.unique(np.concatenate(vals)) if vals else np.empty(0, dtype=np.int16)
+        # ⚠ **내 타일 수에 비례한다.** 전에는 지도 전체(200만 칸)를 네 방향으로
+        # 밀어 열 번쯤 훑었다 — 실측(§5.50)에서 이 함수 하나가 판 시간의 33%,
+        # 호출당 2.3ms 였다. 나라가 472명이면 1인당 영토는 평균 1,380칸이라
+        # 이웃을 직접 세는 쪽이 자릿수로 싸다. `owned_refs` 의 전수 훑기 한 번만
+        # 남는다.
+        #
+        # 파이썬 루프로 돌아가는 것이 **아니다.** 그건 17만 칸에서 119ms 였다.
+        # 인덱스 산술을 numpy 로 한 번에 한다.
+        x = refs % w
+        cand = np.concatenate((
+            refs[x > 0] - 1,               # 왼쪽
+            refs[x < w - 1] + 1,           # 오른쪽 (x 경계를 안 넘는다)
+            refs[refs >= w] - w,           # 위
+            refs[refs < size - w] + w,     # 아래
+        ))
+        found = np.unique(gm.owner[cand][gm.passable_mask()[cand]])
         return {None if int(v) < 0 else int(v) for v in found if int(v) != pid}

@@ -277,3 +277,70 @@ def test_border_targets_of_a_dead_player_is_empty():
     st = make_state(["....", "...."], {0: (0, 0), 1: (3, 1)})
     st.gmap.owner[st.gmap.owner == 1] = -1
     assert st.border_targets(1) == set()
+
+
+# --- border_targets 등가 (§5.50) ---------------------------------------------
+
+def _border_targets_reference(st, pid):
+    """§5.50 **이전** 구현. 지도 전체를 네 방향으로 미는 방식이다.
+
+    빠르게 고친 것이 같은 답을 내는지 대조하기 위해서만 남긴다 — 통과는 증거가
+    아니므로, 새 구현이 **옛 구현과 같은 집합**을 내는 것을 직접 확인한다."""
+    import numpy as np
+    gm = st.gmap
+    h, w = gm.height, gm.width
+    o = gm.owner.reshape(h, w)
+    mine = o == pid
+    if not mine.any():
+        return set()
+    passable = gm.passable_mask().reshape(h, w)
+    vals = [
+        o[:, 1:][mine[:, :-1] & passable[:, 1:]],
+        o[:, :-1][mine[:, 1:] & passable[:, :-1]],
+        o[1:, :][mine[:-1, :] & passable[1:, :]],
+        o[:-1, :][mine[1:, :] & passable[:-1, :]],
+    ]
+    found = np.unique(np.concatenate(vals))
+    return {None if int(v) < 0 else int(v) for v in found if int(v) != pid}
+
+
+def test_border_targets_matches_the_old_full_scan():
+    """무작위로 칠한 판 여러 개에서 **옛 구현과 같은 집합**을 내는가.
+
+    x 경계를 안 넘는 것과 통행 불가 칸을 빼는 것이 특히 조용히 깨지는 자리다 —
+    양쪽 끝 열과 바다·산을 섞어 둔다."""
+    import random as _random
+    rng = _random.Random(7)
+    for trial in range(12):
+        rows = []
+        for y in range(9):
+            row = ""
+            for x in range(11):
+                row += rng.choice("..~#")        # 평야·평야·바다·통행불가
+            rows.append(row)
+        gm = GameMap.from_rows(rows)
+        players = {}
+        for pid in range(4):
+            players[pid] = PlayerState(pid=pid, name=f"P{pid}", start=0)
+        st = GameState(gmap=gm, players=players, rng=_random.Random(trial))
+        for t in range(gm.size):
+            if gm.passable(t) and rng.random() < 0.5:
+                gm.owner[t] = rng.randrange(4)
+        st._counts = {pid: int((gm.owner == pid).sum()) for pid in range(4)}
+        for pid in range(4):
+            assert st.border_targets(pid) == _border_targets_reference(st, pid),                 (trial, pid)
+
+
+def test_border_targets_does_not_wrap_around_the_map_edge():
+    """오른쪽 끝 칸의 "오른쪽 이웃"이 다음 줄 왼쪽 끝이 되면 안 된다.
+
+    ⚠ 인덱스 산술로 바꾸면서 가장 쉽게 깨지는 자리다. 옛 구현은 2차원 배열을
+    밀어서 이 문제가 구조적으로 없었다."""
+    gm = GameMap.from_rows(["...", "...", "..."])
+    players = {0: PlayerState(pid=0, name="P0", start=0),
+               1: PlayerState(pid=1, name="P1", start=0)}
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    gm.owner[gm.ref(2, 0)] = 0            # 첫 줄 오른쪽 끝
+    gm.owner[gm.ref(0, 1)] = 1            # 둘째 줄 왼쪽 끝 — 인덱스로는 바로 옆이다
+    st._counts = {0: 1, 1: 1}
+    assert 1 not in st.border_targets(0), "지도 오른쪽 끝에서 반대편으로 샜다"
