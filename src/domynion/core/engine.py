@@ -231,6 +231,10 @@ class GameState:
         self.attacks.append(atk)
         if target is not None:
             self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
+            # ⚠ **치는 순간 그쪽이 보낸 동맹 요청은 거절된다**
+            # (`rejectIncomingAllianceRequests`). 안 그러면 때려 놓고 그 요청을
+            # 그대로 받아 동맹이 된다 — 공격이 관계에 −70 을 주는 것과 앞뒤가 안 맞는다.
+            self.diplomacy.reject(pid, target)
             # 맞은 쪽만 나빠진다(`AttackExecution` 도 target 쪽만 갱신한다).
             self.relate(target, pid, C.REL_ATTACKED.get(self.difficulty, -70.0))
             if self.diplomacy.is_friendly(pid, target):

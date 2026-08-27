@@ -192,3 +192,54 @@ def test_embargo_is_one_directional():
     assert not d.embargoed(1, 0)
     d.stop_embargo(0, 1)
     assert not d.embargoed(0, 1)
+
+
+# --- 공격이 동맹 요청을 거절한다 (§5.58) ---------------------------------------
+
+def _bordering(st):
+    """0번과 1번이 **국경을 맞대게** 한다.
+
+    ⚠ 이 파일의 `state()` 는 한 칸씩만 준다. 그대로면 `launch_attack` 이
+    "닿지 않는다"로 실패해 **거절 규칙까지 가지도 못한다.**"""
+    for y in range(0, 10):
+        for x in range(0, 10):
+            st.gmap.owner[st.gmap.ref(x, y)] = 0
+    for y in range(0, 10):
+        for x in range(10, 20):
+            st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts[0] = 100
+    st._counts[1] = 100
+    st.players[0].troops = 100_000.0
+    return st
+
+
+def test_attacking_rejects_their_pending_alliance_request():
+    """⚠ **치는 순간 그쪽이 보낸 동맹 요청은 거절된다**
+    (`rejectIncomingAllianceRequests`).
+
+    막지 않았으면: 때려 놓고 그 요청을 그대로 받아 동맹이 된다. 공격이 관계에
+    −70 을 주는 것과 앞뒤가 안 맞는다."""
+    st = _bordering(state())
+    st.request_alliance(1, 0)                    # 1번이 나에게 동맹을 청했다
+    assert 0 in st.diplomacy.pending.get(1, set())
+
+    st.launch_attack(0, 1)                       # 내가 1번을 친다
+    assert 0 not in st.diplomacy.pending.get(1, set()),         "때려 놓고 그 요청이 그대로 남아 있다"
+
+
+def test_attacking_leaves_other_peoples_requests_alone():
+    """대조군 — **그 상대의 요청만** 거절한다. 남의 요청은 그대로다."""
+    st = _bordering(state())
+    st.request_alliance(1, 0)
+    st.request_alliance(2, 0)
+    st.launch_attack(0, 1)
+    assert 0 not in st.diplomacy.pending.get(1, set())
+    assert 0 in st.diplomacy.pending.get(2, set()), "엉뚱한 요청까지 지웠다"
+
+
+def test_attacking_neutral_land_rejects_nothing():
+    """중립을 칠 때는 거절할 상대가 없다 — 그냥 아무 일도 안 일어난다."""
+    st = state()
+    st.request_alliance(1, 0)
+    st.launch_attack(0, None)
+    assert 0 in st.diplomacy.pending.get(1, set())
