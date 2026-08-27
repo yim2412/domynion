@@ -5,7 +5,8 @@
 영토 수는 `_counts` 로 증분 유지한다. 13만 타일을 매 tick 세면 판당 수 초가 날아간다
 (전수 `np.bincount` 는 0.42ms, 9000 tick 이면 3.8초). 테스트만 전수로 대조한다.
 
-⚠ 종료 조건(시간 제한·지배)은 **원본에 없다.** openfront 는 마지막 생존자로 끝난다.
+⚠ 종료 조건(시간 제한·지배)은 **원본에도 있다**(`checkWinnerFFA`). 오래 "우리가
+넣은 것"이라 적혀 있었으나 §5.61 에서 정정했다 — 값이 11배 짧았을 뿐이다.
 헤드리스 측정을 끝내려고 우리가 둔 것이고, P6 에서 둠스데이 클락으로 교체한다.
 """
 
@@ -46,8 +47,11 @@ from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
 class Victory(Enum):
     CONQUEST = "정복"          # 원본의 유일한 승리 조건
-    DOMINATION = "지배"        # ⚠ 우리가 넣은 것 (원본에 없다)
-    TIMEOUT = "시간 종료"      # ⚠ 우리가 넣은 것 (원본에 없다)
+    # ⚠ 아래 두 **이름**은 우리 것이다 — 원본은 승리 종류를 구분하지 않고
+    # `setWinner` 하나로 끝낸다. 그러나 **조건 자체는 원본에 있다**(§5.61):
+    # `percentageTilesOwnedToWin` = 80% · `HARD_TIME_LIMIT_SECONDS` = 170분.
+    DOMINATION = "지배"        # percentageTilesOwnedToWin
+    TIMEOUT = "시간 종료"      # HARD_TIME_LIMIT_SECONDS
 
 
 @dataclass
@@ -2054,10 +2058,10 @@ class GameState:
         if len(alive) <= 1:
             self._finish(alive[0].pid if alive else None, Victory.CONQUEST)
             return
-        # ⚠ 아래 둘은 **원본에 없다.** 클락이 켜져 있으면 원본대로 마지막 생존자만
-        # 남을 때까지 간다. 헤드리스 측정을 끝내려고 둔 안전장치일 뿐이다.
-        if self.clock.cfg.enabled:
-            return
+        # ⚠ **원본은 둘 다 돈다**(§5.61). `GameRunner` 가 `WinCheckExecution` 을
+        # 항상 등록하고, 클락은 켜졌을 때 **추가로** 등록한다 — 클락은 교착을
+        # 푸는 장치이지 승리 판정을 대신하는 것이 아니다. 우리는 클락이 켜지면
+        # 이쪽을 껐었다. 이제 둘 다 본다.
         top = max(alive, key=lambda p: self.tiles(p.pid))
         # ⚠ 분모는 **낙진을 뺀 땅**이다(원본 `numLandTiles() -
         # numTilesWithFallout()`). `share()` 는 전체 육지로 나누므로 여기서

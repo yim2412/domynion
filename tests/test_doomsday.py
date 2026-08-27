@@ -158,11 +158,12 @@ def test_disabled_clock_does_nothing():
 def test_clock_drains_troops_and_finally_wipes():
     st = state(players=2)
     st.clock.cfg.enabled = True
-    st._counts = {0: 900, 1: 1}
-    for x in range(1, 901):
+    # ⚠ 0번을 **80% 아래로** 둔다. §5.61 부터 클락 판에서도 승리 판정이 도므로,
+    # 901/1000 = 90% 면 첫 tick 에 지배 승리로 판이 끝나 유출을 못 잰다.
+    for x in range(1, 700):
         st.gmap.owner[x] = 0
     st.gmap.owner[st.gmap.ref(0, 0)] = 0
-    st._counts = {0: 901, 1: 1}
+    st._counts = {0: 700, 1: 1}
     st.players[1].troops = 100_000.0
 
     st.tick_count = int(1200 / C.TICK_DT)       # 유예를 지난 시점
@@ -186,15 +187,18 @@ def test_clock_drains_troops_and_finally_wipes():
     assert st.verify_counts()
 
 
-def test_with_the_clock_on_only_conquest_ends_the_game():
-    """클락이 켜지면 시간 제한·지배 승리를 쓰지 않는다 — 원본에 없는 규칙이다."""
+def test_the_clock_does_not_replace_the_win_check():
+    """⚠ **원본은 둘 다 돈다**(§5.61).
+
+    `GameRunner` 가 `WinCheckExecution` 을 **항상** 등록하고, 클락은 켜졌을 때
+    **추가로** 등록한다 — 클락은 교착을 푸는 장치이지 승리 판정을 대신하는 것이
+    아니다. 우리는 클락이 켜지면 승리 판정을 껐었고, 이 테스트가 그 전제로
+    쓰여 있었다."""
     st = state(players=2)
     st.clock.cfg.enabled = True
-    st._counts = {0: 999, 1: 1}
-    st.tick_count = int(C.MATCH_SECONDS / C.TICK_DT) + 10
+    st._counts = {0: 999, 1: 1}                  # 0번이 99.9% 를 쥐었다
     st.tick()
-    assert st.victory is not Victory.TIMEOUT
-    assert st.victory is not Victory.DOMINATION
+    assert st.over and st.victory is Victory.DOMINATION,         "클락이 켜졌다고 승리 판정을 껐다"
 
 
 # --- 점진적 썩음 (§5.56) ------------------------------------------------------
