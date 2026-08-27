@@ -4208,6 +4208,19 @@ AI 도 그걸 읽어 `assistAllies` 로 도우러 간다. 그런데 **사람 화
 > 있었고 값이 틀렸다. 줄 수 대조가 "자리가 없는 것"을 찾는다면, 이름 대조는
 > 그보다 약하다.
 
+`GameImpl.ts`(1,361줄, 메서드 117개)도 같은 방식으로 훑었다. 73개가 "안 보임"
+으로 나왔지만 **거의 전부 엔진 배관**이다 — 업데이트 큐(`drainPacked*`) · 미니맵
+(`miniMap` · `miniWaterHPA`) · 실행 관리(`addExecution` · `removeExecution`) ·
+타일 버퍼. 우리는 tick 안에서 직접 처리하므로 대응물이 없는 것이 맞다.
+
+**규칙에 해당하는 것은 열두 개를 손으로 확인했고 전부 있었다** —
+`isOceanShore` · `sharedWaterComponents` · `getWaterComponent` · `hasFallout` ·
+`manhattanDist` · `euclideanDistSquared` · `neighborsWithDiag` · `circleSearch` ·
+`anyUnitNearby` · `hasUnitNearby` · `teamSpawnArea` · `terraNullius`.
+
+즉 **`core/game` 쪽 이식도 끝났다.** 남은 것은 실행부(`core/execution`)에서
+이번에 훑지 않은 파일들과, 표시 계층이다.
+
 ---
 
 ## 7. 다음 세션 재개 지점 (2026-08-27 기준)
