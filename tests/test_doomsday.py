@@ -18,6 +18,7 @@ from domynion.core.doomsday import (LEVELS, LEVELS_TEAM, SCHEDULES, DoomsdayCloc
                                     required_basis_points, required_tiles)
 from domynion.core.engine import GameState, Victory
 from domynion.core.gamemap import GameMap
+from domynion.core.nukes import Fallout
 from domynion.core.state import PlayerState
 
 
@@ -173,9 +174,14 @@ def test_clock_drains_troops_and_finally_wipes():
     st.tick()
     assert st.players[1].troops < before, "병력이 안 샌다"
 
-    st.tick_count += int(200 / C.TICK_DT)       # 마감을 넘긴다
-    st.tick()
-    assert not st.players[1].alive
+    # ⚠ §5.56 부터 **마감에 한 번에 지우지 않는다.** 병력이 바닥까지 내려가야
+    # 썩기 시작하고, 그 뒤 `rot_death_seconds` 에 걸쳐 칸을 먹는다. 그래서
+    # 시간을 건너뛰고 tick 한 번으로는 못 잰다 — 실제로 돌려야 한다.
+    for _ in range(int(600 / C.TICK_DT)):
+        st.tick()
+        if not st.players[1].alive:
+            break
+    assert not st.players[1].alive, "마감이 지났는데 안 죽었다"
     assert st.tiles(1) == 0
     assert st.verify_counts()
 
@@ -189,3 +195,151 @@ def test_with_the_clock_on_only_conquest_ends_the_game():
     st.tick()
     assert st.victory is not Victory.TIMEOUT
     assert st.victory is not Victory.DOMINATION
+
+
+# --- 점진적 썩음 (§5.56) ------------------------------------------------------
+
+def doomed(tiles: int = 40):
+    """바 아래로 떨어진 나라 하나를 만든다. 0번이 크고 1번이 썩는다.
+
+    ⚠ 재료를 두 번 틀렸다. (a) 지도가 **100×10 = 1,000칸**이라 정사각형으로
+    잡으면 벗어난다. (b) 200칸(20%)은 **바보다 높아 표시가 안 된다** — 1200초
+    시점의 요구치가 7% 다. 40칸(4%)으로 낮춰야 이 규칙을 잰다."""
+    st = state(players=2)
+    st.clock.cfg.enabled = True
+    # ⚠ 이 파일의 `state()` 는 낙진을 안 만든다. 썩은 칸이 낙진이 되는 규칙을
+    # 재려면 있어야 한다.
+    st.fallout = Fallout(st.gmap.size)
+    w = st.gmap.width
+    n0 = 0
+    for y in range(5, 10):                      # 아래 절반은 0번
+        for x in range(0, w):
+            st.gmap.owner[y * w + x] = 0
+            n0 += 1
+    n1 = 0
+    for i in range(tiles):                      # 위쪽에서 tiles 칸만
+        st.gmap.owner[i] = 1
+        n1 += 1
+    st._counts = {0: n0, 1: n1}
+    st.players[1].troops = 10.0                 # 이미 바닥이다
+    st.tick_count = int(1200 / C.TICK_DT)
+    st.tick()
+    assert 1 in st.clock.marked_at, "표시가 안 됐다"
+    return st
+
+
+def test_rot_eats_territory_gradually_not_all_at_once():
+    """⚠ **마감에 한 번에 지우지 않는다.** 매초 ⌈남은칸/남은초⌉ 씩 먹는다.
+
+    막지 않았으면: 썩는 나라가 마지막 순간까지 멀쩡하다가 사라진다 — 그동안
+    상한도 수입도 안 줄고, 이웃은 아무것도 못 가져간다."""
+    st = doomed(40)
+    start = st.tiles(1)
+    seen = []
+    for _ in range(int(200 / C.TICK_DT)):
+        st.tick()
+        seen.append(st.tiles(1))
+        if not st.players[1].alive:
+            break
+    assert not st.players[1].alive, "마감 안에 안 죽었다"
+    # **중간 단계가 있어야 한다** — 전부 → 0 으로 뛰면 점진적이 아니다
+    middles = [n for n in seen if 0 < n < start]
+    assert len(middles) > 10, f"중간 단계가 {len(middles)}개뿐이다"
+    assert seen == sorted(seen, reverse=True), "영토가 늘었다"
+
+
+def test_rotted_tiles_become_fallout_not_free_land():
+    """⚠ 썩은 칸은 **낙진(황무지)** 이다. 원본 주석: *"Wasteland, not a prize:
+    plain relinquish left neutral land the biggest neighbour absorbed for free —
+    rot was feeding the one side it never presses."*"""
+    st = doomed(40)
+    # ⚠ 썩음은 표시 즉시가 아니라 **경고 30초 + 바닥 감쇠 90초 = 120초** 뒤다.
+    # 60초만 기다렸다가 "안 썩는다"고 볼 뻔했다.
+    for _ in range(int(300 / C.TICK_DT)):
+        st.tick()
+        if st.tiles(1) < 40:
+            break
+    assert st.tiles(1) < 40, "아직 안 썩었다"
+    assert int(st.fallout.mask.sum()) > 0, "썩은 칸이 낙진이 안 됐다"
+
+
+def test_recovering_throws_away_the_rot_progress():
+    """바 위로 돌아오면 진행이 **통째로** 사라진다(원본도 `rotState.delete`)."""
+    st = doomed(40)
+    for _ in range(int(300 / C.TICK_DT)):       # 경고 30 + 바닥 감쇠 90 을 넘긴다
+        st.tick()
+        if 1 in st._rot:
+            break
+    assert 1 in st._rot, "썩기 시작하지 않았다"
+
+    st.clock.marked_at.pop(1, None)             # 바 위로 회복
+    st.players[1].troops = 1_000_000.0
+    st.tick()
+    assert 1 not in st._rot, "진행이 남아 있다"
+
+
+def test_rot_starts_at_the_floor_not_at_the_deadline():
+    """썩음은 **바닥에 닿아서** 시작한다. 병력을 지켜 낸 나라는 아직 안 썩는다.
+
+    ⚠ 이게 없으면 반격 창(`floor_decay_seconds`)이 의미를 잃는다."""
+    st = doomed(40)
+    p = st.players[1]
+    cap = p.max_troops(st.tiles(1))
+    p.troops = cap                              # 바닥보다 한참 위
+    el = st.elapsed + st.clock.cfg.warn_seconds + st.clock.cfg.floor_decay_seconds + 1
+    assert not st.clock.rotting(1, el, p.troops, cap), "바닥 위인데 썩는다"
+    p.troops = 0.0
+    assert st.clock.rotting(1, el, p.troops, cap), "바닥인데 안 썩는다"
+
+    # ⚠ **반격 창 안에서는 병력이 0 이어도 아직 안 썩는다.** 이 대조군이 없으면
+    # `past_warn < floor_decay_seconds` 검사를 지워도 아무도 안 깨진다(변이 N3).
+    early = st.elapsed + st.clock.cfg.warn_seconds + 1
+    assert not st.clock.rotting(1, early, 0.0, cap),         "바닥 감쇠가 끝나기 전에 썩기 시작했다 — 반격 창이 사라진다"
+
+
+def test_rot_takes_the_whole_deadline_not_a_tenth_of_it():
+    """썩는 속도는 **초당** 쿼터다. tick 당으로 돌리면 10배 빨라져 마감이
+    150초가 아니라 15초가 된다.
+
+    ⚠ 변이 N5 가 이 재료 없이는 안 잡혔다 — "점진적인가"만 보면 10배 빨라도
+    여전히 점진적이기 때문이다. **걸린 시간**을 재야 한다."""
+    st = doomed(40)
+    started = None
+    for i in range(int(400 / C.TICK_DT)):
+        st.tick()
+        if started is None and st.tiles(1) < 40:
+            started = st.elapsed
+        if not st.players[1].alive:
+            break
+    assert started is not None and not st.players[1].alive
+    took = st.elapsed - started
+    # 40칸을 초당 ⌈남은칸/남은초⌉ 로 먹으면 마감(150초)에 맞춰 끝난다.
+    # tick 당으로 돌면 4초쯤에 끝난다.
+    assert took > 20.0, f"{took:.0f}초 만에 다 먹었다 — 초당이 아니라 tick 당이다"
+
+
+def test_the_drain_uses_max_troops_not_current():
+    """⚠ **상한에 곱한다. 현재 병력이 아니다.**
+
+    현재 병력에 곱하면 줄어들수록 유출이 줄어 **수입과 균형을 이루고 멈춘다** —
+    실측으로 상한 102,000 짜리가 62,139 에서 멎어 바닥(5,100)에 영영 안 닿았다.
+
+    ⚠ 한 tick 의 감소량으로 재려다 실패했다. **병력 성장이 같이 들어와** 값이
+    음수로 나온다(측정이 대상을 못 고른 것이다). 관찰 가능한 것은 하나뿐이다 —
+    **실제로 바닥에 닿는가.**"""
+    st = doomed(40)
+    p = st.players[1]
+    p.troops = p.max_troops(st.tiles(1))
+    reached = False
+    for _ in range(int(400 / C.TICK_DT)):
+        st.tick()
+        if not p.alive:
+            reached = True                      # 썩어 사라졌다 = 바닥을 지났다
+            break
+        floor = (st.clock.troop_floor_fraction(1, st.elapsed)
+                 * p.max_troops(max(1, st.tiles(1))))
+        if p.troops <= floor * 1.01:
+            reached = True
+            break
+    assert reached, ("바닥에 영영 안 닿는다 — 현재 병력에 곱하면 유출이 수입과 "
+                     "균형을 이뤄 멈춘다(실측 62,139 대 바닥 5,100)")

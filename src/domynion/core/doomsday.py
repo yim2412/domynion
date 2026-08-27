@@ -16,6 +16,7 @@ openfront 에는 **시간 제한도 지배 승리도 없다.** 대신 요구 점
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # 파도 목표치 (basis point, 100 = 1%)
@@ -115,7 +116,16 @@ class DoomsdayClock:
                 self.marked_at.pop(pid, None)
 
     def drain_fraction(self, pid: int, elapsed: float) -> float:
-        """이번 tick 에 잃는 병력 비율. 경고 시간 동안은 0 이다."""
+        """이번 초에 잃는 병력의 비율. 경고 시간 동안은 0 이다.
+
+        ⚠ **이 비율은 `max_troops` 에 곱한다. 현재 병력이 아니다**(§5.56).
+        원본 주석이 이유를 못 박아 뒀다 — *"as a percentage of MAX capacity
+        (not current), so it outpaces income from the first second."*
+
+        현재 병력에 곱하면 줄어들수록 유출도 줄어 **수입과 균형을 이루고 멈춘다.**
+        실측: 상한 102,000 짜리가 62,139 에서 멈춰 바닥(5,100)에 영영 안 닿았다.
+        그래서 옛 코드에는 "표시 뒤 150초면 무조건 소멸"이라는 임시 장치가
+        필요했던 것이다 — 그게 없으면 아무도 안 죽었다."""
         since = self.marked_at.get(pid)
         if since is None:
             return 0.0
@@ -138,6 +148,48 @@ class DoomsdayClock:
         f = min(1.0, t / c.floor_decay_seconds)
         pct = c.floor_start_percent + (c.drain_floor_percent - c.floor_start_percent) * f
         return pct / 100.0
+
+    # --- 영토 썩음 (§5.56) ------------------------------------------------
+
+    def rot_quota(self, tiles_left: int, seconds_under: float) -> int:
+        """`doomsdayClockRotQuota` — **초당 먹을 칸 수** = ⌈남은칸 / 남은초⌉.
+
+        스스로 보정된다: 늦게 시작해도, 영토가 크든 작든 `rot_death_seconds`
+        마감을 지킨다. 원본 주석이 그 성질을 요점으로 적어 뒀다."""
+        c = self.cfg
+        if tiles_left <= 0 or c.rot_death_seconds <= 0:
+            return 0
+        seconds_left = max(1.0, c.rot_death_seconds - seconds_under)
+        return math.ceil(tiles_left / seconds_left)
+
+    def rot_specks(self, held: int, ticks_since: int) -> int:
+        """썩기 시작한 **처음 10초**는 쿼터 대신 알갱이로 뿌린다.
+
+        원본 주석: 쿼터의 몫만 뿌리면 웬만한 나라에서는 초당 구멍 한두 개뿐이라
+        아무 일도 안 일어나 보인다. 앞질러 뿌리고 쿼터가 그만큼 흡수한다."""
+        c = self.cfg
+        if ticks_since >= c.rot_grain_seconds * 10:
+            return 0
+        return max(1, math.ceil(held * c.rot_speckle_percent / 100
+                                / c.rot_grain_seconds))
+
+    def rotting(self, pid: int, elapsed: float, troops: float,
+                max_troops: float) -> bool:
+        """지금 썩는 중인가. **마감이 지나서가 아니라 바닥에 닿아서** 시작한다.
+
+        ⚠ 원본 조건이 둘이다: 바닥이 다 내려갔을 것(`floor_decay_seconds`)과
+        **병력이 그 바닥 이하일 것.** 즉 반격 창에서 병력을 지켜 낸 나라는
+        아직 안 썩는다. 우리는 이걸 "표시된 뒤 150초면 무조건 소멸"로 뭉뚱그려
+        놨었다(§5.56)."""
+        since = self.marked_at.get(pid)
+        c = self.cfg
+        if since is None or c.rot_death_seconds <= 0:
+            return False
+        past_warn = elapsed - since - c.warn_seconds
+        if past_warn < c.floor_decay_seconds:
+            return False
+        floor = self.troop_floor_fraction(pid, elapsed) * max_troops
+        return troops <= floor
 
     def is_dead(self, pid: int, elapsed: float) -> bool:
         """`rotDeathSeconds` 는 **마감 시각**이다 — 표시된 뒤 이만큼 지나면 무엇을

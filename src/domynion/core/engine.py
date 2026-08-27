@@ -29,6 +29,7 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     _touching_components, manhattan, port_check_due,
                     trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
+from .rot import RotState, rot_tiles
 from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
                     blast_tiles, death_factor, is_targetable, sam_range)
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
@@ -68,6 +69,8 @@ class GameState:
     # 항구 쌍은 계속 반복된다. 바다 지형은 안 바뀌므로 경로를 그대로 재사용한다.
     # ⚠ P5 에서 핵이 육지를 바다로 만들면 **여기를 비워야 한다.**
     _path_cache: dict = field(default_factory=dict)
+    # 둠스데이 썩음 진행(pid → RotState). 회복하면 버린다.
+    _rot: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
     mirvs_launched: int = 0        # 판 전체. MIRV 값이 이 수에 따라 오른다
     fallout: Fallout | None = None
@@ -1754,14 +1757,65 @@ class GameState:
         self.clock.update(elapsed, {p.pid: self.tiles(p.pid) for p in self.alive},
                           self.gmap.land_count, team_game)
         for p in list(self.alive):
-            if self.clock.is_dead(p.pid, elapsed):
-                self._wipe(p.pid)
-                continue
             frac = self.clock.drain_fraction(p.pid, elapsed)
-            if frac <= 0.0:
-                continue
-            floor = self.clock.troop_floor_fraction(p.pid, elapsed) *                 p.max_troops(self.tiles(p.pid))
-            p.troops = max(floor, p.troops * (1.0 - frac * C.TICK_DT))
+            cap = p.max_troops(self.tiles(p.pid))
+            if frac > 0.0:
+                floor = self.clock.troop_floor_fraction(p.pid, elapsed) * cap
+                # ⚠ **상한에 곱한다. 현재 병력이 아니다**(§5.56). 현재 병력에
+                # 곱하면 줄어들수록 유출이 줄어 수입과 균형을 이루고 멈춘다 —
+                # 실측으로 62,139 에서 멎어 바닥(5,100)에 영영 안 닿았다.
+                chunk = cap * frac * C.TICK_DT
+                p.troops = max(floor, p.troops - chunk)
+            # ⚠ **썩음은 마감이 지나서가 아니라 바닥에 닿아서 시작한다**(§5.56).
+            # 반격 창에서 병력을 지켜 낸 나라는 아직 안 썩는다.
+            if self.clock.rotting(p.pid, elapsed, p.troops, cap):
+                self._rot_step(p.pid, elapsed)
+            elif p.pid in self._rot:
+                del self._rot[p.pid]          # 회복하면 진행이 통째로 사라진다
+
+    def _rot_step(self, pid: int, elapsed: float) -> None:
+        """이번 초에 먹을 만큼 영토를 썩힌다 — 원본 `DoomsdayClockExecution.rot`.
+
+        **초에 한 번**만 돈다(원본이 `secondsUnder` 로 세고 쿼터도 초당이다).
+        tick 마다 돌리면 10배 빨리 먹어 마감이 15초가 된다."""
+        if self.tick_count % C.TICK_HZ != 0:
+            return
+        owned = [int(t) for t in self.gmap.owned_refs(pid)]
+        if not owned:
+            self._wipe(pid)
+            return
+        since = self.clock.marked_at.get(pid, elapsed)
+        seconds_under = elapsed - since
+        state = self._rot.get(pid)
+        if state is None:
+            state = RotState(self.tick_count, len(owned))
+            self._rot[pid] = state
+        quota = self.clock.rot_quota(len(owned), seconds_under)
+        specks = self.clock.rot_specks(state.held,
+                                       self.tick_count - state.since_tick)
+        budget = min(len(owned), max(quota, specks))
+        border = self._border_tiles(pid, owned)
+        eaten = rot_tiles(self.gmap, pid, owned, border, state, budget, specks)
+        for t in eaten:
+            self.gmap.owner[t] = -1
+            self._counts[pid] = max(0, self._counts.get(pid, 0) - 1)
+        # ⚠ **썩은 칸은 낙진이다.** 원본 주석: *"Wasteland, not a prize"* —
+        # 그냥 중립으로 두면 가장 큰 이웃이 공짜로 먹는다.
+        if eaten:
+            self.fallout.add(eaten)
+        if self._counts.get(pid, 0) <= 0:
+            self._wipe(pid)
+
+    def _border_tiles(self, pid: int, owned: list[int]) -> set[int]:
+        """내 칸 중 **남과 맞닿은** 것들. 안쪽부터 뚫기 위해 필요하다."""
+        gm = self.gmap
+        out = set()
+        for t in owned:
+            for n in gm.neighbors(t):
+                if int(gm.owner[n]) != pid:
+                    out.add(t)
+                    break
+        return out
 
     def _wipe(self, pid: int) -> None:
         """영토가 통째로 썩어 사라진다 — 아무도 가져가지 않고 중립이 된다."""
