@@ -7,3 +7,6 @@ dist/
 .pytest_cache/
 .env
 of/
+
+# 백그라운드 작업 폴링용 임시 메타(도구가 만든다)
+_bgtask.meta
