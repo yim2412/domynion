@@ -197,10 +197,12 @@ def test_ai_says_something_when_it_nukes_me():
 
 def test_ai_answers_a_donation_and_says_when_it_was_too_small():
     big = state({0: "human", 1: "nation"})
+    big.diplomacy.form(0, 1, big.tick_count)      # 기부는 친한 사이만 (§5.63)
     big.donate_gold(0, 1, 200_000)
     assert chats(big)[0] in emoji.LOVE + emoji.DONATION_OK
 
     small = state({0: "human", 1: "nation"})
+    small.diplomacy.form(0, 1, small.tick_count)
     small.donate_gold(0, 1, 1)
     assert chats(small)[0] in emoji.DONATION_TOO_SMALL
 

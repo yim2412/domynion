@@ -186,8 +186,21 @@ def test_embargo_toggles_and_donations_move_resources():
     assert st.diplomacy.embargoed(0, 1)
     assert by_label(diplomacy_items(st, 0, 1, noop), "금수 해제") is not None
 
-    by_label(diplomacy_items(st, 0, 1, noop), "골드 주기").action()
+    # 기부 버튼은 **친한 사이가 아니면 잠긴다**(§5.63). 원본도 `canDonateGold` 를
+    # 클라이언트로 내려보내 잠근다 — 눌러도 안 되는 버튼을 열어 두지 않는다.
+    gold = by_label(diplomacy_items(st, 0, 1, noop), "골드 주기")
+    assert not gold.enabled
+    gold.action()
+    assert st.players[1].gold == 0, "잠긴 버튼은 눌러도 안 나간다"
+
+    st.diplomacy.form(0, 1, st.tick_count)
+    gold = by_label(diplomacy_items(st, 0, 1, noop), "골드 주기")
+    assert gold.enabled
+    gold.action()
     assert st.players[1].gold == 1_000
+
+    # 같은 상대에게 연달아는 안 된다 — 쿨다운 10초.
+    assert not by_label(diplomacy_items(st, 0, 1, noop), "병력 주기").enabled
 
 
 # --- 메뉴 자체 --------------------------------------------------------------

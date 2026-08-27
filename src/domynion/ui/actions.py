@@ -419,6 +419,11 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
     outgoing = target in d.pending.get(me, set())
     # 동맹 요청이 받아들여질지는 **상대가 나를 보는 값**이 정한다.
     rel = st.relation_of(target, me)
+    # 기부는 **친한 사이에게만, 10초에 한 번**(§5.63). 원본도 이 값을 클라이언트로
+    # 내려보내 버튼을 잠근다(`GameRunner` → `canDonateGold`/`canDonateTroops`).
+    can_donate = st.can_donate(me, target)
+    _no_donate = ("동맹·같은 팀에게만 줄 수 있다" if not d.is_friendly(me, target)
+                  else "아직 쿨다운이다 (10초)")
 
     items = [
         Item("동맹 수락", action=lambda: _accept(st, me, target, notify),
@@ -468,12 +473,14 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
              action=lambda: _embargo(st, me, target, notify),
              hint="무역선 항로를 끊는다 (양쪽 다 손해다)", colour=COL_DIPLO),
         Item("골드 주기", action=lambda: _donate_gold(st, me, target, notify),
-             enabled=mine.gold > 0,
-             hint=f"가진 골드의 1/4 ({_gold(mine.gold // 4)}) 을 보낸다",
+             enabled=can_donate and mine.gold > 0,
+             hint=(f"가진 골드의 1/4 ({_gold(mine.gold // 4)}) 을 보낸다"
+                   if can_donate else _no_donate),
              colour=COL_PLAIN),
         Item("병력 주기", action=lambda: _donate_troops(st, me, target, notify),
-             enabled=mine.troops > 1,
-             hint=f"병력의 1/4 ({mine.troops / 4:,.0f}) 을 보낸다",
+             enabled=can_donate and mine.troops > 1,
+             hint=(f"병력의 1/4 ({mine.troops / 4:,.0f}) 을 보낸다"
+                   if can_donate else _no_donate),
              colour=COL_PLAIN),
     ]
     return items

@@ -202,12 +202,17 @@ def test_embargo_stops_trade():
 def test_donations_move_resources():
     st = state(["....."], {0: (0, 0), 1: (4, 0)})
     st.players[0].gold = 5_000
+    assert not st.donate_gold(0, 1, 2_000), "모르는 사이에게는 못 준다 (§5.63)"
+
+    st.diplomacy.form(0, 1, st.tick_count)
     assert st.donate_gold(0, 1, 2_000)
     assert st.players[0].gold == 3_000 and st.players[1].gold == 2_000
     assert not st.donate_gold(0, 1, 999_999), "없는 골드는 못 준다"
     assert not st.donate_gold(0, 0, 100), "자기 자신에게는 못 준다"
 
     before = st.players[1].troops
+    assert not st.donate_troops(0, 1, 1_000.0),         "쿨다운은 골드·병력 **공용**이다 — 원본 `sentDonations` 가 하나다"
+    st.tick_count += C.DONATE_COOLDOWN_TICKS
     assert st.donate_troops(0, 1, 1_000.0)
     assert st.players[1].troops == before + 1_000.0
 

@@ -81,6 +81,8 @@ class GameState:
     _tile_changed: dict = field(default_factory=dict)
     # 역 타일 → 마지막 발차 tick(`ticksCooldown`). 한 역이 연달아 못 내게 한다.
     _station_fired: dict = field(default_factory=dict)
+    # (준 사람, 받는 사람) → 마지막 기부 tick(`donateCooldown`).
+    _donated_at: dict = field(default_factory=dict)
     _enclave_checked: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
     mirvs_launched: int = 0        # 판 전체. MIRV 값이 이 수에 따라 오른다
@@ -1449,10 +1451,38 @@ class GameState:
 
     # --- 기부 -------------------------------------------------------------
 
+    def can_donate(self, pid: int, to: int) -> bool:
+        """`canDonateGold` / `canDonateTroops` — **친한 사이에게만, 10초에 한 번.**
+
+        ⚠ 이식 누락 마흔넷(§5.63). 우리는 골드/병력만 확인하고 있었다. 그래서
+        **적에게도 줄 수 있었고 같은 tick 에 여러 번 줄 수 있었다.**
+
+        둘 다 중요하다:
+
+        - **친한 사이 제한**이 없으면 적에게 돈을 뿌려 관계를 살 수 있다. 기부는
+          관계를 올리는 수단인데(§P3), 그 관계가 **이미 친해야** 쓸 수 있는 것이
+          원본의 구조다.
+        - **쿨다운**이 없으면 덩어리 크기 규칙(§P3)이 무의미해진다 — 한 번에
+          `GOLD_CHUNK_SIZE` 만큼만 관계가 오르는데, 같은 tick 에 100번 나눠
+          보내면 100번 오른다.
+        """
+        a, b = self.players.get(pid), self.players.get(to)
+        if a is None or b is None or pid == to:
+            return False
+        if not a.alive or not b.alive:
+            return False
+        if not self.diplomacy.is_friendly(pid, to):
+            return False
+        last = self._donated_at.get((pid, to))
+        return last is None or self.tick_count - last >= C.DONATE_COOLDOWN_TICKS
+
     def donate_gold(self, pid: int, to: int, gold: int) -> bool:
         a, b = self.players.get(pid), self.players.get(to)
         if a is None or b is None or pid == to or gold <= 0 or a.gold < gold:
             return False
+        if not self.can_donate(pid, to):
+            return False
+        self._donated_at[(pid, to)] = self.tick_count
         a.gold -= gold
         b.gold += gold
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=gold)
@@ -1473,6 +1503,9 @@ class GameState:
         a, b = self.players.get(pid), self.players.get(to)
         if a is None or b is None or pid == to or troops <= 0 or a.troops < troops:
             return False
+        if not self.can_donate(pid, to):
+            return False
+        self._donated_at[(pid, to)] = self.tick_count
         a.troops -= troops
         b.troops += troops
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=troops)

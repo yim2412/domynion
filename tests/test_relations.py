@@ -161,13 +161,16 @@ def test_mirv_is_the_only_two_way_hostility():
 
 def test_troop_donation_is_flat_but_gold_scales_with_the_amount():
     st = state()
+    st.diplomacy.form(0, 1, st.tick_count)        # 기부는 친한 사이만 (§5.63)
     st.donate_troops(0, 1, 5_000)
     assert st.players[1].relations.value(0) == pytest.approx(C.REL_TROOP_DONATION)
 
     st2 = state()
+    st2.diplomacy.form(0, 1, st2.tick_count)
     st2.donate_gold(0, 1, 5_000)          # medium 덩어리 하나 = 5,000 → +5
     small = st2.players[1].relations.value(0)
     st3 = state()
+    st3.diplomacy.form(0, 1, st3.tick_count)
     st3.donate_gold(0, 1, 50_000)
     assert st3.players[1].relations.value(0) > small
 
