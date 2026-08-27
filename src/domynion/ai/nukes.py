@@ -28,7 +28,8 @@ import random
 
 from ..core import constants as C
 from ..core.gamemap import TileRef
-from ..core.nukes import NUKE_MAGNITUDES, sam_range
+from ..core.nukes import (NUKE_MAGNITUDES, NUKE_SPEED, Nuke, is_targetable,
+                          sam_range)
 from ..core.relations import Relation
 from ..core.units import STRUCTURES, UnitType
 
@@ -340,14 +341,70 @@ class NationNukeBehavior:
 
         self._forget_old(st.tick_count)
         outer = NUKE_MAGNITUDES[utype][1]
+        # hard 이상은 **떨어질 궤적을 피한다.** 우리 엔진이 실제로 쓰는 발사
+        # 사일로(`launch_nuke` 와 같은 규칙)를 미리 골라 둔다.
+        ready = [u for u in silos if not u.in_cooldown]
+        dodge = self.difficulty in ("hard", "impossible") and bool(ready)
+        enemy_sams = self._enemy_sams(st) if dodge else []
+
         best, best_v = None, -1.0
         for t in cands:
             if not self._blast_is_clean(st, t, outer, target.pid):
                 continue
+            if dodge and enemy_sams:
+                src = min(ready, key=lambda u: self._d2(st, u.tile, t)).tile
+                if self._trajectory_interceptable(st, src, t, utype, enemy_sams):
+                    continue
             v = self.tile_score(st, t, silos, structures, utype)
             if v > best_v:
                 best, best_v = t, v
         return best
+
+    def _d2(self, st, a: TileRef, b: TileRef) -> int:
+        w = st.gmap.width
+        return (a % w - b % w) ** 2 + (a // w - b // w) ** 2
+
+    def _enemy_sams(self, st) -> list:
+        """궤적 검사에 쓸 (타일, 사거리²) 목록. 후보 칸마다 다시 모으면 안 된다."""
+        out = []
+        for q in st.alive:
+            if q.pid == self.pid or st.diplomacy.is_friendly(self.pid, q.pid):
+                continue
+            for u in q.units.of(UnitType.SAM_LAUNCHER):
+                if u.under_construction:
+                    continue
+                r = sam_range(u.level)
+                out.append((u.tile, r * r))
+        return out
+
+    def _trajectory_interceptable(self, st, src: TileRef, dst: TileRef,
+                                  utype, enemy_sams: list) -> bool:
+        """`isTrajectoryInterceptableBySam` — 이 궤적이 SAM 에 걸리는가.
+
+        원본은 포물선 경로를 뽑아 훑지만 **우리 핵은 직선으로 난다**(`Nuke.tile`).
+        그래서 같은 `Nuke` 를 실제로 한 번 날려 보며 잰다 — 예측이 엔진의 실제
+        비행과 어긋날 수가 없다. 원본이 하는 `defaultNukeTargetableRange` 구간
+        건너뛰기는 `is_targetable` 이 그대로 맡는다(§5.49 앞 절).
+
+        ⚠ SAM 의 재장전 상태는 **안 본다.** 원본도 안 본다 — 도착할 때쯤이면
+        관이 열려 있을 수 있으므로 지금 비어 있다고 안심하면 안 된다."""
+        gm = st.gmap
+        n = Nuke(owner=self.pid, utype=utype, src=src, dst=dst)
+        steps = 0
+        limit = int(math.dist((src % gm.width, src // gm.width),
+                              (dst % gm.width, dst // gm.width))
+                    / NUKE_SPEED[utype]) + 2
+        while steps < limit:
+            steps += 1
+            n.advance()
+            here = n.tile(gm)
+            if is_targetable(gm, src, dst, here):
+                for tile, r2 in enemy_sams:
+                    if self._d2(st, tile, here) <= r2:
+                        return True
+            if n.arrived(gm):
+                break
+        return False
 
     def _blast_is_clean(self, st, tile: TileRef, radius: int, target_pid: int) -> bool:
         """`isValidNukeTile` × `boundingBoxTiles` — 반경이 남의 땅에 안 닿아야 한다.

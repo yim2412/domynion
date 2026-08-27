@@ -524,3 +524,115 @@ def test_impossible_crown_targets_second_place():
     fill(st, 2, 400, 0, 410, 10)               # 3등
     assert behavior(difficulty="hard").find_target(st) is None,         "hard 가 이미 겨눴다면 impossible 관문을 안 재는 테스트다"
     assert behavior(difficulty="impossible").find_target(st).pid == 1
+
+
+# --- 궤적 회피 (§5.49) -------------------------------------------------------
+
+def sam(st: GameState, pid: int, x: int, y: int, level: int = 1) -> Unit:
+    return unit(st, pid, UnitType.SAM_LAUNCHER, x, y, level=level)
+
+
+def test_hard_avoids_tiles_whose_trajectory_crosses_a_sam():
+    """hard 이상은 **가는 길에 SAM 이 있는 칸**을 후보에서 뺀다.
+
+    재료: 표적 나라의 땅 두 덩이가 사일로에서 같은 거리에 있고, 한쪽으로 가는
+    길목에만 제3자의 SAM 이 서 있다. 회피가 없으면 점수가 같아 어느 쪽이든
+    고를 수 있으므로, **막힌 쪽을 절대 안 고르는지**로 판정한다."""
+    st = state(players=3)
+    fill(st, 0, 0, 190, 20, 210)                 # 나 — 사일로 자리
+    silo = unit(st, 0, UnitType.MISSILE_SILO, 10, 200)
+    fill(st, 1, 380, 40, 420, 80)                # 위쪽 덩이
+    fill(st, 1, 380, 320, 420, 360)              # 아래쪽 덩이
+    st.players[0].gold = 100_000_000
+    st.players[0].relations.update(1, -200)
+
+    b = behavior(difficulty="hard", seed=1)
+    up, down = st.gmap.ref(400, 60), st.gmap.ref(400, 340)
+    sams = b._enemy_sams(st)
+    assert sams == [], "아직 SAM 이 없어야 한다"
+    assert not b._trajectory_interceptable(st, silo.tile, up, UnitType.ATOM_BOMB, sams)
+
+    # 위쪽 길목에만 SAM 을 세운다(제3자 소유 — 표적의 것이 아니어야 반경 검사와 섞이지 않는다)
+    sam(st, 2, 200, 130, level=1)
+    sams = b._enemy_sams(st)
+    assert len(sams) == 1
+    assert b._trajectory_interceptable(st, silo.tile, up, UnitType.ATOM_BOMB, sams),         "막힌 궤적을 못 알아봤다"
+    assert not b._trajectory_interceptable(st, silo.tile, down, UnitType.ATOM_BOMB, sams),         "안 막힌 궤적까지 막혔다고 봤다 — 이러면 아무 칸도 못 고른다"
+
+    # 실제 고르기에서도 위쪽을 안 고른다
+    chosen = [b._pick_tile(st, st.players[0], st.players[1], [silo],
+                           UnitType.ATOM_BOMB) for _ in range(8)]
+    assert all(t is not None for t in chosen)
+    w = st.gmap.width
+    assert all(t // w > 200 for t in chosen), "막힌 쪽을 골랐다"
+
+
+def test_medium_ignores_trajectories():
+    """medium 은 궤적을 안 본다 — 원본이 hard 이상에만 건 관문이다."""
+    st = state(players=3)
+    fill(st, 0, 0, 190, 20, 210)
+    silo = unit(st, 0, UnitType.MISSILE_SILO, 10, 200)
+    # ⚠ 표적 영토를 반경(30)의 네 배보다 크게 잡는다. 40×40 으로 두면 어느 칸을
+    # 골라도 테두리가 밖으로 나가 **medium 은 궤적과 무관하게 None 을 돌려준다**
+    # (처음에 그렇게 짰다가 통과 이유를 착각할 뻔했다).
+    fill(st, 1, 350, 10, 450, 110)
+    city = unit(st, 1, UnitType.CITY, 400, 60)   # 건물 칸은 항상 후보다
+    st.players[0].gold = 100_000_000
+    sam(st, 2, 200, 130, level=1)
+
+    b = behavior(difficulty="medium", seed=1)
+    hard = behavior(difficulty="hard", seed=1)
+    assert hard._trajectory_interceptable(st, silo.tile, city.tile,
+                                          UnitType.ATOM_BOMB, hard._enemy_sams(st)),         "이 궤적이 막혀 있지 않으면 난이도 차이를 안 재는 테스트다"
+    t = b._pick_tile(st, st.players[0], st.players[1], [silo], UnitType.ATOM_BOMB)
+    assert t is not None
+    assert hard._trajectory_interceptable(st, silo.tile, t, UnitType.ATOM_BOMB,
+                                          hard._enemy_sams(st)),         "medium 이 고른 칸이 막힌 궤적이 아니다 — 난이도 차이가 안 재진다"
+
+    # 대조군 — 같은 재료에서 hard 는 그 칸을 버린다
+    th = hard._pick_tile(st, st.players[0], st.players[1], [silo], UnitType.ATOM_BOMB)
+    assert th is None or not hard._trajectory_interceptable(
+        st, silo.tile, th, UnitType.ATOM_BOMB, hard._enemy_sams(st))
+
+
+def test_midflight_sams_do_not_block_trajectories():
+    """요격 창 밖(발사점·표적에서 150 초과)의 SAM 은 궤적을 막지 않는다.
+
+    §5.49 앞 절과 같은 규칙이다 — 못 쏘는 SAM 을 피하면 AI 가 쓸데없이 굳는다."""
+    st = state(players=3)
+    fill(st, 0, 0, 190, 20, 210)
+    silo = unit(st, 0, UnitType.MISSILE_SILO, 10, 200)
+    fill(st, 1, 560, 190, 580, 210)
+    st.players[0].gold = 100_000_000
+    dst = st.gmap.ref(570, 200)
+    mid = sam(st, 2, 290, 200, level=1)          # 양쪽에서 280 — 창 밖
+    b = behavior(difficulty="hard")
+    assert st._dist_sq(mid.tile, silo.tile) > C.NUKE_TARGETABLE_RANGE ** 2
+    assert st._dist_sq(mid.tile, dst) > C.NUKE_TARGETABLE_RANGE ** 2
+    assert not b._trajectory_interceptable(st, silo.tile, dst,
+                                           UnitType.ATOM_BOMB, b._enemy_sams(st))
+
+    # 대조군 — 표적 옆으로 옮기면(창 안) 막힌다
+    mid.tile = st.gmap.ref(520, 200)
+    assert b._trajectory_interceptable(st, silo.tile, dst,
+                                       UnitType.ATOM_BOMB, b._enemy_sams(st))
+
+
+def test_sams_under_construction_do_not_block_trajectories():
+    """아직 **짓는 중인 SAM** 은 궤적을 막지 않는다.
+
+    엔진의 `_sam_intercepts` 가 `under_construction` 을 건너뛰므로, AI 가 그것을
+    피하면 실제로는 안 막히는 길을 스스로 닫는 셈이 된다."""
+    st = state(players=3)
+    silo = unit(st, 0, UnitType.MISSILE_SILO, 10, 200)
+    fill(st, 1, 350, 10, 450, 110)
+    dst = st.gmap.ref(400, 60)
+    s = sam(st, 2, 200, 130, level=1)
+    b = behavior(difficulty="hard")
+    assert b._trajectory_interceptable(st, silo.tile, dst, UnitType.ATOM_BOMB,
+                                       b._enemy_sams(st)),         "완공 SAM 이 안 막으면 건설 중 여부를 안 재는 테스트다"
+
+    s.ticks_left = 100                            # 아직 짓는 중
+    assert b._enemy_sams(st) == []
+    assert not b._trajectory_interceptable(st, silo.tile, dst,
+                                           UnitType.ATOM_BOMB, b._enemy_sams(st))
