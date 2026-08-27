@@ -17,7 +17,7 @@
 
 **플레이할 수 있다.** 실제 openfront 지도 위에서 영토 확장 · 골드 · 건물 ·
 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 · 둠스데이 클락 · 원본 봇이
-함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 510개.
+함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 747개.
 
 | | |
 |---|---|
@@ -51,6 +51,14 @@ python -m domynion.ui.app --shot shot.png --at 600 --map world
 # 헤드리스로 판을 돌려 밸런스를 잰다
 python -m domynion.cli.play --games 40 --map world --jobs 8
 python -m domynion.cli.play --games 20 --map world --clock normal --difficulty hard
+
+# 기준선을 뜬다 (핵 발사·MIRV·생존·골드). ⚠ --clock 을 안 주면 900초에 잘린다
+python tools/balance.py --seeds 1 2 3 4 --jobs 4
+python tools/balance.py --seeds 1 2 3 --jobs 3 --clock normal --ticks 20000
+
+# 골드가 어디로 가는지 센다 · 판을 프로파일한다
+python tools/gold_flow.py --ticks 9000 --size map
+python tools/profile_game.py --ticks 1200 --size map
 
 # 테스트
 python -m pytest tests -q
