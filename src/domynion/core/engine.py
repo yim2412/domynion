@@ -955,8 +955,9 @@ class GameState:
         넣고 있었다 — 원본 크기에서도 651,569/2,000,000 = 0.33 이 곱해진다.
         즉 두 번 틀렸다.
 
-        면적 비 자체는 남긴다. 작은 지도(`map16x` 6발 · `map4x` 27발)에서는
-        여전히 필요하고, **원본 크기에서 350발이 되는 것**이 맞는 기준선이다."""
+        면적 비 자체는 남긴다. 작은 지도(`map16x` **20발** · `map4x` **85발**)에서는
+        여전히 필요하고, **원본 크기에서 350발이 되는 것**이 맞는 기준선이다.
+        (6·27 은 분모가 틀렸을 때의 값이다 — 고친 뒤 실측으로 갈아 끼웠다.)"""
         count = max(1, round(C.MIRV_WARHEAD_COUNT
                              * self.gmap.land_count / C.FULL_MAP_LAND))
         for tile in self._mirv_targets(n.dst, count):
