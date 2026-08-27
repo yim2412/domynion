@@ -12,6 +12,7 @@ import random
 import pytest
 
 from domynion.ai.nukes import (ATOM_COST_GROWTH, FFA_CROWN_THRESHOLD,
+                               HIGH_DENSITY_CHANCE, IMPOSSIBLE_CROWN_SHARE,
                                HYDRO_COST_GROWTH, NUKE_RECENT_MAX_AGE,
                                NUKE_TILE_VALUE, NationNukeBehavior)
 from domynion.core import constants as C
@@ -440,3 +441,86 @@ def test_blast_check_samples_two_square_rings_not_the_whole_disc():
     inner_ring = st.gmap.ref(mid + outer // 2, mid)
     st.gmap.owner[inner_ring] = 2
     assert not b._blast_is_clean(st, tile, outer, 1), "안쪽 테두리를 안 본다"
+
+
+# --- 난이도별 표적 (§5.49) ---------------------------------------------------
+
+def test_hard_targets_the_last_opponent_when_only_two_remain():
+    """hard 이상에서 **둘만 남으면** 관계·크기를 안 보고 그 상대를 겨눈다.
+
+    medium 은 그대로 관계를 본다 — 대조군이 없으면 난이도 관문을 안 재게 된다."""
+    st = state(players=2)
+    fill(st, 0, 0, 0, 100, 100)
+    fill(st, 1, 200, 0, 210, 10)               # 훨씬 약해서 5)번 경로는 건너뛴다
+    assert behavior(difficulty="medium").find_target(st) is None,         "medium 이 이미 겨눴다면 0)번 관문을 안 재는 테스트다"
+    assert behavior(difficulty="hard").find_target(st).pid == 1
+
+
+def test_impossible_richest_nation_hunts_dense_targets():
+    """impossible + **최고 부자**만 밀도 높은 상대를 선제적으로 친다."""
+    st = state(players=3)
+    fill(st, 0, 0, 0, 100, 100)
+    fill(st, 1, 200, 0, 300, 100)              # 넓고 건물 없음
+    fill(st, 2, 400, 0, 410, 10)               # 100칸에 레벨 합 6 → 밀도 0.06
+    for i in range(3):
+        unit(st, 2, UnitType.CITY, 400 + i, 0, level=2)
+    st.players[0].gold = 1_000_000
+    st.players[1].gold = 10                     # 내가 최고 부자다
+    st.players[2].gold = 10
+    # `chance(2)` 라 seed 하나로는 못 잰다 — 여러 seed 에서 한 번이라도 골랐는지 본다
+    got = {behavior(difficulty="impossible", seed=s).find_target(st).pid
+           for s in range(6)}
+    assert 2 in got, "밀집 상대를 한 번도 안 골랐다"
+
+    # 대조군 — 내가 최고 부자가 아니면 이 경로가 닫힌다
+    st.players[1].gold = 9_999_999
+    got2 = {behavior(difficulty="impossible", seed=s).find_target(st).pid
+            for s in range(6)}
+    assert 2 not in got2, "부자가 아닌데도 밀집 상대를 골랐다"
+
+
+def test_high_density_needs_enough_structure_levels():
+    """밀도가 아무리 높아도 **레벨 합이 5 미만**이면 표적이 아니다.
+
+    이게 없으면 타일 몇 칸짜리 갓 태어난 나라가 늘 1등이 된다."""
+    st = state(players=3)
+    fill(st, 0, 0, 0, 100, 100)
+    fill(st, 1, 200, 0, 300, 100)
+    fill(st, 2, 400, 0, 402, 2)                 # 4칸
+    unit(st, 2, UnitType.CITY, 400, 0, level=1)  # 레벨 합 1 → 밀도 0.25 지만 미달
+    st.players[0].gold = 1_000_000
+    b = behavior(difficulty="impossible")
+    assert b._high_density_target(st) is None
+
+    # 대조군 — 레벨을 5 로 올리면 그 즉시 표적이 된다
+    st.players[2].units.units[0].level = 5
+    assert b._high_density_target(st).pid == 2
+
+
+def test_impossible_targets_the_crown_over_half_the_map():
+    """impossible 은 1등이 **땅의 절반**을 넘으면 미운 상대보다 왕관을 먼저 친다.
+
+    ⚠ 재료를 이렇게 짠 이유: 왕관을 그냥 크게만 만들면 hard 도 6)번(격차 0.2)
+    으로 같은 답을 내서 **3)번 관문이 검사에서 빠진다.** 미운 상대를 따로 두어
+    hard 는 5)번으로 그쪽을, impossible 은 3)번으로 왕관을 고르게 갈랐다."""
+    st = state(players=3)
+    fill(st, 1, 0, 0, 600, 220)                # 132,000 / 240,000 = 0.55
+    fill(st, 0, 0, 220, 200, 400)              # 36,000
+    fill(st, 2, 200, 220, 400, 400)            # 36,000 — 나와 비슷한 크기
+    st.players[0].relations.update(2, -200)    # 2번이 아주 밉다
+    land = st.gmap.land_count
+    assert st.tiles(1) / land > IMPOSSIBLE_CROWN_SHARE
+    assert (st.tiles(1) - st.tiles(0)) / land > FFA_CROWN_THRESHOLD["hard"]
+
+    assert behavior(difficulty="hard").find_target(st).pid == 2,         "hard 는 미운 상대를 먼저 골라야 한다(5번이 6번보다 앞이다)"
+    assert behavior(difficulty="impossible").find_target(st).pid == 1
+
+
+def test_impossible_crown_targets_second_place():
+    """**내가 1등이면** impossible 은 2등을 친다. 다른 난이도는 아무도 안 친다."""
+    st = state(players=3)
+    fill(st, 0, 0, 0, 200, 200)                # 내가 1등
+    fill(st, 1, 300, 0, 350, 50)               # 2등
+    fill(st, 2, 400, 0, 410, 10)               # 3등
+    assert behavior(difficulty="hard").find_target(st) is None,         "hard 가 이미 겨눴다면 impossible 관문을 안 재는 테스트다"
+    assert behavior(difficulty="impossible").find_target(st).pid == 1

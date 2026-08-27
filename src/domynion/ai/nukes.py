@@ -67,6 +67,19 @@ HYDRO_COST_GROWTH = 1.25
 # 원자탄을 안 쓴다 — AI 마다 성격이 갈리게 하는 장치다.
 HYDRO_NATION_CHANCE = 3
 
+# 높은 밀도 표적 — 레벨 합 / 타일 수가 이 값을 넘으면 impossible 의 **최고 부자**
+# 나라가 선제적으로 친다. 부자 하나로 제한하는 이유는 원본 주석에 있다:
+# *"prevents every impossible nation from piling onto the same compact player"*.
+HIGH_DENSITY_NUKE_THRESHOLD = 1 / 75
+MIN_LEVEL_SUM_FOR_HIGH_DENSITY = 5
+
+# impossible + FFA 에서 1등이 **낙진 없는 땅의 절반**을 넘게 가지면 바로 왕관을 친다.
+# `FFA_CROWN_THRESHOLD`(격차 기준)와 다른 관문이다 — 이쪽은 절대 점유율이다.
+IMPOSSIBLE_CROWN_SHARE = 0.5
+
+# 높은 밀도 표적을 실제로 고를 확률 1/2(`chance(2)`).
+HIGH_DENSITY_CHANCE = 2
+
 # FFA 왕관을 노리는 문턱 — 내 점유율보다 이만큼 앞서 있으면 친다.
 FFA_CROWN_THRESHOLD = {"easy": 0.4, "medium": 0.3, "hard": 0.2, "impossible": 0.1}
 
@@ -126,15 +139,28 @@ class NationNukeBehavior:
     def find_target(self, st):
         """`findBestNukeTarget` — 순서가 곧 우선순위다.
 
+        0. (hard 이상) **둘만 남았으면** 그 상대
         1. **들어오는 공격**(원본 주석: *"Most important!"*)
-        2. 동맹이 지목한 표적 — 관계가 우호 이상일 때만
-        3. 가장 미워하는 상대. 단 **나보다 훨씬 약하면 건너뛴다** —
+        2. (impossible) **내가 최고 부자면** 건물 밀도가 높은 상대 — 확률 1/2
+        3. (impossible) 1등이 땅의 절반을 넘게 가졌으면 왕관
+        4. 동맹이 지목한 표적 — 관계가 우호 이상일 때만
+        5. 가장 미워하는 상대. 단 **나보다 훨씬 약하면 건너뛴다** —
            원본 주석: *"we don't need nukes to deal with them"*
-        4. FFA 왕관 — 나보다 난이도별 문턱만큼 앞서 있으면
+        6. FFA 왕관 — 나보다 난이도별 문턱만큼 앞서 있으면
+
+        ⚠ 0·2·3 은 §5.49 에서 채웠다. 그전까지 hard·impossible 이 medium 과
+        **같은 표적을 골랐다** — 난이도가 핵 표적 선택에는 거의 안 걸려 있었다.
         """
         me = st.players.get(self.pid)
         if me is None:
             return None
+        alive = list(st.alive)
+
+        # 0) 둘만 남았으면 고민할 것이 없다
+        if self.difficulty in ("hard", "impossible") and len(alive) == 2:
+            for q in alive:
+                if q.pid != self.pid:
+                    return q
 
         # 1) 들어오는 공격
         for a in st.attacks:
@@ -144,7 +170,24 @@ class NationNukeBehavior:
                         self.pid, q.pid):
                     return q
 
-        # 2) 동맹의 표적
+        # 2) impossible — 최고 부자만 밀도 높은 상대를 선제적으로 친다
+        if (self.difficulty == "impossible"
+                and self._is_richest_nation(st)
+                and self.rng.randrange(HIGH_DENSITY_CHANCE) == 0):
+            dense = self._high_density_target(st)
+            if dense is not None:
+                return dense
+
+        # 3) impossible — 1등이 땅의 절반을 넘게 가졌으면 왕관
+        if self.difficulty == "impossible" and alive:
+            usable = st.gmap.land_count - int(st.fallout.mask.sum())
+            crown = max(alive, key=lambda q: st.tiles(q.pid))
+            if (usable > 0 and crown.pid != self.pid
+                    and not st.diplomacy.is_friendly(self.pid, crown.pid)
+                    and st.tiles(crown.pid) / usable > IMPOSSIBLE_CROWN_SHARE):
+                return crown
+
+        # 4) 동맹의 표적
         for ally_pid in st.diplomacy.allies_of(self.pid):
             if st.relation_of(self.pid, ally_pid) < Relation.FRIENDLY:
                 continue
@@ -155,7 +198,7 @@ class NationNukeBehavior:
                 if q is not None and q.alive:
                     return q
 
-        # 3) 가장 미워하는 상대 — 약한 상대는 건너뛴다
+        # 5) 가장 미워하는 상대 — 약한 상대는 건너뛴다
         my_cap = me.max_troops(max(1, st.tiles(self.pid)))
         for other, rel in me.relations.sorted_by_relation(
                 {q.pid for q in st.alive}):
@@ -171,8 +214,46 @@ class NationNukeBehavior:
             if q0.alive:
                 return q0
 
-        # 4) FFA 왕관
+        # 6) FFA 왕관
         return self._ffa_crown(st)
+
+    def _is_richest_nation(self, st) -> bool:
+        """`isRichestNation` — **나라끼리만** 견준다. 봇·사람은 안 센다.
+
+        이 관문이 있어야 impossible 나라 전부가 같은 밀집 상대에게 몰리지 않는다."""
+        me = st.players.get(self.pid)
+        if me is None:
+            return False
+        for q in st.alive:
+            if q.pid == self.pid or q.kind != "nation":
+                continue
+            if q.gold > me.gold:
+                return False
+        return True
+
+    def _high_density_target(self, st):
+        """`findHighDensityTarget` — **레벨 합 / 타일 수**가 가장 높은 상대.
+
+        개수가 아니라 레벨 합이다(§5.30 의 `unitsOwned` 와 같은 자리). 건물이
+        너무 적으면 밀도가 아무리 높아도 건너뛴다 — 타일 몇 칸에 도시 하나짜리
+        갓 태어난 나라가 1등이 되는 것을 막는 관문이다."""
+        best, best_density = None, HIGH_DENSITY_NUKE_THRESHOLD
+        for q in st.alive:
+            if q.pid == self.pid or q.is_bot:
+                continue
+            if st.diplomacy.is_friendly(self.pid, q.pid):
+                continue
+            tiles = st.tiles(q.pid)
+            if tiles <= 0:
+                continue
+            level_sum = sum(u.level for u in q.units.units
+                            if u.active and u.utype in STRUCTURES)
+            if level_sum < MIN_LEVEL_SUM_FOR_HIGH_DENSITY:
+                continue
+            density = level_sum / tiles
+            if density > best_density:
+                best, best_density = q, density
+        return best
 
     def _ffa_crown(self, st):
         """`findFFACrownTarget` — 1등이 나보다 문턱만큼 앞서 있으면 친다.
@@ -184,6 +265,13 @@ class NationNukeBehavior:
             return None
         alive.sort(key=lambda q: st.tiles(q.pid), reverse=True)
         first = alive[0]
+        # impossible 에서 **내가 1등이면 2등을 친다.** 이게 없으면 앞서 나간
+        # impossible 나라는 이 경로에서 핵을 아예 안 쏘고 굳는다.
+        if (self.difficulty == "impossible" and first.pid == self.pid
+                and len(alive) >= 2):
+            second = alive[1]
+            if not st.diplomacy.is_friendly(self.pid, second.pid):
+                return second
         if first.pid == self.pid or st.diplomacy.is_friendly(self.pid, first.pid):
             return None
         # `numLandTiles() - numTilesWithFallout()` — 낙진으로 못 쓰게 된 땅은 뺀다
