@@ -34,6 +34,7 @@ from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
 from .radial import RadialMenu
+from .status import markers, player_status
 
 
 def ui_font(size: int, bold: bool = True) -> QFont:
@@ -69,6 +70,10 @@ class MapWidget(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.state = state
         self.frames = FrameBuilder(state.gmap)
+        # 사람 플레이어. **상대적 깃발**(동맹·표적·금수·나를 겨눈 핵)이 이걸
+        # 기준으로 갈린다. 없으면 관전 모드처럼 절대 깃발만 뜬다(§5.68).
+        self.me: int | None = None
+        self._status: dict = {}
 
         self.zoom = 0.0            # 0 이면 첫 그리기에서 화면에 맞춘다
         self.offset = QPointF(0, 0)
@@ -184,6 +189,11 @@ class MapWidget(QWidget):
         if self._label_age <= 0 or not self._labels:
             self._labels = self.frames.label_anchors(self.state.alive)
             self._label_age = 10
+            # 깃발도 **라벨과 같은 주기**로 다시 잰다(§5.68). 매 프레임 재면
+            # 나라 400개와 비행 중인 핵을 한 번씩 더 훑는데, 깃발이 최대 1초
+            # 늦게 바뀌는 것은 눈에 안 띈다. 라벨 자리와 같이 움직이는 것이
+            # 오히려 자연스럽다.
+            self._status = player_status(self.state, self.me)
         self.update()
 
     # --- 그리기 -----------------------------------------------------------
@@ -279,6 +289,11 @@ class MapWidget(QWidget):
                 continue                      # 순환 사본 중 화면 밖은 건너뛴다
             player = self.state.players[pid]
             text = f"{player.name} {self.state.share(pid) * 100:.0f}%"
+            flags = self._status.get(pid)
+            if flags is not None:
+                mk = markers(flags)
+                if mk:
+                    text = f"{mk} {text}"
             # 폰트는 **영토가 실제로 차지한 폭**에서 뽑는다. 타일 비례로 잡으면
             # 큰 나라 이름이 화면을 덮고, 고정하면 작은 나라 위에서 넘친다.
             size = int(min(48, span * z / max(len(text), 3) * 0.9))
