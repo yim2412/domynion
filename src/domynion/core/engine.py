@@ -387,6 +387,12 @@ class GameState:
         if p is None or not p.alive or self.over:
             return None
         if sum(1 for b in self.boats if b.owner == pid) >= C.BOAT_MAX_NUMBER:
+            # ⚠ **왜 알리는가**(`TransportShipExecution.ts:70~82`). 배가 다 나가
+            # 있으면 클릭이 **아무 일도 안 일어난 것처럼** 보인다 — 병력도 안 줄고
+            # 배도 안 뜬다. 사람은 "지도를 잘못 눌렀나"를 의심하지 3척 제한을
+            # 떠올리지 못한다. 조용한 실패 중 가장 헷갈리는 자리다.
+            self.emit(EventKind.ATTACK_FAILED, who=pid,
+                      amount=C.BOAT_MAX_NUMBER)
             return None
         if not self.gmap.passable(dst) or int(self.gmap.owner[dst]) == pid:
             return None

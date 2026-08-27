@@ -75,6 +75,12 @@ def describe(st: GameState, e: Event, me: int) -> str:
         return f"{who} 가 동맹 파기 — 배신"
     if k is EventKind.ALLIANCE_EXPIRED:
         return f"{who} 와의 동맹 만료"
+    if k is EventKind.RENEW_ALLIANCE:
+        return f"{who} 가 동맹 연장을 원한다 — 그 땅을 클릭해 동의"
+    if k is EventKind.ATTACK_FAILED:
+        # ⚠ 여기만 `who` 가 상대가 아니다(§5.67). 내 배가 다 나가 있는 것이므로
+        # 상대가 없다 — `other` 없이 오는 유일한 소식이라 표 순서를 탄다.
+        return f"배가 다 나가 있다 (최대 {int(e.amount)}척) — 돌아와야 또 띄운다"
     if k is EventKind.DONATION_SENT:
         return f"{who} 에게 보냄 ({e.amount:,.0f})"
     if k is EventKind.DONATION_RECEIVED:

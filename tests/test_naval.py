@@ -97,6 +97,14 @@ def test_boat_limit_is_three():
     made = [st.send_boat(0, st.gmap.ref(5, y % 3)) for y in range(5)]
     assert sum(1 for b in made if b is not None) == C.BOAT_MAX_NUMBER
 
+    # ⚠ **막힌 것을 알린다**(§5.67). 없으면 클릭이 아무 일도 안 일어난 것처럼
+    # 보인다 — 병력도 안 줄고 배도 안 뜨니 사람은 3척 제한이 아니라 "지도를
+    # 잘못 눌렀나"를 의심한다. 두 번 막혔으니 소식도 둘이다.
+    from domynion.core.events import EventKind
+    failed = [e for e in st.log.items if e.kind is EventKind.ATTACK_FAILED]
+    assert len(failed) == 2 and all(e.who == 0 for e in failed)
+    assert failed[0].amount == C.BOAT_MAX_NUMBER
+
 
 def test_boat_moves_one_tile_per_tick_then_lands_and_attacks():
     """도착하면 상륙 지점을 먹고 **그 자리에서 육상 공격이 시작된다.**
