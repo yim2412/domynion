@@ -463,17 +463,17 @@ def test_smaller_maps_scale_the_warhead_count_down():
     assert got == {"map16x": 20, "map4x": 85, "map": 350}, got
 
 
-def test_a_mirv_splits_into_the_scaled_number_of_warheads():
-    """엔진이 실제로 그 수만큼 터뜨리는가 — **로직과 배선을 따로 잰다.**"""
+def test_a_mirv_splits_into_at_most_the_scaled_number_of_warheads():
+    """엔진이 실제로 터뜨리는가 — **로직과 배선을 따로 잰다.**
+
+    ⚠ **정확히 그 수는 아니다.** 자리를 못 찾은 탄두는 그냥 없다(§5.57).
+    여기서는 표적 영토가 좁아 상한(129발)보다 적게 나온다."""
     st = wide_state(width=600, height=400)
     st.players[0].gold = 500_000_000
     src, dst = st.gmap.ref(20, 200), st.gmap.ref(300, 200)
     give_silo(st, 0, src)
-    # ⚠ 기댓값을 **못 박는다.** `C.FULL_MAP_LAND` 로 계산하면 그 상수를 바꿔도
-    # 양쪽이 같이 움직여 통과한다(변이 R2 가 그렇게 살아남았다).
-    # 600×400 = 240,000 육지 → 350 × 240000/651569 = 129발.
     assert st.gmap.land_count == 240_000, st.gmap.land_count
-    expect = 129
+    cap = 129                                   # 350 × 240000/651569
 
     hits = []
     orig = st._detonate
@@ -484,4 +484,132 @@ def test_a_mirv_splits_into_the_scaled_number_of_warheads():
         if n not in st.nukes:
             break
     warheads = [h for h in hits if h.utype is UnitType.MIRV_WARHEAD]
-    assert len(warheads) == expect, f"{len(warheads)}발 (기대 {expect})"
+    assert 0 < len(warheads) <= cap, f"{len(warheads)}발 (상한 {cap})"
+
+
+def test_warheads_only_land_on_the_targets_territory():
+    """⚠ **표적의 땅에만 떨어진다.** 우리는 상자 안 아무 칸에나 뿌렸다 —
+    바다에도, 내 땅에도, 중립에도.
+
+    막지 않았으면: MIRV 가 자기 땅을 같이 날린다."""
+    st = wide_state(width=600, height=400)
+    st.players[0].gold = 500_000_000
+    give_silo(st, 0, st.gmap.ref(20, 200))
+    # 1번에게 한 덩어리를 준다
+    for y in range(150, 250):
+        for x in range(250, 350):
+            st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts[1] = 10_000
+    dst = st.gmap.ref(300, 200)
+
+    targets = st._mirv_targets(dst, 60)
+    assert targets, "한 발도 자리를 못 찾았다"
+    assert all(int(st.gmap.owner[t]) == 1 for t in targets), "남의 땅에 떨어졌다"
+
+
+def test_warheads_keep_a_minimum_spread():
+    """최소 간격(맨해튼 55)이 없으면 한 덩어리에 몰려 터져 **350발이 한 발과
+    다를 바 없어진다.**
+
+    ⚠ **지도 전체를 표적에게 준다.** 100×100 짜리 덩어리로는 던진 점이 몇 개밖에
+    안 맞아, 간격 규칙을 지워도 우연히 서로 멀어서 통과한다(변이 S2 가 그렇게
+    살아남았다). 밀도가 높아야 이 규칙이 실제로 문다."""
+    st = wide_state(width=600, height=400)
+    st.gmap.owner[:] = 1
+    st._counts[1] = st.gmap.land_count
+    w = st.gmap.width
+    targets = st._mirv_targets(st.gmap.ref(300, 200), 129)
+    assert len(targets) >= 20, f"{len(targets)}발 — 재료가 성기다"
+    for i, a in enumerate(targets):
+        for b in targets[i + 1:]:
+            d = abs(a % w - b % w) + abs(a // w - b // w)
+            assert d >= C.MIRV_MIN_SPREAD, f"간격 {d}"
+
+
+def test_warheads_never_land_on_water():
+    """물 위에는 안 떨어진다. **소유자만 봐서는 부족하다** — 바다 칸에도 소유자가
+    찍혀 있을 수 있다(핵으로 육지가 바다가 된 자리 등).
+
+    ⚠ 변이 S3(육지 검사 제거)가 재료 때문에 안 잡혔다. 바다에 소유자를 찍어야
+    이 규칙이 문다."""
+    st = wide_state(width=600, height=400)
+    # 지도 전체를 표적 소유로 하되 절반을 바다로 만든다
+    st.gmap.owner[:] = 1
+    st.gmap.terrain[st.gmap.size // 2:] = Terrain.OCEAN
+    st.gmap.invalidate_terrain_caches()
+    st._counts[1] = int(st.gmap.passable_mask().sum())
+    targets = st._mirv_targets(st.gmap.ref(300, 100), 129)
+    assert targets, "한 발도 안 떨어졌다"
+    assert all(st.gmap.passable(t) for t in targets), "바다에 떨어졌다"
+
+
+def test_a_cramped_target_gets_no_warheads_at_all():
+    """자리를 못 찾으면 **그 탄두는 그냥 없다.** 원본도 발 수를 안 채운다.
+
+    5×5 짜리 나라에는 **한 발도 안 떨어진다** — 반경 1500 안에 100번을 던져도
+    25칸을 맞힐 확률이 사실상 0이다. 원본도 같은 수식이라 같은 결과가 된다.
+    MIRV 는 큰 나라를 치는 무기라는 뜻이다(AI 도 영토 중심을 겨눈다, §5.49)."""
+    st = wide_state(width=600, height=400)
+    for y in range(198, 203):
+        for x in range(298, 303):
+            st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts[1] = 25
+    assert st._mirv_targets(st.gmap.ref(300, 200), 60) == []
+
+
+def test_the_test_map_yields_few_warheads_and_that_is_the_material():
+    """⚠ **이 파일의 지도(600×400)에서는 몇 발 안 떨어진다** — 실측으로 못 박는다.
+
+    반경(1500)이 지도보다 커서 던진 점 대부분이 표적 밖에 떨어지고, 시도는
+    100번뿐이다. **규칙이 아니라 재료의 성질**이므로 여기 적어 둔다 — 다음에
+    이 숫자를 보고 "탄두가 왜 이것뿐이지"로 헤매지 않도록.
+
+    원본 크기(2000×1000)에서 큰 나라를 치면 한 번 던져 맞을 확률이 수 % 라
+    100번 안에 대부분 자리를 찾는다."""
+    st = wide_state(width=600, height=400)
+    for y in range(150, 250):
+        for x in range(250, 350):               # 100×100 = 10,000칸
+            st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts[1] = 10_000
+    got = st._mirv_targets(st.gmap.ref(300, 200), 129)
+    assert 1 <= len(got) <= 15, f"{len(got)}발 — 실측은 5발 안팎이다"
+
+
+@pytest.mark.slow
+def test_the_warhead_count_on_the_real_map(tmp_path):
+    """⚠ **원본 크기에서 실제로 몇 발이 떨어지는지 못 박는다.**
+
+    350발은 **상한이지 목표가 아니다.** 던진 점 대부분이 버려진다 — 반경 1,500
+    짜리 정사각형 안에 던지는데 지도는 2000×1000 이라 ⅔ 가 지도 밖이다. 원본도
+    같은 수식이라 같은 성질을 갖는다.
+
+    실측(seed 0, `map`):
+
+    | 영토 | 탄두 |
+    |---|---|
+    | 2% (13,031칸) | 2발 |
+    | 10% (65,156칸) | 7발 |
+    | 30% (195,470칸) | 19발 |
+
+    이 표가 없으면 다음에 "왜 350발이 안 떨어지지"로 헤맨다."""
+    import numpy as np
+    from domynion.core.gamemap import GameMap
+    gm = GameMap.load("world", size="map")
+    ps = {0: PlayerState(pid=0, name="P0", kind="nation", start=0)}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 0}
+    st._posts = DefensePostIndex(gm.size)
+    st.fallout = Fallout(gm.size)
+    land = np.flatnonzero(gm.passable_mask())
+
+    got = {}
+    for share in (0.02, 0.10, 0.30):
+        gm.owner[:] = -1
+        take = land[:int(len(land) * share)]
+        gm.owner[take] = 0
+        st._counts[0] = len(take)
+        got[share] = len(st._mirv_targets(int(take[len(take) // 2]), 350))
+
+    assert got[0.02] < got[0.30], got            # 영토가 클수록 많이 떨어진다
+    assert 10 <= got[0.30] <= 40, f"30% 영토에 {got[0.30]}발 — 실측은 19발이다"
+    assert got[0.30] < 350, "상한을 다 채웠다 — 예산 규칙이 안 걸린다"

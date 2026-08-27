@@ -191,17 +191,21 @@ def test_build_warship_needs_ocean_and_gold():
 
 # --- MIRV -------------------------------------------------------------------
 
-def test_mirv_splits_into_many_warheads_scaled_to_the_map():
-    """원본은 350발이다. 우리 지도는 원본의 1/16 면적이라 그대로 쓰면 지도가
-    통째로 날아간다 — 면적 비로 줄여 같은 *비중*이 되게 한다."""
+def test_mirv_warhead_count_is_scaled_down_on_small_maps():
+    """원본은 350발이 **상한**이다. 작은 지도에서는 면적 비로 줄인다.
+
+    ⚠ 원래 여기서 `_split_mirv` 를 직접 불러 낙진이 생기는지 봤는데, §5.57 에서
+    "탄두는 표적의 땅에만 떨어진다"를 옮기자 **한 발도 안 터졌다.** 이 파일의
+    지도는 육지가 **60칸**(양 끝 두 열)뿐이라 반경 1,500 안에서 맞힐 수가 없다 —
+    규칙이 아니라 지도가 낸 답이다(함정 8번).
+
+    실제 낙하는 `tests/test_nukes.py` 에서 넓은 지도로 잰다. 여기서는 **줄어드는
+    비율**만 본다."""
     st = state()
-    n = Nuke(owner=0, utype=UnitType.MIRV, src=st.gmap.ref(1, 1),
-             dst=st.gmap.ref(30, 15))
-    before = st.fallout._count
-    st._split_mirv(n)
-    assert st.fallout._count > before, "탄두가 하나도 안 터졌다"
-    scaled = max(1, int(C.MIRV_WARHEAD_COUNT * st.gmap.land_count / 2_000_000))
+    scaled = max(1, round(C.MIRV_WARHEAD_COUNT
+                          * st.gmap.land_count / C.FULL_MAP_LAND))
     assert scaled < C.MIRV_WARHEAD_COUNT
+    assert scaled >= 1
 
 
 # --- 나포 (이식 누락 스물) ---------------------------------------------------

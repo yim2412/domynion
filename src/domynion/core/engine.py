@@ -959,14 +959,56 @@ class GameState:
         여전히 필요하고, **원본 크기에서 350발이 되는 것**이 맞는 기준선이다."""
         count = max(1, round(C.MIRV_WARHEAD_COUNT
                              * self.gmap.land_count / C.FULL_MAP_LAND))
-        w = self.gmap.width
-        cx, cy = n.dst % w, n.dst // w
-        spread = NUKE_MAGNITUDES[UnitType.MIRV_WARHEAD][1] * 3
-        for _ in range(count):
-            x = min(self.gmap.width - 1, max(0, cx + self.rng.randint(-spread, spread)))
-            y = min(self.gmap.height - 1, max(0, cy + self.rng.randint(-spread, spread)))
+        for tile in self._mirv_targets(n.dst, count):
             self._detonate(Nuke(owner=n.owner, utype=UnitType.MIRV_WARHEAD,
-                                src=n.dst, dst=y * w + x))
+                                src=n.dst, dst=tile))
+
+    def _mirv_targets(self, base: TileRef, count: int) -> list[TileRef]:
+        """`tryGenerateTarget` — 탄두가 떨어질 자리들.
+
+        ⚠ **표적의 땅에만 떨어진다.** 우리는 상자 안 아무 칸에나 뿌리고 있었다 —
+        바다에도, 내 땅에도, 중립에도. 그리고 **최소 간격**(맨해튼 55)이 있어야
+        한다. 안 그러면 한 덩어리에 몰려 터져 350발이 한 발과 다를 바 없어진다.
+
+        자리를 못 찾으면(100번 시도) **그 탄두는 그냥 없다.** 원본도 발 수를
+        채우려 하지 않는다 — 좁은 나라에 쏘면 그만큼 적게 떨어진다."""
+        gm = self.gmap
+        w, h = gm.width, gm.height
+        owner = int(gm.owner[base])
+        bx, by = base % w, base // w
+        rng_ = C.MIRV_TARGET_RANGE
+        r2 = rng_ * rng_
+        spread = C.MIRV_MIN_SPREAD
+        taken: list[tuple[int, int]] = []
+        out: list[TileRef] = []
+        # ⚠ 시도 예산은 **전체**다(자리마다가 아니다). 원본은 던져서 되면 담고,
+        # 예산이 다 떨어지거나 발 수를 채우면 멈춘다 — 좁은 나라에 쏘면 예산만
+        # 태우고 적게 떨어진다.
+        for _attempt in range(C.MIRV_TARGET_ATTEMPTS):
+            if len(out) >= count:
+                break
+            x = round(self.rng.uniform(-rng_, rng_) + bx)
+            y = round(self.rng.uniform(-rng_, rng_) + by)
+            if not (0 <= x < w and 0 <= y < h):
+                continue
+            # ⚠ **변이로 안 잡힌다. 정상이다** — 반경 1,500 이 우리 지도보다
+            # 크다(원본 크기 2000×1000 도 중심에서 모서리까지 1,118). 지도가
+            # 3,000칸보다 넓어져야 무는 검사다. 원본에 있으므로 남긴다.
+            if (x - bx) ** 2 + (y - by) ** 2 > r2:
+                continue
+            t = y * w + x
+            if not gm.passable(t):
+                continue
+            if int(gm.owner[t]) != owner:
+                continue
+            if any(abs(x - tx) + abs(y - ty) < spread for tx, ty in taken):
+                continue
+            taken.append((x, y))
+            out.append(t)
+        # 원본은 표적에서 **먼 것부터** 정렬한다(`finalizeDestinations`) — 탄두가
+        # 바깥부터 떨어져 안쪽이 마지막에 터진다.
+        out.sort(key=lambda t: abs(t % w - bx) + abs(t // w - by), reverse=True)
+        return out
 
     def nuke_cost(self, pid: int, utype: UnitType) -> int:
         """핵 값. MIRV 만 **판 전체 발사 수**를 쓴다(원본 `numMirvsLaunched`)."""
