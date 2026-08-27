@@ -12,6 +12,8 @@ import random
 import pytest
 
 from domynion.ai.nukes import (ATOM_COST_GROWTH, FFA_CROWN_THRESHOLD,
+                               RAND_TILE_SMALL_TERRITORY,
+                               rand_territory_tiles,
                                HIGH_DENSITY_CHANCE, IMPOSSIBLE_CROWN_SHARE,
                                HYDRO_COST_GROWTH, NUKE_RECENT_MAX_AGE,
                                NUKE_TILE_VALUE, NationNukeBehavior)
@@ -742,3 +744,51 @@ def test_no_upgrade_when_it_could_never_be_enough():
     b = behavior(pid=0, difficulty="impossible")
     assert b.maybe_send(st, always_attack) is False
     assert silo.level == 1, "닿지도 못할 계획에 골드를 썼다"
+
+
+# --- 후보 표본 (§5.53) -------------------------------------------------------
+
+def test_rand_territory_gives_up_on_sparse_territory():
+    """⚠ **소유 타일에서 균등하게 뽑는 것이 아니다.**
+
+    원본은 경계 상자 안에 (x, y) 를 던져 내 땅이면 채택하고 **100번 실패하면
+    포기한다.** 상자는 큰데 실제 땅이 적은 모양(성긴 영토)에서는 요청한 수보다
+    적게 돌아온다 — 옛 구현은 늘 채웠으므로 그런 나라를 칠 때 후보가 더 많았다."""
+    st = state(players=2)
+    # 상자는 400×200 인데 땅은 네 귀퉁이 한 칸씩 — 채택 확률이 1/20,000 이다
+    for x, y in ((0, 0), (399, 0), (0, 199), (399, 199)):
+        st.gmap.owner[st.gmap.ref(x, y)] = 1
+    st._counts[1] = 4
+    tiles = st.gmap.owned_refs(1)
+    got = rand_territory_tiles(st, 1, tiles, 10, random.Random(0))
+    # 영토가 100칸 이하라 **되돌아가는 길**이 있다 — 그래서 채워진다
+    assert len(got) == 10
+    assert all(int(st.gmap.owner[t]) == 1 for t in got)
+
+
+def test_a_big_sparse_territory_returns_fewer_tiles():
+    """영토가 100칸을 넘으면 되돌아가는 길이 없다 — **그냥 적게 돌려준다.**
+
+    이게 원본과 우리 옛 구현이 갈리던 자리다."""
+    st = state(players=2)
+    # 상자는 400×200(80,000칸)인데 땅은 대각선 200칸 — 채택 확률 1/400
+    n = 0
+    for i in range(200):
+        st.gmap.owner[st.gmap.ref(i * 2, i)] = 1
+        n += 1
+    st._counts[1] = n
+    tiles = st.gmap.owned_refs(1)
+    assert len(tiles) > RAND_TILE_SMALL_TERRITORY
+    got = rand_territory_tiles(st, 1, tiles, 10, random.Random(1))
+    assert len(got) < 10, f"성긴 영토인데 {len(got)}개를 다 채웠다"
+    assert all(int(st.gmap.owner[t]) == 1 for t in got)
+
+
+def test_a_solid_territory_fills_every_slot():
+    """대조군 — 꽉 찬 영토에서는 요청한 수를 다 채운다."""
+    st = state(players=2)
+    fill(st, 1, 100, 50, 200, 150)
+    tiles = st.gmap.owned_refs(1)
+    got = rand_territory_tiles(st, 1, tiles, 10, random.Random(2))
+    assert len(got) == 10
+    assert all(int(st.gmap.owner[t]) == 1 for t in got)

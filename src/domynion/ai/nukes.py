@@ -91,6 +91,51 @@ SAM_OVERWHELM_EXTRA_PER = 5
 FFA_CROWN_THRESHOLD = {"easy": 0.4, "medium": 0.3, "hard": 0.2, "impossible": 0.1}
 
 
+# `randTerritoryTile` — 경계 상자 안에서 이만큼 던져 본다. 넘으면 포기한다.
+RAND_TILE_TRIES = 100
+
+# 영토가 이보다 작으면 기각 표본이 잘 안 맞으므로 소유 타일에서 곧장 하나 고른다.
+RAND_TILE_SMALL_TERRITORY = 100
+
+
+def rand_territory_tiles(st, pid: int, tiles, count: int, rng) -> list:
+    """`randTerritoryTileArray` — 표적 영토에서 무작위 칸 `count` 개.
+
+    ⚠ **소유 타일에서 균등하게 뽑는 것이 아니다.** 원본은 영토의 **경계 상자
+    안에서** (x, y) 를 던져 내 땅이면 채택하고, 100번 실패하면 **포기한다.**
+    영토가 100칸 이하일 때만 소유 타일에서 곧장 하나 고른다.
+
+    차이가 어디서 나오나: 영토가 성기거나 길쭉하면(상자는 큰데 실제 땅은 적은
+    모양) 원본은 요청한 수보다 **적게** 돌려준다. 우리 옛 구현은 늘 `count` 개를
+    채웠으므로 그런 나라를 칠 때 후보가 더 많았다 — 깨끗한 자리를 찾을 확률이
+    원본보다 높았다는 뜻이다.
+
+    중복도 원본대로 그냥 둔다. 부르는 쪽이 `set` 으로 받으므로 결과는 같고,
+    **난수 소비 횟수**가 원본과 맞는다."""
+    w, h = st.gmap.width, st.gmap.height
+    xs, ys = tiles % w, tiles // w
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    owner = st.gmap.owner
+    out = []
+    for _ in range(count):
+        got = None
+        for _try in range(RAND_TILE_TRIES):
+            x = rng.randint(x0, x1)
+            y = rng.randint(y0, y1)
+            if not (0 <= x < w and 0 <= y < h):
+                continue                      # 원본 주석: "should never happen"
+            t = y * w + x
+            if int(owner[t]) == pid:
+                got = t
+                break
+        if got is None and 0 < len(tiles) <= RAND_TILE_SMALL_TERRITORY:
+            got = int(rng.choice(tiles))
+        if got is not None:
+            out.append(int(got))
+    return out
+
+
 class NationNukeBehavior:
     """한 나라의 핵 판단. `NationBot` 이 하나씩 들고 있다."""
 
@@ -491,9 +536,7 @@ class NationNukeBehavior:
             return None, -1.0
         n = (NUKE_RANDOM_TILES_IMPOSSIBLE if self.difficulty == "impossible"
              else NUKE_RANDOM_TILES)
-        n = min(n, len(tiles))
-        idx = self.rng.sample(range(len(tiles)), n)
-        cands = {int(tiles[i]) for i in idx}
+        cands = set(rand_territory_tiles(st, target.pid, tiles, n, self.rng))
         structures = [u for u in target.units.units
                       if u.active and u.utype in STRUCTURES]
         cands |= {u.tile for u in structures}
