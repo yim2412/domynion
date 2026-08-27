@@ -243,3 +243,48 @@ def test_attacking_neutral_land_rejects_nothing():
     st.request_alliance(1, 0)
     st.launch_attack(0, None)
     assert 0 in st.diplomacy.pending.get(1, set())
+
+
+def _across_water():
+    """바다를 사이에 둔 두 나라. ⚠ 이 파일의 지도는 **전부 육지**라
+    `send_boat` 이 바닷길을 못 찾아 그냥 실패한다 — 상륙 규칙까지 가지도 못한다."""
+    gm = GameMap.from_rows(["." * 8 + "~" * 8 + "." * 8] * 20)
+    players = {}
+    for pid in range(3):
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False,
+                                   start=gm.ref(pid, 0))
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {pid: 0 for pid in players}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS * 2
+    for y in range(20):
+        for x in range(0, 8):
+            gm.owner[gm.ref(x, y)] = 0
+            st._counts[0] += 1
+        for x in range(16, 24):
+            gm.owner[gm.ref(x, y)] = 1
+            st._counts[1] += 1
+    st.players[0].troops = 100_000.0
+    return st
+
+
+def test_a_naval_invasion_also_rejects_the_request():
+    """상륙도 같은 일을 한다 — 배를 띄우는 것도 공격이다."""
+    st = _across_water()
+    st.request_alliance(1, 0)
+    assert st.send_boat(0, st.gmap.ref(16, 5)) is not None
+    assert 0 not in st.diplomacy.pending.get(1, set()),         "배를 띄워 놓고 그 요청이 그대로 남아 있다"
+
+
+def test_a_naval_invasion_involving_a_bot_leaves_the_request():
+    """⚠ **조건이 육상 공격과 다르다.** 원본은 상륙에서만
+    `targetPlayer.type() !== Bot && attacker.type() !== Bot` 를 본다 —
+    봇이 끼면 요청을 안 건드린다.
+
+    옮길 때 "같은 규칙이니 같겠지"로 뭉갤 자리다."""
+    st = _across_water()
+    st.players[1].kind = "bot"
+    st.players[1].is_bot = True
+    st.request_alliance(1, 0)
+    assert st.send_boat(0, st.gmap.ref(16, 5)) is not None
+    assert 0 in st.diplomacy.pending.get(1, set()), "봇인데도 거절했다"

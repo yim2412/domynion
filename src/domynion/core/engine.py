@@ -371,6 +371,13 @@ class GameState:
                              path=path, dst=dst)
         self.boats.append(boat)
         if target is not None:
+            # ⚠ 상륙도 **그쪽이 보낸 동맹 요청을 거절한다**
+            # (`TransportShipExecution.rejectIncomingAllianceRequests`).
+            # 다만 조건이 육상 공격과 **다르다** — 원본이 여기서만
+            # `targetPlayer.type() !== Bot && attacker.type() !== Bot` 를 본다.
+            # 봇이 끼면 안 건드린다.
+            if not p.is_bot and not self.players[target].is_bot:
+                self.diplomacy.reject(pid, target)
             self.emit(EventKind.NAVAL_INVASION_INBOUND, who=target, other=pid,
                       tile=dst, amount=troops)
         return boat
