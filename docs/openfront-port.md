@@ -3910,6 +3910,31 @@ removes structures standing on unowned land."* **우리에겐 그 자리가 없�
 > **AI 에게 규칙을 옮길 때마다 "사람은 이걸 어떻게 하나"를 같이 묻는다.**
 > §5.28(퇴각) · §5.29(철거) · §5.33(대량 구매)이 전부 같은 모양이었다.
 
+#### 그래서 전부 훑어봤다 — 남은 구멍은 없다
+
+같은 모양이 다섯 번 나왔으니 **기계적으로 셌다.** 엔진의 공개 API 를 뽑아
+UI 와 AI 중 어느 쪽이 부르는지 대조했다:
+
+```python
+# 엔진 공개 API 중 AI 만 쓰는 것
+ai_broadcast · ai_emoji · border_targets · can_upgrade · is_traitor ·
+relate · targets_of
+```
+
+일곱 개 다 **AI 전용이 당연한 것**이다(AI 가 먼저 거는 말, AI 의 조회 함수).
+사람이 못 하는 행동은 남아 있지 않다.
+
+반대 방향도 셌다 — **엔진 밖에서 아무도 안 부르는 공개 API.** 두 개가 나왔는데
+둘 다 `@property` 라 `.elapsed` · `.alive` 로 불리는 오탐이었다. 즉 §5.51 ·
+§5.53 · §5.56 에서 세 번 만난 *"규칙은 있는데 들어가는 길이 없다"* 는 이제 없다.
+
+```python
+# 다시 셀 때 쓸 것
+pub  = re.findall(r"
+    def ([a-z][a-z0-9_]*)\(", engine_src)
+dead = [m for m in pub if callers.count(f".{m}(") - engine_src.count(f".{m}(") <= 0]
+```
+
 ---
 
 ## 7. 다음 세션 재개 지점 (2026-08-27 기준)
