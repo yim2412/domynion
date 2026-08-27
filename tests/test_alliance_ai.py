@@ -265,9 +265,15 @@ def test_the_ai_answers_an_extension_request():
     bot._alliance_extensions(st)
     assert not al.both_agreed_to_extend, "아무도 요청 안 했는데 동의했다"
 
+    st.tick_count += 100                         # 시간이 좀 흘렀다
+    before = al.expires_at
     al.request_extension(1)                      # 사람이 연장을 요청했다
     bot._alliance_extensions(st)
-    assert al.both_agreed_to_extend, "요청에 답하지 않았다"
+    # ⚠ 관측점이 `both_agreed_to_extend` 가 아니다(§5.65). 양쪽이 동의하면 **그
+    # 자리에서** 갱신되고 표시가 지워진다 — 원본 `Alliance.extend()` 그대로다.
+    assert not al.both_agreed_to_extend, "성사됐으면 표시는 지워져야 한다"
+    assert al.expires_at == st.tick_count + C.ALLIANCE_DURATION_TICKS
+    assert al.expires_at > before, "연장이 안 됐다"
 
 
 def test_an_extension_is_refused_for_a_traitor():
@@ -353,3 +359,45 @@ def test_no_extension_button_without_an_alliance():
     item = next(i for i in diplomacy_items(st, 0, 1, lambda _m: None)
                 if i.label == "동맹 연장")
     assert not item.enabled and "동맹이 아니다" in item.hint
+
+
+def test_extension_renews_from_now_not_from_the_old_expiry():
+    """⚠ **이식 누락 마흔다섯.** 원본 `Alliance.extend()` 는
+    `expiresAt = 지금 + 기간` 이다 — **남은 시간이 덤으로 붙지 않는다.**
+
+    우리는 만료될 때까지 미뤘었다. 그러면 100초 남기고 동의한 쪽이 400초를 받고
+    다 써 가는 쪽이 300초를 받아, **일찍 동의할수록 이득**이 된다. 방향이 반대다."""
+    st = state()
+    allied(st, 0, 1)
+    al = st.diplomacy.alliances[0]
+    st.tick_count = al.expires_at - 100          # 아직 100 tick 남았다
+
+    assert not st.extend_alliance(0, 1), "한쪽만으로는 성사 안 된다"
+    assert st.extend_alliance(1, 0)
+    assert al.expires_at == st.tick_count + C.ALLIANCE_DURATION_TICKS, \
+        "남은 100 tick 이 덤으로 붙었다"
+
+
+def test_the_other_side_hears_about_a_renewal_request():
+    """`RENEW_ALLIANCE` — 한쪽만 동의했을 때 **상대에게 알린다.**
+
+    ⚠ 이 소식이 없으면 연장은 **양쪽이 우연히 같은 생각을 했을 때만** 성사된다.
+    사람은 상대가 원하는 줄 모르고, AI 도 요청을 볼 자리가 없다.
+
+    ⚠ **아무 → 한쪽** 전이일 때만 보낸다(`!wasOnlyOneAgreed`). 안 그러면 같은
+    사람이 여러 번 눌러 소식창을 도배한다."""
+    from domynion.core.events import EventKind
+    st = state()
+    allied(st, 0, 1)
+
+    st.extend_alliance(0, 1)
+    renew = [e for e in st.log.items if e.kind is EventKind.RENEW_ALLIANCE]
+    assert len(renew) == 1
+    assert renew[0].who == 1 and renew[0].other == 0, "받는 사람이 상대여야 한다"
+
+    st.extend_alliance(0, 1)                     # 같은 사람이 또 눌렀다
+    assert len([e for e in st.log.items if e.kind is EventKind.RENEW_ALLIANCE]) == 1
+
+    st.extend_alliance(1, 0)                     # 성사 — 양쪽에 소식이 간다
+    ok = [e for e in st.log.items if e.kind is EventKind.ALLIANCE_ACCEPTED]
+    assert {e.who for e in ok[-2:]} == {0, 1}

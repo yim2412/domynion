@@ -551,13 +551,13 @@ def _extend(st: GameState, me: int, target: int, notify) -> None:
     ⚠ 이 경로가 통째로 없었다(§5.53). 규칙(`request_extension` ·
     `both_agreed_to_extend`)은 `diplomacy.py` 에 있었는데 부르는 곳이 사람 쪽에도
     AI 쪽에도 없어서 **모든 동맹이 예외 없이 만료됐다.**"""
-    al = _alliance_with(st, me, target)
-    if al is None:
+    if _alliance_with(st, me, target) is None:
         notify("동맹이 아니다")
         return
-    al.request_extension(me)
-    if al.both_agreed_to_extend:
-        notify(f"P{target} 와 동맹 연장 — 만료 때 갱신된다")
+    # ⚠ 규칙은 **엔진 한 자리**에 있다(§5.65). 여기서 `request_extension` 을 직접
+    # 부르면 즉시 갱신도, 상대에게 가는 알림도 건너뛴다.
+    if st.extend_alliance(me, target):
+        notify(f"P{target} 와 동맹 연장 — 기간이 지금부터 다시 간다")
     else:
         notify(f"P{target} 에게 연장을 요청했다 — 상대가 동의해야 성사된다")
 

@@ -272,6 +272,37 @@ class GameState:
 
     # --- 외교 -------------------------------------------------------------
 
+    def extend_alliance(self, pid: int, other: int) -> bool:
+        """`AllianceExtensionExecution` — 연장 요청. 성사되면 True.
+
+        ⚠ **이식 누락 마흔다섯.** 규칙은 §5.53 에서 붙였는데 두 군데가 어긋나 있었다:
+
+        1. **원본은 양쪽이 동의한 그 순간 갱신한다**(`extend()` 는
+           `expiresAt = 지금 + 기간`). 우리는 만료될 때까지 미뤘다. 미루면 남은
+           시간이 **덤으로 붙는다** — 100초 남기고 동의하면 원본은 300초가 되는데
+           우리는 400초가 됐다. 일찍 동의할수록 이득이라 방향까지 반대다.
+        2. 한쪽만 동의했을 때 **상대에게 알리지 않았다**(`RENEW_ALLIANCE`). 이걸
+           안 보내면 연장은 **양쪽이 우연히 같은 생각을 했을 때만** 성사된다 —
+           사람은 상대가 원하는 줄 모르고, AI 는 요청을 볼 수가 없다.
+
+        ⚠ 알림은 **아무 → 한쪽** 전이일 때만 보낸다(`!wasOnlyOneAgreed`). 안 그러면
+        같은 사람이 여러 번 눌러 소식창을 도배한다.
+        """
+        al = self.diplomacy.alliance_between(pid, other)
+        if al is None or not self.players[pid].alive:
+            return False
+        was_one = al._extend_a != al._extend_b
+        al.request_extension(pid)
+        if al.both_agreed_to_extend:
+            al.expires_at = self.tick_count + C.ALLIANCE_DURATION_TICKS
+            al._extend_a = al._extend_b = False
+            for who, name in ((pid, other), (other, pid)):
+                self.emit(EventKind.ALLIANCE_ACCEPTED, who=who, other=name)
+            return True
+        if not was_one:
+            self.emit(EventKind.RENEW_ALLIANCE, who=other, other=pid)
+        return False
+
     def request_alliance(self, pid: int, other: int) -> bool:
         ok = self.diplomacy.request(pid, other)
         if ok:

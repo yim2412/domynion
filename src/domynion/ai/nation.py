@@ -481,7 +481,9 @@ class NationBot:
             if mine or not theirs:
                 continue
             if self.alliance.decide(st, other, is_response=True):
-                al.request_extension(self.pid)
+                # ⚠ 엔진 경유다(§5.65) — 여기서 직접 부르면 **즉시 갱신**과 양쪽에
+                # 가는 성사 소식을 건너뛴다. 사람은 AI 가 동의한 줄 모르게 된다.
+                st.extend_alliance(self.pid, other)
 
     # --- 전함 -------------------------------------------------------------
 
