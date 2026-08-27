@@ -302,3 +302,54 @@ def test_an_expired_alliance_survives_when_both_agreed():
     assert gone == [], "양쪽이 동의했는데 만료됐다"
     assert al in st.diplomacy.alliances
     assert al.expires_at > st.tick_count
+
+
+# --- 사람 쪽 연장 버튼 (§5.53) -----------------------------------------------
+
+def test_the_human_can_request_an_extension():
+    """⚠ 사람 쪽 버튼도 없었다. 규칙은 있는데 **양쪽 다 들어가는 길이 없었다.**"""
+    from domynion.ui.actions import diplomacy_items
+    st = state()
+    st.players[0].kind = "human"
+    allied(st, 0, 1)
+    al = st.diplomacy.alliances[0]
+
+    said = []
+    item = next(i for i in diplomacy_items(st, 0, 1, said.append)
+                if i.label == "동맹 연장")
+    assert item.enabled
+    item.action()
+    assert (al._extend_a if al.a == 0 else al._extend_b), "요청이 안 들어갔다"
+    assert not al.both_agreed_to_extend, "혼자 눌렀는데 성사됐다"
+    assert said and "요청" in said[-1]
+
+
+def test_the_extension_button_shows_who_agreed():
+    """남은 시간과 **누가 동의했는지**가 힌트에 보인다.
+
+    원본은 `PlayerPanel` 의 카운트다운으로 준다. 우리는 패널이 없으므로 힌트에
+    넣는다 — 없으면 사람은 동맹이 언제 끝나는지 알 방법이 없다."""
+    from domynion.ui.actions import diplomacy_items
+    st = state()
+    st.players[0].kind = "human"
+    allied(st, 0, 1)
+    al = st.diplomacy.alliances[0]
+
+    def hint():
+        return next(i for i in diplomacy_items(st, 0, 1, lambda _m: None)
+                    if i.label == "동맹 연장").hint
+
+    assert "남음" in hint()
+    al.request_extension(1)                      # 상대가 먼저 요청했다
+    assert "상대가 먼저" in hint()
+    al.request_extension(0)
+    assert "양쪽이 동의" in hint()
+
+
+def test_no_extension_button_without_an_alliance():
+    from domynion.ui.actions import diplomacy_items
+    st = state()
+    st.players[0].kind = "human"
+    item = next(i for i in diplomacy_items(st, 0, 1, lambda _m: None)
+                if i.label == "동맹 연장")
+    assert not item.enabled and "동맹이 아니다" in item.hint

@@ -407,6 +407,11 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
              hint="이미 동맹이다" if allied else
                   "이미 요청했다" if outgoing else "동맹을 제안한다",
              colour=COL_DIPLO),
+        Item("동맹 연장", action=lambda: _extend(st, me, target, notify),
+             enabled=allied,
+             hint=("동맹이 아니다" if not allied else
+                   _extend_hint(st, me, target)),
+             colour=COL_DIPLO),
         Item("동맹 파기", action=lambda: _break(st, me, target, notify),
              enabled=allied,
              hint="동맹이 아니다" if not allied else
@@ -471,6 +476,50 @@ def _embargo(st: GameState, me: int, target: int, notify) -> None:
     else:
         d.start_embargo(me, target)
         notify(f"P{target} 에 금수 조치")
+
+
+def _alliance_with(st: GameState, me: int, target: int):
+    for al in st.diplomacy.alliances:
+        if al.involves(me) and al.other(me) == target:
+            return al
+    return None
+
+
+def _extend_hint(st: GameState, me: int, target: int) -> str:
+    """남은 시간과 **누가 동의했는지**를 보여준다.
+
+    원본은 이 정보를 `PlayerPanel` 의 카운트다운으로 준다. 우리는 패널이 없으므로
+    힌트 한 줄에 넣는다 — 없으면 사람은 동맹이 언제 끝나는지 알 방법이 없다."""
+    al = _alliance_with(st, me, target)
+    if al is None:
+        return "동맹이 아니다"
+    left = max(0, al.expires_at - st.tick_count) * C.TICK_DT
+    mine = al._extend_a if me == al.a else al._extend_b
+    theirs = al._extend_b if me == al.a else al._extend_a
+    if al.both_agreed_to_extend:
+        return f"양쪽이 동의했다 — 만료 때 연장된다 ({left:.0f}초 남음)"
+    if mine:
+        return f"이미 요청했다 — 상대의 답을 기다린다 ({left:.0f}초 남음)"
+    if theirs:
+        return f"상대가 먼저 요청했다 — 누르면 성사된다 ({left:.0f}초 남음)"
+    return f"{left:.0f}초 남음 · 연장을 요청한다"
+
+
+def _extend(st: GameState, me: int, target: int, notify) -> None:
+    """`AllianceExtensionExecution` — **양쪽이 동의해야** 연장된다.
+
+    ⚠ 이 경로가 통째로 없었다(§5.53). 규칙(`request_extension` ·
+    `both_agreed_to_extend`)은 `diplomacy.py` 에 있었는데 부르는 곳이 사람 쪽에도
+    AI 쪽에도 없어서 **모든 동맹이 예외 없이 만료됐다.**"""
+    al = _alliance_with(st, me, target)
+    if al is None:
+        notify("동맹이 아니다")
+        return
+    al.request_extension(me)
+    if al.both_agreed_to_extend:
+        notify(f"P{target} 와 동맹 연장 — 만료 때 갱신된다")
+    else:
+        notify(f"P{target} 에게 연장을 요청했다 — 상대가 동의해야 성사된다")
 
 
 def _donate_gold(st: GameState, me: int, target: int, notify) -> None:
