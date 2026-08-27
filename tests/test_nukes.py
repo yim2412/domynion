@@ -414,3 +414,74 @@ def test_a_fresh_silo_launches_with_no_delay():
     give_silo(st, 0, st.gmap.ref(20, 20))
     n = st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(120, 20))
     assert n.wait_ticks == 0
+
+
+# --- MIRV 탄두 수 (§5.57) -----------------------------------------------------
+
+def test_full_map_land_matches_the_manifest():
+    """⚠ `FULL_MAP_LAND` 는 **manifest 와 대조한다.**
+
+    기댓값을 상수 자신에서 가져오면(`350 * X / X == 350`) 상수를 아무 값으로
+    바꿔도 통과한다 — 함정 3번("기대값을 검사 대상에서 가져오지 않는다")에
+    처음에 그대로 걸렸다(변이 R2 가 살아남았다). manifest 는 지도 파일이 들고
+    있는 **독립된 근거**다."""
+    import json
+    from pathlib import Path
+    man = json.loads(Path("resources/maps/world/manifest.json")
+                     .read_text(encoding="utf-8"))
+    assert C.FULL_MAP_LAND == man["map"]["num_land_tiles"]
+
+
+def test_the_full_size_map_gets_the_original_warhead_count():
+    """**원본 크기 지도에서는 원본 값(350발) 그대로여야 한다.**
+
+    이 줄은 `map4x` 시절 값이었다. "우리 지도는 원본의 1/16 이라 줄인다"고 적고
+    면적 비를 곱했는데, 기본 해상도를 원본 크기로 올릴 때(§5.47) 이 줄을 안 봤다.
+    게다가 분모가 지도의 **총 칸 수**(2,000,000)인데 분자는 **육지 수**라
+    원본 크기에서도 0.33 이 곱해졌다 — 실측 114발.
+
+    막지 않았으면: 원본과 같은 지도에서 MIRV 위력이 3분의 1 이다."""
+    import json
+    from pathlib import Path
+    man = json.loads(Path("resources/maps/world/manifest.json")
+                     .read_text(encoding="utf-8"))
+    land = man["map"]["num_land_tiles"]
+    assert max(1, round(C.MIRV_WARHEAD_COUNT * land / C.FULL_MAP_LAND)) == 350
+
+
+def test_smaller_maps_scale_the_warhead_count_down():
+    """작은 지도에서는 여전히 줄인다 — 350발이면 지도가 통째로 날아간다.
+
+    manifest 의 실제 육지 수로 재고 **숫자를 못 박는다.**"""
+    import json
+    from pathlib import Path
+    man = json.loads(Path("resources/maps/world/manifest.json")
+                     .read_text(encoding="utf-8"))
+    got = {size: max(1, round(C.MIRV_WARHEAD_COUNT
+                              * man[size]["num_land_tiles"] / C.FULL_MAP_LAND))
+           for size in ("map16x", "map4x", "map")}
+    assert got == {"map16x": 20, "map4x": 85, "map": 350}, got
+
+
+def test_a_mirv_splits_into_the_scaled_number_of_warheads():
+    """엔진이 실제로 그 수만큼 터뜨리는가 — **로직과 배선을 따로 잰다.**"""
+    st = wide_state(width=600, height=400)
+    st.players[0].gold = 500_000_000
+    src, dst = st.gmap.ref(20, 200), st.gmap.ref(300, 200)
+    give_silo(st, 0, src)
+    # ⚠ 기댓값을 **못 박는다.** `C.FULL_MAP_LAND` 로 계산하면 그 상수를 바꿔도
+    # 양쪽이 같이 움직여 통과한다(변이 R2 가 그렇게 살아남았다).
+    # 600×400 = 240,000 육지 → 350 × 240000/651569 = 129발.
+    assert st.gmap.land_count == 240_000, st.gmap.land_count
+    expect = 129
+
+    hits = []
+    orig = st._detonate
+    st._detonate = lambda n: hits.append(n) or orig(n)
+    n = st.launch_nuke(0, UnitType.MIRV, dst)
+    for _ in range(200):
+        st.tick()
+        if n not in st.nukes:
+            break
+    warheads = [h for h in hits if h.utype is UnitType.MIRV_WARHEAD]
+    assert len(warheads) == expect, f"{len(warheads)}발 (기대 {expect})"

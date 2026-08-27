@@ -421,8 +421,13 @@ SHELL_ROLL_MAX = 5
 SHELL_ROLL_STEP = 25
 SHELL_ROLL_BASE = 200
 
-# MIRV — MIRVExecution.warheadCount
+# MIRV — MIRVExecution.warheadCount. **원본은 350발 고정이다.**
 MIRV_WARHEAD_COUNT = 350
+
+# 원본 크기 지도(`map`)의 육지 수. 작은 지도에서 규모를 맞출 때 **분모**로 쓴다.
+# ⚠ 총 칸 수(2,000,000)가 아니라 **육지 수**다 — 분자도 육지 수이므로 여기가
+# 총 칸 수면 원본 크기에서도 0.33 이 곱해진다(§5.57 에서 그렇게 틀려 있었다).
+FULL_MAP_LAND = 651_569
 
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 TRADE_SPAWN_SIGMOID_MID = 400

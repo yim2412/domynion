@@ -944,11 +944,21 @@ class GameState:
         return n
 
     def _split_mirv(self, n: Nuke) -> None:
-        """MIRV 는 스스로 터지지 않고 **탄두 여러 개로 갈라진다**(원본 350발).
+        """MIRV 는 스스로 터지지 않고 **탄두 여러 개로 갈라진다**(원본 350발 고정).
 
-        우리 지도는 원본의 1/16 면적이라 350발이면 지도가 통째로 날아간다.
-        `MIRV_WARHEAD_COUNT` 를 면적 비로 줄여 같은 *비중*이 되게 한다."""
-        count = max(1, int(C.MIRV_WARHEAD_COUNT * self.gmap.land_count / 2_000_000))
+        ⚠ 이 줄은 **`map4x` 시절 값이었다**(§5.57). "우리 지도는 원본의 1/16
+        면적이라 350발이면 지도가 통째로 날아간다"고 적고 면적 비로 줄였는데,
+        §5.47 에서 기본 해상도를 원본 크기로 올릴 때 이 줄을 안 봤다. 그래서
+        **원본과 같은 크기에서도 114발**만 쓰고 있었다(실측).
+
+        게다가 분모(2,000,000)는 지도의 **총 칸 수**인데 분자에는 **육지 수**를
+        넣고 있었다 — 원본 크기에서도 651,569/2,000,000 = 0.33 이 곱해진다.
+        즉 두 번 틀렸다.
+
+        면적 비 자체는 남긴다. 작은 지도(`map16x` 6발 · `map4x` 27발)에서는
+        여전히 필요하고, **원본 크기에서 350발이 되는 것**이 맞는 기준선이다."""
+        count = max(1, round(C.MIRV_WARHEAD_COUNT
+                             * self.gmap.land_count / C.FULL_MAP_LAND))
         w = self.gmap.width
         cx, cy = n.dst % w, n.dst // w
         spread = NUKE_MAGNITUDES[UnitType.MIRV_WARHEAD][1] * 3
