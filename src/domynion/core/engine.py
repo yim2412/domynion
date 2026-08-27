@@ -79,6 +79,8 @@ class GameState:
     # pid → 영토가 마지막으로 바뀐 tick(`lastTileChange`). 둘러싸임 검사가
     # **바뀐 나라만** 보게 하는 데 쓴다 — 안 그러면 판 시간의 절반을 먹는다.
     _tile_changed: dict = field(default_factory=dict)
+    # 역 타일 → 마지막 발차 tick(`ticksCooldown`). 한 역이 연달아 못 내게 한다.
+    _station_fired: dict = field(default_factory=dict)
     _enclave_checked: dict = field(default_factory=dict)
     nukes: list[Nuke] = field(default_factory=list)
     mirvs_launched: int = 0        # 판 전체. MIRV 값이 이 수에 따라 오른다
@@ -1196,16 +1198,32 @@ class GameState:
 
         **남의 역에 닿는 것이 자기 역보다 2.5배 벌린다**(동맹 35,000 vs 자기 10,000).
         그래서 철도를 깔면 이웃과 사이가 좋을 이유가 생긴다."""
-        self.rail.rebuild(self.alive)
+        self.rail.rebuild(self.gmap, self.alive)
+        # ⚠ **역마다, 그 역의 레벨만큼 굴린다**(§5.60, 이식 누락 마흔셋).
+        # 원본 `TrainStationExecution.shouldSpawnTrain` 이 그렇다. 전에는 나라
+        # 단위로 한 번만 굴려서, 역이 열 곳이어도 기차는 한 대였다.
+        #
+        # ⚠ **공장 역만 기차를 낸다**(`spawnTrains` 가 공장에만 true). 도시·항구
+        # 역은 지나가는 정거장이지 출발지가 아니다.
         for p in self.alive:
             factories = p.units.owned(UnitType.FACTORY)
             if not factories:
                 continue
-            if self.rng.randrange(max(1, train_spawn_rate(factories))) != 0:
-                continue
-            t = self.rail.dispatch(self.gmap, self.diplomacy, p.pid, self.rng)
-            if t is not None:
-                self.trains.append(t)
+            rate = max(1, train_spawn_rate(factories))
+            for st_ in self.rail.stations:
+                if st_.owner != p.pid or st_.unit.utype is not UnitType.FACTORY:
+                    continue
+                last = self._station_fired.get(st_.tile, -10_000)
+                if self.tick_count - last < C.TRAIN_STATION_COOLDOWN_TICKS:
+                    continue
+                if not any(self.rng.randrange(rate) == 0
+                           for _ in range(max(1, st_.unit.level))):
+                    continue
+                t = self.rail.dispatch(self.gmap, self.diplomacy, p.pid,
+                                       self.rng, src=st_)
+                if t is not None:
+                    self._station_fired[st_.tile] = self.tick_count
+                    self.trains.append(t)
 
         still: list[Train] = []
         for t in self.trains:

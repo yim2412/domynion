@@ -474,6 +474,13 @@ TRAIN_STATION_MAX_RANGE = 110
 RAILROAD_MAX_SIZE = TRAIN_STATION_MAX_RANGE * 1.4142
 TRAIN_SPEED = 4.0                    # 우리 값 — 원본은 경로 그래프를 따라간다
 
+# 한 여정에 거치는 역 수의 상한. **우리 값이다** — 원본은 A* 가 찾은 경로 길이가
+# 그대로 되고 따로 상한이 없다(§5.60 의 범위 결정). 무한 순회를 막으려고 둔다.
+TRAIN_MAX_HOPS = 6
+
+# 역 사이 최소 쿨다운(`ticksCooldown`). 한 역이 연달아 내지 못하게 한다.
+TRAIN_STATION_COOLDOWN_TICKS = 10
+
 # 기부 — Config.ts :: donateCooldown()
 DONATE_COOLDOWN_TICKS = 10 * 10
 
