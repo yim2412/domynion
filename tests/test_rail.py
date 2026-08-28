@@ -17,8 +17,8 @@ from domynion.core.diplomacy import Diplomacy
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
 from domynion.core.nukes import Fallout
-from domynion.core.rail import (RAIL_STATION_UNITS, RailNetwork, station_range_ok,
-                                train_gold, train_spawn_rate)
+from domynion.core.rail import (RAIL_STATION_UNITS, RailNetwork, Train, TrainStop,
+                                station_range_ok, train_gold, train_spawn_rate)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
 from domynion.ui.rates import gold_pip
@@ -163,7 +163,10 @@ def test_dispatch_needs_a_reachable_station():
 def test_arriving_train_pays_the_owner():
     st = state()
     give(st, 0, UnitType.FACTORY, 20, 20)
+    # ⚠ **목적지는 도시·항구여야 한다**(§5.70). 공장에서 끝나는 여정은 원본이
+    # 애초에 안 낸다 — 전에는 공장 둘만 두고도 벌었다.
     give(st, 1, UnitType.FACTORY, 60, 20)
+    give(st, 1, UnitType.CITY, 64, 20)
     st.gmap.owner[st.gmap.ref(60, 20)] = 1
     st.rail.rebuild(st.gmap, st.alive)
     t = st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(0))
@@ -248,14 +251,24 @@ def test_visited_count_resets_every_journey():
 
 
 def test_factory_stops_do_not_count_as_visits():
-    """공장 역은 **안 센다** — 원본이 `City`·`Port` 만 센다."""
+    """공장 역은 **안 센다** — 원본이 `City`·`Port` 만 센다(`FactoryStopHandler`).
+
+    막지 않았으면: 공장만 잔뜩 이은 노선으로 방문 수를 채워 페널티를 앞당길 수
+    있고, 반대로 공장을 지나며 **팔지도 않은 정거장 값**을 받게 된다."""
     st = state()
     give(st, 0, UnitType.FACTORY, 20, 20)
     give(st, 0, UnitType.FACTORY, 60, 20)
+    give(st, 0, UnitType.CITY, 100, 20)
     st.rail.rebuild(st.gmap, st.alive)
-    t = st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(0), hops=1)
+    t = st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(0))
     assert t is not None
-    assert t.cities_visited == 0, "공장을 방문으로 셌다"
+    assert t.cities_visited == 0, "출발 시점부터 방문 수가 붙어 있다"
+    st.trains.append(t)
+    for _ in range(400):
+        st.tick()
+        if t not in st.trains:
+            break
+    assert t.cities_visited == 1, f"공장을 방문으로 셌다: {t.cities_visited}"
 
 
 def test_a_train_visits_several_stations():
@@ -272,7 +285,7 @@ def test_a_train_visits_several_stations():
     for seed in range(20):
         t = st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(seed))
         if t is not None:
-            longest = max(longest, len(t.path))
+            longest = max(longest, len(t.stops))
     assert longest >= 2, f"가장 긴 여정이 {longest} 정거장 — 한 번만 간다"
 
 
@@ -290,7 +303,7 @@ def test_only_factories_send_trains():
     for _ in range(4000):
         st.tick()
         for t in st.trains:
-            srcs.add(t.src)
+            srcs.add(t.origin)
     assert srcs, "기차가 한 대도 안 떴다"
     assert srcs == {st.gmap.ref(20, 20)},         f"공장이 아닌 역에서도 기차가 떴다: {srcs}"
 
@@ -324,3 +337,194 @@ def test_a_station_waits_out_its_cooldown():
     _eng.train_spawn_rate = monkey
     # 30 tick 동안 쿨다운(10)이 있으면 **세 대**, 없으면 서른 대다
     assert 0 < fired <= 5, f"{fired}대 — 쿨다운이 안 걸린다"
+
+
+# --- 정거장마다 판다 (§5.70) --------------------------------------------------
+
+def run(st: GameState, t: Train, ticks: int = 400) -> dict[int, int]:
+    """기차 한 대를 끝까지 굴리고 **수동 수입을 뺀** 순이익을 pid 별로 돌려준다."""
+    before = {pid: p.gold for pid, p in st.players.items()}
+    t0 = st.tick_count
+    st.trains.append(t)
+    for _ in range(ticks):
+        st.tick()
+        if t not in st.trains:
+            break
+    passive = (st.tick_count - t0) * C.GOLD_PER_TICK_HUMAN
+    return {pid: p.gold - before[pid] - passive for pid, p in st.players.items()}
+
+
+def two_networks(st: GameState) -> None:
+    """0 의 공장 하나 · 1 의 공장과 도시 하나씩. 서로 사거리 안이다."""
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 1, UnitType.FACTORY, 60, 20)
+    give(st, 1, UnitType.CITY, 64, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+
+
+def stop_at(st: GameState, x: int, y: int) -> TrainStop:
+    t = st.gmap.ref(x, y)
+    s = next(s for s in st.rail.stations if s.tile == t)
+    return TrainStop(tile=s.tile, owner=s.owner,
+                     trade=s.unit.utype in (UnitType.CITY, UnitType.PORT))
+
+
+def test_the_station_owner_earns_too():
+    """⚠ **이식 누락 쉰.** 원본은 기차가 서면 **역 주인에게도 같은 액수**를 준다
+    (`TradeStationStopHandler.onStop`).
+
+    §5.60 의 "남의 역에 닿으면 2.5배"의 뒷면이다 — 남이 내 역에 들르는 것도
+    수입이라 철도를 깐 나라끼리 서로 이득이다. 막지 않았으면 그 유인이 절반만
+    돈다: 역을 내주는 쪽은 아무것도 못 받는다."""
+    st = state()
+    two_networks(st)
+    got = run(st, Train(owner=0, stops=[stop_at(st, 64, 20)],
+                        leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20)))
+    assert got[0] == train_gold("other", 0)
+    assert got[1] == train_gold("other", 0), "역을 내준 쪽이 한 푼도 못 받았다"
+
+
+def test_stopping_at_my_own_station_pays_once_not_twice():
+    """자기 역이면 한 몫만 받는다(`trainOwner !== stationOwner` 일 때만 나눈다)."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.CITY, 60, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    got = run(st, Train(owner=0, stops=[stop_at(st, 60, 20)],
+                        leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20)))
+    assert got[0] == train_gold("self", 0)
+
+
+def test_every_stop_pays_not_just_the_last_one():
+    """⚠ 전에는 **끝에서 한 번만** 벌었다. 원본은 정거장마다 판다.
+
+    막지 않았으면: 긴 노선을 깔 이유가 사라진다 — 역을 몇 곳 거치든 벌이가 같다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.CITY, 60, 20)
+    give(st, 0, UnitType.CITY, 100, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    got = run(st, Train(owner=0, stops=[stop_at(st, 60, 20), stop_at(st, 100, 20)],
+                        leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20)))
+    assert got[0] == train_gold("self", 0) + train_gold("self", 1)
+    assert got[0] == 2 * train_gold("self", 0), "정거장 하나 값만 받았다"
+
+
+def test_the_stop_is_paid_before_the_visit_is_counted():
+    """원본은 `onStop` 을 부른 **뒤에** `_tradeStopsVisited++` 한다.
+
+    막지 않았으면: 첫 정거장부터 한 칸씩 싸게 팔린다. 페널티 구간(10곳 이후)에
+    들어가야 비로소 값이 갈리므로, 짧은 노선만 보면 영영 안 드러난다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.CITY, 60, 20)
+    give(st, 0, UnitType.CITY, 100, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    t = Train(owner=0, stops=[stop_at(st, 60, 20), stop_at(st, 100, 20)],
+              leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20),
+              cities_visited=9)             # 다음 한 곳까지는 페널티가 없다
+    got = run(st, t)
+    assert got[0] == train_gold("self", 9) + train_gold("self", 10)
+    assert got[0] > 2 * train_gold("self", 10), "값을 매기기 전에 방문 수를 올렸다"
+
+
+def test_passing_a_factory_pays_nothing_and_counts_nothing():
+    """공장 역은 **지나가기만 한다**(`FactoryStopHandler` 가 빈 함수다).
+
+    막지 않았으면: 공장을 이은 만큼 값이 나오고 방문 수도 올라, 공장만 늘어놓은
+    노선이 최적이 된다. 원본에서 공장은 **기차를 내는 자리**지 파는 자리가 아니다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.FACTORY, 60, 20)
+    give(st, 0, UnitType.CITY, 100, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    t = Train(owner=0, stops=[stop_at(st, 60, 20), stop_at(st, 100, 20)],
+              leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20))
+    assert t.stops[0].trade is False, "공장이 파는 역으로 잡혔다"
+    got = run(st, t)
+    assert got[0] == train_gold("self", 0), "공장 정거장에서도 팔았다"
+    assert t.cities_visited == 1, f"공장을 방문으로 셌다: {t.cities_visited}"
+
+
+def test_leftover_distance_carries_into_the_next_leg():
+    """원본도 `currentTile = leftOver` 로 넘긴다(`getNextTile`).
+
+    막지 않았으면: 정거장마다 남은 거리가 버려져 **역이 많은 노선일수록 기차가
+    느려진다** — 여러 역을 거치라는 규칙과 정반대로 움직인다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.CITY, 62, 20)          # 두 구간 다 42칸 — 속도 4로 안 나눠진다
+    give(st, 0, UnitType.CITY, 104, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    t = Train(owner=0, stops=[stop_at(st, 62, 20), stop_at(st, 104, 20)],
+              leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20))
+    st.trains.append(t)
+    t0 = st.tick_count
+    for _ in range(100):
+        st.tick()
+        if t not in st.trains:
+            break
+    assert st.tick_count - t0 == 21, "이월을 버려 한 tick 씩 늦어진다(버리면 22)"
+
+
+def test_an_embargo_ends_the_journey_at_that_station():
+    """`tradeAvailable` — 금수 중인 나라의 역에는 서지 못한다. 거기서 여정이 끝난다."""
+    st = state()
+    two_networks(st)
+    st.diplomacy.start_embargo(1, 0)
+    got = run(st, Train(owner=0, stops=[stop_at(st, 64, 20)],
+                        leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20)))
+    assert got[0] == 0 and got[1] == 0
+    assert st.trains == []
+
+
+def test_a_station_destroyed_mid_journey_ends_it():
+    """원본도 매 tick `stations[1].isActive()` 를 본다.
+
+    막지 않았으면: 이미 사라진 건물의 역에 기차가 서서 **주인 없는 자리**에서
+    돈이 나온다."""
+    st = state()
+    two_networks(st)
+    t = Train(owner=0, stops=[stop_at(st, 64, 20)],
+              leg_src=st.gmap.ref(20, 20), origin=st.gmap.ref(20, 20))
+    before = st.players[0].gold
+    t0 = st.tick_count
+    st.trains.append(t)
+    st.tick()
+    city = next(u for u in st.players[1].units.units if u.utype is UnitType.CITY)
+    st.players[1].units.units.remove(city)          # 도착 전에 도시가 사라진다
+    for _ in range(400):
+        st.tick()
+        if t not in st.trains:
+            break
+    passive = (st.tick_count - t0) * C.GOLD_PER_TICK_HUMAN
+    assert st.players[0].gold - before - passive == 0
+    assert st.trains == []
+
+
+def test_a_route_that_would_end_at_a_factory_is_trimmed():
+    """목적지는 **도시·항구**다(`Cluster.randomTradeDestination`).
+
+    막지 않았으면: 공장에서 끝나는 여정이 뜨는데 공장은 안 판다 — 기차가 달리고도
+    아무도 벌지 않는다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    give(st, 0, UnitType.FACTORY, 60, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    assert all(st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(seed)) is None
+               for seed in range(20)), "공장에서 끝나는 기차가 떴다"
+
+    give(st, 0, UnitType.CITY, 100, 20)
+    st.rail.rebuild(st.gmap, st.alive)
+    trains = [st.rail.dispatch(st.gmap, st.diplomacy, 0, random.Random(seed))
+              for seed in range(20)]
+    assert any(t is not None for t in trains)
+    assert all(t.stops[-1].trade for t in trains if t is not None)
+    # ⚠ **거쳐 가는 공장에는 파는 표시가 붙으면 안 된다.** 목적지만 보면
+    # `dispatch` 가 전부 파는 역으로 표시해도 통과한다.
+    factories = {st.gmap.ref(20, 20), st.gmap.ref(60, 20)}
+    for t in trains:
+        if t is None:
+            continue
+        for stop in t.stops:
+            assert stop.trade is (stop.tile not in factories)

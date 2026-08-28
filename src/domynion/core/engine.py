@@ -1284,19 +1284,60 @@ class GameState:
                     self._station_fired[st_.tile] = self.tick_count
                     self.trains.append(t)
 
+        # 여정 중에 역이 부서졌는지 볼 때 쓴다(원본 `stations[1].isActive()`).
+        live = {st_.tile: st_.owner for st_ in self.rail.stations}
         still: list[Train] = []
         for t in self.trains:
             owner = self.players.get(t.owner)
             if owner is None or not owner.alive:
                 continue
             t.advance()
-            if not t.arrived(self.gmap):
+            while t.leg_done(self.gmap):
+                stop = t.stops[0]
+                # ⚠ **닿기 전에** 확인한다(원본 `canTradeWithDestination` 이
+                # `getNextTile` 의 맨 앞에 있다). 역이 사라졌거나 금수면 여정이
+                # 거기서 끝나고, 그 역에서는 아무도 벌지 않는다.
+                if live.get(stop.tile) != stop.owner or not self._train_may_stop(
+                        t.owner, stop.owner):
+                    t.stops.clear()
+                    break
+                self._train_stop(t, stop)
+                t.begin_next_leg(self.gmap)
+            if t.stops:
                 still.append(t)
-                continue
-            train_paid = train_gold(t.rel, t.cities_visited)
-            owner.gold += train_paid
-            self.note_gold_gain(owner.pid, train_paid)
         self.trains = still
+
+    def _train_may_stop(self, train_owner: int, station_owner: int) -> bool:
+        """`TrainStation.tradeAvailable` — **내 역은 언제나 선다.** 남의 역은
+        금수가 없어야 한다."""
+        return (train_owner == station_owner
+                or self._can_trade(train_owner, station_owner))
+
+    def _train_stop(self, t: Train, stop) -> None:
+        """`TradeStationStopHandler.onStop` — **정거장마다** 돈이 오간다.
+
+        ⚠ **역 주인도 같은 액수를 받는다**(자기 역이 아닐 때). 이게 §5.60 의
+        "남의 역에 닿으면 2.5배"의 뒷면이다 — 원본에서는 **남이 내 역에 들르는
+        것도 수입**이라 철도를 깐 나라끼리 서로 이득이다. 우리는 기차 주인에게만
+        줘서 그 유인이 절반이었다(§5.70, 이식 누락 쉰).
+
+        ⚠ 공장 역은 **안 판다**(`FactoryStopHandler` 가 빈 함수다). 방문 수도
+        공장에서는 안 오른다 — 그래서 공장만 잔뜩 이은 노선으로 페널티를 피하며
+        벌 수는 없다."""
+        if not stop.trade:
+            return
+        # 값은 **오르기 전의** 방문 수로 매긴다 — 원본도 `onStop` 을 부른 **뒤에**
+        # `_tradeStopsVisited++` 한다. 첫 정거장이 페널티 없이 만액인 이유다.
+        rel = self.rail.relation(self.diplomacy, t.owner, stop.owner)
+        gold = train_gold(rel, t.cities_visited)
+        t.cities_visited += 1
+        host = self.players.get(stop.owner)
+        if stop.owner != t.owner and host is not None and host.alive:
+            host.gold += gold
+            self.note_gold_gain(host.pid, gold)
+        owner = self.players[t.owner]
+        owner.gold += gold
+        self.note_gold_gain(owner.pid, gold)
 
     def _apply_embargo_relations(self) -> None:
         """금수는 **걸려 있는 동안 계속** 깎는 것이 아니라 한 번만 깎는다.

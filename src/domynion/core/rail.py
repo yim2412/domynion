@@ -69,6 +69,11 @@ def station_range_ok(gmap: GameMap, a: TileRef, b: TileRef) -> bool:
     return C.TRAIN_STATION_MIN_RANGE <= d <= C.TRAIN_STATION_MAX_RANGE
 
 
+def _is_trade_station(s: "Station") -> bool:
+    """도시·항구만 판다(`Cluster.isTradeStation`). 공장은 정거장이다."""
+    return s.unit.utype in (UnitType.CITY, UnitType.PORT)
+
+
 @dataclass
 class Station:
     """건물에 붙은 역. 건물이 사라지면 역도 사라진다."""
@@ -78,26 +83,52 @@ class Station:
 
 
 @dataclass
-class Train:
-    """역에서 역으로 달린다. 도착하면 양쪽이 아니라 **출발한 쪽만** 번다."""
+class TrainStop:
+    """기차가 설 역 하나의 **스냅숏**.
+
+    `Station` 을 그대로 들면 안 된다 — `rebuild()` 가 매 tick 역 목록을 새로
+    만들므로, 이미 부서진 건물의 역을 붙들고 달리게 된다. 여정 중에 역이
+    살아 있는지는 그때그때 다시 확인한다(원본 `stations[1].isActive()`)."""
+    tile: TileRef
     owner: int
-    src: TileRef
-    dst: TileRef
-    dst_owner: int
-    rel: str
-    cities_visited: int
+    trade: bool          # 도시·항구면 True. **공장 역은 지나가기만 한다**
+
+
+@dataclass
+class Train:
+    """역들을 **차례로** 들른다. 서는 역마다 돈이 오간다(`onTrainStop`).
+
+    ⚠ 전에는 출발지에서 목적지까지 직선으로 한 번에 날아가 **끝에서 한 번만**
+    벌었다(§5.70, 이식 누락 쉰). 원본은 정거장마다 판다 — 그래서 긴 노선이
+    실제로 더 벌고, 방문 수 페널티(`train_gold`)도 그제야 뜻을 갖는다."""
+    owner: int
+    stops: list = field(default_factory=list)   # 아직 안 들른 역들(TrainStop)
+    leg_src: TileRef = 0                        # 지금 구간의 출발 역 자리
+    # 여정을 시작한 역. `leg_src` 는 달리면서 바뀌므로 **누가 냈는지**는 여기 남긴다
+    # (공장 역만 낸다는 규칙을 재려면 출발지를 알아야 한다).
+    origin: TileRef = 0
     progress: float = 0.0
-    # 지나온 역들(마지막이 목적지). 원본은 선로를 따라가지만 우리는 직선이라
-    # **어디를 들렀는지**만 기록한다 — 수입 계산에 그 수가 들어간다.
-    path: list = field(default_factory=list)
+    cities_visited: int = 0
 
     def advance(self) -> None:
         self.progress += C.TRAIN_SPEED
 
-    def arrived(self, gmap: GameMap) -> bool:
+    def leg_length(self, gmap: GameMap) -> float:
         w = gmap.width
-        return self.progress >= math.hypot(self.src % w - self.dst % w,
-                                           self.src // w - self.dst // w)
+        a, b = self.leg_src, self.stops[0].tile
+        return math.hypot(a % w - b % w, a // w - b // w)
+
+    def leg_done(self, gmap: GameMap) -> bool:
+        return bool(self.stops) and self.progress >= self.leg_length(gmap)
+
+    def begin_next_leg(self, gmap: GameMap) -> None:
+        """다음 구간으로 넘어간다. **남은 거리를 이월한다** — 원본도
+        `currentTile = leftOver` 로 넘긴다. 버리면 역이 많은 노선일수록
+        기차가 느려진다."""
+        over = self.progress - self.leg_length(gmap)
+        self.leg_src = self.stops[0].tile
+        self.stops.pop(0)
+        self.progress = max(0.0, over)
 
 
 @dataclass
@@ -177,13 +208,18 @@ class RailNetwork:
             return None
         start = src if src is not None else rng.choice(mine)
         path = self.route(gmap, start, rng, hops)
+        # ⚠ **목적지는 반드시 도시·항구다**(원본 `Cluster.randomTradeDestination`
+        # 이 `tradeStations` 에서만 고른다). 공장은 지나가는 역일 뿐이라, 공장에서
+        # 끝나는 여정은 **아무도 벌지 않는다** — 원본은 그런 기차를 애초에 안 낸다
+        # (`hasAnyTradeDestination`). 뒤에서부터 공장을 잘라 낸다.
+        while path and not _is_trade_station(path[-1]):
+            path.pop()
         if not path:
             return None
-        dst = path[-1]
-        # ⚠ **이 여정에서 들른 도시/항구 수**다(원본 `_tradeStopsVisited`).
-        # 공장 역은 안 센다. 다음 기차는 0부터 다시 센다.
-        visited = sum(1 for s in path
-                      if s.unit.utype in (UnitType.CITY, UnitType.PORT))
-        return Train(owner=pid, src=start.tile, dst=dst.tile, dst_owner=dst.owner,
-                     rel=self.relation(diplomacy, pid, dst.owner),
-                     cities_visited=visited, path=[s.tile for s in path])
+        # ⚠ 관계·방문 수를 **여기서 굳히지 않는다.** 정거장마다 그 역 주인과의
+        # 관계로 값을 매기고(원본 `rel(trainOwner, stationOwner)`), 방문 수는
+        # 달리면서 쌓인다(`_tradeStopsVisited`). 다음 기차는 0부터 다시 센다.
+        stops = [TrainStop(tile=s.tile, owner=s.owner, trade=_is_trade_station(s))
+                 for s in path]
+        return Train(owner=pid, stops=stops, leg_src=start.tile,
+                     origin=start.tile)
