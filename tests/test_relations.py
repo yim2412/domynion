@@ -159,11 +159,55 @@ def test_mirv_is_the_only_two_way_hostility():
     assert st.players[0].relations.value(1) == pytest.approx(C.REL_MIRV)
 
 
-def test_troop_donation_is_flat_but_gold_scales_with_the_amount():
+def test_a_token_troop_donation_buys_nothing():
+    """⚠ **이식 누락 쉰셋.** 액수와 무관하게 +50 을 주고 있었다.
+
+    원본 주석 그대로: *"1% 만 보내 좋은 관계를 사는 것을 막는다."* 문턱은 받는 쪽
+    **상한**의 1/13~1/5 사이에서 난이도별로 **무작위**로 뽑는다.
+
+    막지 않았으면: 병력 한 줌으로 관계 +50 을 사고, 골드 쪽의 덩어리 규칙(§P3)만
+    남아 **싼 쪽으로 몰린다.**"""
     st = state()
     st.diplomacy.form(0, 1, st.tick_count)        # 기부는 친한 사이만 (§5.63)
-    st.donate_troops(0, 1, 5_000)
+    cap = st.players[1].max_troops(st.tiles(1))
+    # ⚠ 받는 쪽 병력을 **낮게** 둔다. 문턱은 상한에서 나오는데(`maxTroops`), 현재
+    # 병력에서 뽑아도 여유가 크면 결과가 같아 **배선이 끊긴 채로 통과한다.**
+    st.players[1].troops = cap * 0.02
+    st.donate_troops(0, 1, cap / 100)             # 1% — 원본이 막으려던 바로 그것
+    assert st.players[1].relations.value(0) == 0
+    assert st.players[1].troops > cap * 0.02, "관계는 몰라도 병력은 갔어야 한다"
+
+
+def test_a_real_troop_donation_still_pays_fifty():
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    cap = st.players[1].max_troops(st.tiles(1))
+    st.players[1].troops = cap * 0.2
+    st.players[0].troops = cap                    # 보낼 만큼은 있어야 한다
+    st.donate_troops(0, 1, cap / 4)               # 1/5 위 — 어느 난이도든 문턱을 넘는다
     assert st.players[1].relations.value(0) == pytest.approx(C.REL_TROOP_DONATION)
+
+
+def test_troops_never_go_over_the_recipients_cap():
+    """`min(troops, 상한 − 현재)`. 상한에 붙은 상대에게는 **아예 못 보낸다.**
+
+    막지 않았으면: 동맹끼리 병력을 돌려 상한을 넘긴 군대를 만들 수 있다."""
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    cap = st.players[1].max_troops(st.tiles(1))
+    st.players[1].troops = cap
+    before = st.players[0].troops
+    assert st.donate_troops(0, 1, 5_000) is False
+    assert st.players[0].troops == before, "보내지도 못했는데 병력이 줄었다"
+    assert st.players[1].troops == cap
+
+    st.players[1].troops = cap - 1_000
+    assert st.donate_troops(0, 1, 5_000)
+    assert st.players[1].troops == pytest.approx(cap), "여유분만큼만 간다"
+    assert st.players[0].troops == pytest.approx(before - 1_000)
+
+
+def test_gold_donation_scales_with_the_amount():
 
     st2 = state()
     st2.diplomacy.form(0, 1, st2.tick_count)

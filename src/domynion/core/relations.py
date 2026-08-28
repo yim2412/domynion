@@ -92,6 +92,18 @@ def gold_donation_relation(gold: float, tick: int, difficulty: str) -> float:
     return min(100.0, int(gold // chunk) * 5.0)
 
 
+def troop_donation_min(max_troops: float, difficulty: str, rng) -> float:
+    """`DonateTroopsExecution.getMinTroopsForRelationUpdate` — 관계가 오르는 문턱.
+
+    받는 쪽 **상한**의 1/13~1/5 사이에서 난이도별로 뽑는다. 상한 10만이면
+    easy 7.7k~9.1k · impossible 14.3k~20k 다. 원본 주석 그대로:
+    **1% 만 보내 좋은 관계를 사는 것을 막기 위한 것**이고, 그래서 **무작위**다."""
+    lo, hi = C.TROOP_DONATION_MIN_DIV.get(
+        difficulty, C.TROOP_DONATION_MIN_DIV["medium"])
+    a, b = int(max_troops // lo), int(max_troops // hi)
+    return float(rng.randrange(a, b)) if b > a else float(a)
+
+
 # 화면에 뭐라고 쓸 것인가. **여기 한 곳에만 둔다** — 등급 이름이 UI 여러 곳에
 # 흩어지면 문턱을 바꿀 때 화면과 규칙이 어긋난다.
 RELATION_LABEL = {

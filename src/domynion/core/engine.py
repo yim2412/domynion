@@ -40,7 +40,7 @@ from . import emoji as emoji_mod
 from .emoji import Emojis
 from .emoji import relation_delta as emoji_relation_delta
 from .emoji import reply_to as emoji_reply_to
-from .relations import Relation, gold_donation_relation
+from .relations import Relation, gold_donation_relation, troop_donation_min
 from .state import PlayerState
 from .units import UNIT_INFO, STRUCTURES, Unit, UnitType
 
@@ -1615,17 +1615,42 @@ class GameState:
         return True
 
     def donate_troops(self, pid: int, to: int, troops: float) -> bool:
+        """`DonateTroopsExecution`.
+
+        ⚠ **이식 누락 쉰셋.** 우리는 액수와 무관하게 +50 을 줬고(주석에 그렇게
+        적어 두기까지 했다), 받는 쪽 **상한을 넘겨서도** 밀어 넣을 수 있었다.
+        원본은 둘 다 막는다:
+
+        - **넘치는 만큼은 애초에 안 간다** — `min(troops, 상한 − 현재)`. 상한에
+          붙은 상대에게 보내면 아무 일도 안 일어난다(관계도 안 오른다).
+        - **문턱을 넘어야 관계가 오른다**(`getMinTroopsForRelationUpdate`).
+          원본 주석: *"1% 만 보내 좋은 관계를 사는 것을 막는다."* 골드 쪽의
+          덩어리 규칙(§P3)과 같은 목적인데, 병력에는 그게 통째로 없었다."""
         a, b = self.players.get(pid), self.players.get(to)
         if a is None or b is None or pid == to or troops <= 0 or a.troops < troops:
             return False
         if not self.can_donate(pid, to):
+            return False
+        # 받는 쪽 여유분까지만 간다. 여유가 없으면 **보내지 못한다**(원본은
+        # `init` 에서 `active = false` 로 실행 자체를 접는다).
+        room = b.max_troops(self.tiles(to)) - b.troops
+        troops = min(troops, room)
+        if troops <= 0:
             return False
         self._donated_at[(pid, to)] = self.tick_count
         a.troops -= troops
         b.troops += troops
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=troops)
         self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=troops)
-        self.relate(to, pid, C.REL_TROOP_DONATION)   # 병력은 액수와 무관하게 +50
+        enough = troops >= troop_donation_min(b.max_troops(self.tiles(to)),
+                                              self.difficulty, self.rng)
+        if enough:
+            self.relate(to, pid, C.REL_TROOP_DONATION)
+        # **적으면 적다고 말한다** — 골드 쪽(§5.64)과 같다. 답이 없으면 준 사람은
+        # 문턱을 넘었는지 알 방법이 없다.
+        if b.kind == "nation":
+            self.ai_emoji(to, pid,
+                          emoji_mod.LOVE if enough else emoji_mod.DONATION_TOO_SMALL)
         return True
 
     # --- 건설 -------------------------------------------------------------

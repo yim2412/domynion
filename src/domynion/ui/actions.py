@@ -570,5 +570,8 @@ def _donate_gold(st: GameState, me: int, target: int, notify) -> None:
 
 def _donate_troops(st: GameState, me: int, target: int, notify) -> None:
     amount = st.players[me].troops / 4
+    # ⚠ 실패 이유가 둘이다(§5.71) — 내 병력이 없거나, **상대가 상한이라 못 받거나**.
+    # 앞의 것만 말하면 상한에 붙은 동맹에게 보내려다 "내 병력이 없다"는 틀린 답을 본다.
     notify(f"P{target} 에게 병력 {amount:,.0f}"
-           if st.donate_troops(me, target, amount) else "보낼 병력이 없다")
+           if st.donate_troops(me, target, amount)
+           else "병력을 보낼 수 없다 — 내 병력이 없거나 상대가 상한이다")

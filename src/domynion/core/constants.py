@@ -198,6 +198,14 @@ GOLD_CHUNK_SIZE: dict[str, float] = {
     "easy": 2_500.0, "medium": 5_000.0, "hard": 12_500.0, "impossible": 25_000.0,
 }
 
+# 병력 기부로 관계가 오르려면 **얼마나 줘야 하는가**(`getMinTroopsForRelationUpdate`).
+# 받는 쪽 **병력 상한**을 이 두 값으로 나눈 사이에서 무작위로 뽑는다 —
+# 원본 주석: *"1% 만 보내 좋은 관계를 사는 것을 막는다."* 난이도가 높을수록 더 내야 한다.
+# ⚠ 문턱이 **무작위**인 것이 규칙이다. 고정이면 그 값 바로 위만 계속 보내면 된다.
+TROOP_DONATION_MIN_DIV: dict[str, tuple[int, int]] = {
+    "easy": (13, 11), "medium": (11, 9), "hard": (9, 7), "impossible": (7, 5),
+}
+
 # `numSpawnPhaseTurns()` — 기부 덩어리 크기 스케일링의 분모에 들어간다.
 SPAWN_PHASE_TURNS = 100
 
