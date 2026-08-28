@@ -322,6 +322,17 @@ class GameState:
         return False
 
     def request_alliance(self, pid: int, other: int) -> bool:
+        """`AllianceRequestExecution.init`.
+
+        ⚠ **맞요청은 그 자리에서 성립한다**(이식 누락 쉰다섯). 상대가 이미
+        나에게 요청해 뒀으면 새 요청을 만드는 대신 **그 요청을 수락한다** —
+        원본 주석 그대로다(*"then accept it instead of creating a new one"*).
+
+        없으면 서로 손을 내민 두 나라가 **각자 대기 상태로 남아** 아무도
+        수락하지 않은 동맹이 된다. 사람이 먼저 손을 내밀었는데 AI 도 같은
+        생각이었을 때가 정확히 그 자리다."""
+        if pid in self.diplomacy.pending.get(other, set()):
+            return self.accept_alliance(pid, other)
         ok = self.diplomacy.request(pid, other)
         if ok:
             self.emit(EventKind.ALLIANCE_REQUEST, who=other, other=pid)

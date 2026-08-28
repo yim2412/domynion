@@ -288,3 +288,31 @@ def test_a_naval_invasion_involving_a_bot_leaves_the_request():
     st.request_alliance(1, 0)
     assert st.send_boat(0, st.gmap.ref(16, 5)) is not None
     assert 0 in st.diplomacy.pending.get(1, set()), "봇인데도 거절했다"
+
+
+# --- 맞요청 (§5.73) -----------------------------------------------------------
+
+def test_two_players_reaching_out_at_once_become_allies_immediately():
+    """⚠ **이식 누락 쉰다섯.** 원본은 상대가 이미 요청해 뒀으면 새 요청을 만들지
+    않고 **그 요청을 수락한다**(*"accept it instead of creating a new one"*).
+
+    막지 않았으면: 서로 손을 내민 두 나라가 **각자 대기 상태로 남아** 아무도
+    수락하지 않은 동맹이 된다. 사람이 먼저 내밀었는데 AI 도 같은 생각이었을 때가
+    정확히 그 자리다."""
+    st = state()
+    assert st.request_alliance(1, 0)              # 1 이 먼저 내밀었다
+    assert not st.diplomacy.allied(0, 1)
+    assert st.request_alliance(0, 1)              # 0 도 같은 생각이었다
+    assert st.diplomacy.allied(0, 1), "둘 다 대기만 하고 동맹이 안 됐다"
+    assert not st.diplomacy.pending.get(1), "맞요청이 성립했는데 요청이 남아 있다"
+    # 수락 경로를 그대로 타므로 관계도 오른다(+100 양쪽)
+    assert st.players[0].relations.value(1) == pytest.approx(C.REL_ALLIANCE_ACCEPTED)
+    assert st.players[1].relations.value(0) == pytest.approx(C.REL_ALLIANCE_ACCEPTED)
+
+
+def test_a_one_way_request_still_just_waits():
+    """대조군 — 한쪽만 내밀면 그대로 대기다. 아무거나 성립시키면 안 된다."""
+    st = state()
+    assert st.request_alliance(1, 0)
+    assert not st.diplomacy.allied(0, 1)
+    assert st.diplomacy.pending.get(1) == {0}
