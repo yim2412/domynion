@@ -33,7 +33,8 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
 from . import enclave
 from .rot import RotState, rot_tiles
 from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
-                    blast_tiles, death_factor, is_targetable, sam_range)
+                    blast_counts, blast_tiles, death_factor, is_targetable,
+                    sam_range)
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
@@ -1016,15 +1017,59 @@ class GameState:
                     utype, EventKind.NUKE_INBOUND)
         victim = int(self.gmap.owner[dst])
         self.emit(kind, who=victim if victim >= 0 else None, other=pid, tile=dst)
-        if victim >= 0 and victim != pid:
-            if utype is UnitType.MIRV:
-                # MIRV 만 **양방향**이다 — 쏜 쪽도 상대를 적으로 확정한다.
+        if utype is UnitType.MIRV:
+            # MIRV 만 **양방향**이다 — 쏜 쪽도 상대를 적으로 확정한다.
+            if victim >= 0 and victim != pid:
                 self.relate(victim, pid, C.REL_MIRV)
                 self.relate(pid, victim, C.REL_MIRV)
-            else:
-                self.relate(victim, pid, C.REL_NUKED)
+        else:
+            self._nuke_angers(pid, utype, dst)
+        if victim >= 0 and victim != pid:
             self.ai_emoji(pid, victim, emoji_mod.NUKE)
         return n
+
+    def _nuke_angered(self, pid: int, utype: UnitType, dst: TileRef) -> list[int]:
+        """`listNukeBreakAlliance` — 이 핵에 **화를 낼 나라들**.
+
+        ⚠ **표적 칸의 주인 한 명이 아니다.** 반경에 든 나라를 가중치로 세어
+        (내부 1 · 외부 0.5) 합이 문턱을 넘으면 포함되고, **반경 안에 건물이
+        있으면 타일 수와 무관하게** 포함된다. 원본 주석이 두 경로를 못 박아 뒀다:
+        *"exceeds tile threshold OR has a structure in blast radius."*"""
+        out: list[int] = []
+        for owner, weight in blast_counts(self.gmap, dst, utype).items():
+            if owner != pid and weight > C.NUKE_ALLIANCE_BREAK_THRESHOLD:
+                out.append(owner)
+        _, outer = NUKE_MAGNITUDES[utype]
+        w = self.gmap.width
+        cx, cy = dst % w, dst // w
+        for p in self.alive:
+            if p.pid == pid or p.pid in out:
+                continue
+            for u in p.units.units:
+                if not u.active or u.utype not in STRUCTURES:
+                    continue
+                dx, dy = u.tile % w - cx, u.tile // w - cy
+                if dx * dx + dy * dy <= outer * outer:
+                    out.append(p.pid)
+                    break
+        return out
+
+    def _nuke_angers(self, pid: int, utype: UnitType, dst: TileRef) -> None:
+        """`NukeExecution.maybeBreakAlliances` — 발사하는 그 tick 에 값을 치른다.
+
+        ⚠ **이식 누락 쉰넷.** 우리는 표적 칸 주인의 관계만 −100 으로 깎았다.
+        그래서 **동맹에게 핵을 쏘고도 동맹이 유지됐고** 배신자 낙인(§5.68)도
+        안 찍혔다 — 핵으로 뒤통수를 치는 쪽이 아무 대가도 안 치렀다.
+
+        ⚠ MIRV **탄두**는 여기 안 온다(원본 `MIRVWarhead` 예외). 갈라진 탄두마다
+        동맹이 깨지면 MIRV 한 발로 판의 모든 동맹이 사라진다."""
+        for other in self._nuke_angered(pid, utype, dst):
+            # 순서가 있다: **들어온 요청부터 거절한다.** 원본 주석 —
+            # 미사일이 나는 동안 요청을 수락해 파기를 피하는 구멍을 막는 것이다.
+            self.reject_alliance(pid, other)
+            self.reject_alliance(other, pid)
+            self.break_alliance(pid, other)
+            self.relate(other, pid, C.REL_NUKED)
 
     def _split_mirv(self, n: Nuke) -> None:
         """MIRV 는 스스로 터지지 않고 **탄두 여러 개로 갈라진다**(원본 350발 고정).

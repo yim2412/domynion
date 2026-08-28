@@ -139,6 +139,14 @@ DELETION_MARK_DURATION_TICKS = 30 * 10
 #
 # 봇은 건너뛴다. 봇과의 무역은 원래 관계를 안 타므로 끊어 봐야 나만 손해다.
 EMBARGO_ALL_COOLDOWN_TICKS = 10 * 10
+# 핵이 동맹을 깨는 문턱(`nukeAllianceBreakThreshold`). 반경 안 타일을 **가중치로**
+# 센 합이다 — 내부 반경은 1점, 내부~외부는 0.5점(`computeNukeBlastCounts`).
+# ⚠ 100은 "내부 100칸" 또는 "외부 200칸"이라는 뜻이라, 작은 지도에서는 타일만으로는
+# 절대 안 넘는다. 그래서 **건물 경로가 따로 있다**(반경 안에 건물이 있으면 무조건).
+NUKE_ALLIANCE_BREAK_THRESHOLD = 100.0
+NUKE_BLAST_WEIGHT_INNER = 1.0
+NUKE_BLAST_WEIGHT_OUTER = 0.5
+
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
 REL_TROOP_DONATION = 50.0          # DonateTroopExecution

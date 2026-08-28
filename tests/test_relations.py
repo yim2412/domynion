@@ -141,12 +141,30 @@ def test_alliance_lifts_both_sides_and_breaking_it_is_seen_by_neighbours():
 
 
 def test_nuking_someone_only_hurts_the_victims_view():
+    """⚠ **건물이 반경에 있어야 이 작은 지도에서 화가 난다**(§5.72).
+
+    타일 문턱은 100(내부 1점·외부 0.5점)이라 6칸짜리 나라는 절대 못 넘는다.
+    원본은 그래서 경로가 둘이다 — *"타일 문턱을 넘거나 **또는** 반경 안에 건물."*"""
+    st = state()
+    st.players[0].units.units.append(
+        Unit(UnitType.MISSILE_SILO, 0, tile=st.gmap.ref(0, 0)))
+    st.players[1].units.units.append(
+        Unit(UnitType.CITY, 1, tile=st.gmap.ref(8, 0)))
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(7, 0)) is not None
+    assert st.players[1].relations.value(0) == pytest.approx(C.REL_NUKED)
+    assert st.players[0].relations.value(1) == pytest.approx(0.0)
+
+
+def test_a_nuke_that_touches_almost_nothing_angers_nobody():
+    """대조군 — 땅 몇 칸만 스치고 건물이 없으면 **아무도 화내지 않는다.**
+
+    막지 않았으면: 표적 칸 주인이 무조건 −100 을 먹는다(우리가 하던 것). 원본은
+    가중치 합이 문턱을 넘는 나라만 센다."""
     st = state()
     st.players[0].units.units.append(
         Unit(UnitType.MISSILE_SILO, 0, tile=st.gmap.ref(0, 0)))
     assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(7, 0)) is not None
-    assert st.players[1].relations.value(0) == pytest.approx(C.REL_NUKED)
-    assert st.players[0].relations.value(1) == pytest.approx(0.0)
+    assert st.players[1].relations.value(0) == 0.0
 
 
 def test_mirv_is_the_only_two_way_hostility():

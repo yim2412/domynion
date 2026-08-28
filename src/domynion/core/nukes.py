@@ -49,6 +49,33 @@ def sam_range(level: int) -> float:
     return C.MAX_SAM_RANGE - 480.0 / (level + 5)
 
 
+def blast_counts(gmap: GameMap, dst: TileRef, utype: UnitType) -> dict[int, float]:
+    """`computeNukeBlastCounts` — 반경 안 타일을 **주인별로 가중치로** 센다.
+
+    내부 반경 1점 · 내부~외부 0.5점. 이 합이 문턱(100)을 넘는 나라가 화를 낸다
+    (`listNukeBreakAlliance`). **무작위가 없다** — `blast_tiles` 는 가장자리를
+    각도별로 흔들지만 이쪽은 원본도 원 하나로 셈한다.
+    """
+    inner, outer = NUKE_MAGNITUDES[utype]
+    inner2, outer2 = inner * inner, outer * outer
+    w, h = gmap.width, gmap.height
+    cx, cy = dst % w, dst // w
+    out: dict[int, float] = {}
+    for py in range(max(0, cy - outer), min(h - 1, cy + outer) + 1):
+        for px in range(max(0, cx - outer), min(w - 1, cx + outer) + 1):
+            dx, dy = px - cx, py - cy
+            d2 = dx * dx + dy * dy
+            if d2 > outer2:
+                continue
+            owner = int(gmap.owner[py * w + px])
+            if owner < 0:
+                continue
+            out[owner] = out.get(owner, 0.0) + (
+                C.NUKE_BLAST_WEIGHT_INNER if d2 <= inner2
+                else C.NUKE_BLAST_WEIGHT_OUTER)
+    return out
+
+
 def blast_tiles(gmap: GameMap, dst: TileRef, utype: UnitType,
                 rng: random.Random) -> list[TileRef]:
     """폭발이 닿는 칸들. `inner` 안은 전부, 바깥은 방향마다 문턱이 다르다."""

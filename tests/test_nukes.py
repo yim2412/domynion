@@ -17,8 +17,8 @@ from domynion.core.constants import Terrain
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
 from domynion.core.nukes import (NUKE_MAGNITUDES, NUKE_SPEED, SAM_TARGETABLE_TYPES,
-                                 Fallout, Nuke, blast_tiles, death_factor,
-                                 is_targetable, sam_range)
+                                 Fallout, Nuke, blast_counts, blast_tiles,
+                                 death_factor, is_targetable, sam_range)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
 
@@ -619,3 +619,89 @@ def test_the_warhead_count_on_the_real_map(tmp_path):
     assert got[0.02] < got[0.30], got            # 영토가 클수록 많이 떨어진다
     assert 10 <= got[0.30] <= 40, f"30% 영토에 {got[0.30]}발 — 실측은 19발이다"
     assert got[0.30] < 350, "상한을 다 채웠다 — 예산 규칙이 안 걸린다"
+
+
+# --- 핵이 동맹을 깬다 (§5.72) -------------------------------------------------
+
+def own_square(st: GameState, pid: int, cx: int, cy: int, r: int) -> None:
+    """한 나라에게 정사각형 땅을 준다. 문턱(100)을 넘기려면 넓이가 필요하다."""
+    w = st.gmap.width
+    n = 0
+    for y in range(cy - r, cy + r + 1):
+        for x in range(cx - r, cx + r + 1):
+            if 0 <= x < w and 0 <= y < st.gmap.height:
+                st.gmap.owner[st.gmap.ref(x, y)] = pid
+                n += 1
+    st._counts[pid] = n
+
+
+def test_the_blast_counts_inner_tiles_double():
+    """`computeNukeBlastCounts` — 내부 1점 · 외부 0.5점.
+
+    막지 않았으면: 가장자리만 스친 나라가 정통으로 맞은 나라와 같은 무게가 된다."""
+    st = state()
+    own_square(st, 1, 40, 40, 40)                 # 지도를 통째로 1 의 땅으로
+    inner, outer = NUKE_MAGNITUDES[UnitType.ATOM_BOMB]
+    counts = blast_counts(st.gmap, st.gmap.ref(40, 40), UnitType.ATOM_BOMB)
+    import math
+    assert counts[1] == pytest.approx(math.pi * (inner ** 2 + outer ** 2) / 2,
+                                      rel=0.05), "가중치가 1·0.5 가 아니다"
+
+
+def test_a_nuke_on_an_allys_land_breaks_the_alliance():
+    """⚠ **이식 누락 쉰넷.** 동맹에게 핵을 쏴도 동맹이 그대로였다.
+
+    막지 않았으면: 핵으로 뒤통수를 치는 쪽이 아무 대가도 안 치른다 —
+    배신자 낙인(§5.68)도 안 찍히고 동맹의 보호도 그대로 남는다."""
+    st = state()
+    own_square(st, 1, 40, 40, 20)                 # 41×41 — 문턱 100 을 넉넉히 넘는다
+    give_silo(st, 0, st.gmap.ref(5, 5))
+    st.players[0].gold = 10_000_000
+    st.diplomacy.form(0, 1, st.tick_count)
+    assert st.diplomacy.allied(0, 1)
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(40, 40)) is not None
+    assert not st.diplomacy.allied(0, 1), "동맹에 핵을 쐈는데 동맹이 남아 있다"
+    assert st.diplomacy.is_traitor(0, st.tick_count), "배신자 낙인이 안 찍혔다"
+    assert st.players[1].relations.value(0) == pytest.approx(C.REL_NUKED)
+
+
+def test_a_pending_alliance_request_is_rejected_by_the_nuke():
+    """원본 주석 그대로 — 미사일이 나는 동안 요청을 수락해 파기를 피하는 구멍을 막는다."""
+    st = state()
+    own_square(st, 1, 40, 40, 20)
+    give_silo(st, 0, st.gmap.ref(5, 5))
+    st.players[0].gold = 10_000_000
+    st.request_alliance(1, 0)                     # 1 이 0 에게 손을 내밀었다
+    assert st.diplomacy.pending.get(1) == {0}
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(40, 40)) is not None
+    assert not st.diplomacy.pending.get(1), "요청이 살아남았다"
+
+
+def test_far_away_players_are_not_angered():
+    """반경 밖은 아무 일도 없다 — 판 전체가 화내면 핵을 쏠 이유가 사라진다."""
+    st = state()
+    own_square(st, 1, 60, 60, 12)                 # 1 의 땅은 지도 반대쪽 구석
+    give_silo(st, 0, st.gmap.ref(5, 5))
+    st.players[0].gold = 10_000_000
+    st.diplomacy.form(0, 1, st.tick_count)
+    # 폭발 반경(외부 30)이 1 의 땅에 **닿지 않는** 자리다
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(10, 10)) is not None
+    assert st.diplomacy.allied(0, 1), "반경 밖 나라와의 동맹이 깨졌다"
+    assert st.players[1].relations.value(0) == 0.0
+
+
+def test_a_mirv_warhead_never_breaks_alliances():
+    """탄두마다 깨지면 MIRV 한 발로 판의 모든 동맹이 사라진다(원본 예외)."""
+    st = state()
+    own_square(st, 1, 40, 40, 20)
+    st.diplomacy.form(0, 1, st.tick_count)
+    st._nuke_angers(0, UnitType.ATOM_BOMB, st.gmap.ref(40, 40))
+    assert not st.diplomacy.allied(0, 1)          # 대조 — 일반 핵은 깬다
+    st2 = state()
+    own_square(st2, 1, 40, 40, 20)
+    st2.diplomacy.form(0, 1, st2.tick_count)
+    st2.nukes.append(Nuke(owner=0, utype=UnitType.MIRV_WARHEAD,
+                          src=st2.gmap.ref(5, 5), dst=st2.gmap.ref(40, 40)))
+    for _ in range(60):
+        st2.tick()
+    assert st2.diplomacy.allied(0, 1), "MIRV 탄두가 동맹을 깼다"
