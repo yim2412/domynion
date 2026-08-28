@@ -17,7 +17,7 @@
 
 **플레이할 수 있다.** 실제 openfront 지도 위에서 영토 확장 · 골드 · 건물 ·
 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 · 둠스데이 클락 · 원본 봇이
-함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 801개.
+함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 834개.
 
 | | |
 |---|---|
@@ -128,7 +128,9 @@ src/domynion/
   ui/
     frame.py       타일 해상도 프레임 생성 (확대는 Qt 가 한다)
     map_widget.py  지도 + 국경선 + 이름
-    hud.py         순위표 · 병력바 · 공격 슬라이더
+    hud.py         순위표 · 병력바 · 공격 슬라이더 · 증가율
+    status.py      이름 옆 상태 깃발 (`derive/PlayerStatus.ts`) — Qt 없는 순수 계산
+    rates.py       병력 `+N/s` · 골드 `+N` (`ControlPanel.ts`) — 같은 방침
     main_window.py 조립 + 실시간 타이머
     app.py         진입점 (--shot 스크린샷 모드)
     render.py      PIL 렌더러 (창 없이 그림 파일을 뽑는 용도)

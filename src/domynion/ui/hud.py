@@ -15,10 +15,17 @@ from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget)
 from ..core import constants as C
 from ..core.engine import GameState
 from . import palette as P
+from .rates import gold_pip, rate_rising, troop_rate
 
 # 순위표에 몇 줄을 보여줄 것인가. 원본 기본 구성이 472명이라 전부 쓰면 화면을 덮는다.
 # 마지막 한 줄은 상위권 밖일 때 **내 자리**로 쓴다.
 SCOREBOARD_ROWS = 12
+
+# 증가율 색 — 원본의 `text-green-400` / `text-orange-400` 그대로다.
+# 오르는 중이면 초록, 꺾이면 주황. **색이 곧 신호라 회색으로 두면 안 된다.**
+RATE_UP = "#4ade80"
+RATE_DOWN = "#fb923c"
+GOLD_PIP = "#4ade80"
 
 _PANEL = """
 QWidget#panel { background: rgba(16, 20, 28, 200); border-radius: 6px; }
@@ -100,11 +107,14 @@ class ControlBar(QWidget):
         self.setStyleSheet(_PANEL)
         self.state = state
         self.pid = pid
+        # 방향은 **직전 tick 의 증가율**과 견줘야 나온다(원본 `_lastTroopIncreaseRate`).
+        self._last_rate = troop_rate(state.players[pid],
+                                     state.tiles(pid)) if pid in state.players else 0.0
 
         row = QHBoxLayout(self)
         row.setContentsMargins(12, 8, 12, 8)
         self.troops_label = QLabel()
-        self.troops_label.setMinimumWidth(220)
+        self.troops_label.setMinimumWidth(330)
         row.addWidget(self.troops_label)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -120,6 +130,8 @@ class ControlBar(QWidget):
         row.addStretch(1)
 
         self.gold_label = QLabel()
+        # `+N` 이 떴다 사라질 때 골드 숫자가 좌우로 흔들리지 않게 폭을 고정한다.
+        self.gold_label.setMinimumWidth(190)
         row.addWidget(self.gold_label)
         self._on_slider(self.slider.value())
 
@@ -149,11 +161,25 @@ class ControlBar(QWidget):
         p = self.state.players.get(self.pid)
         if p is None:
             return
-        cap = p.max_troops(self.state.tiles(self.pid))
+        # 탈락하면 통째로 숨긴다(원본 `ControlPanel.tick` 의 `setVisibile(false)`).
+        # ⚠ 숨기지 않으면 **죽은 사람에게 증가율이 계속 뜬다** — 병력 0에 최저
+        # 증가량이 붙어 `+100/s` 가 찍히는데, 관전 중에 그건 거짓 신호다.
+        self.setVisible(p.alive)
+        if not p.alive:
+            return
+        tiles = self.state.tiles(self.pid)
+        cap = p.max_troops(tiles)
         pct = p.troops / cap * 100 if cap else 0
+        rate = troop_rate(p, tiles)
+        colour = RATE_UP if rate_rising(rate, self._last_rate) else RATE_DOWN
+        self._last_rate = rate
         self.troops_label.setText(
-            f"병력 <b>{p.troops:,.0f}</b> / {cap:,.0f} ({pct:.0f}%)")
-        self.gold_label.setText(f"골드 <b>{p.gold:,}</b>")
+            f"병력 <b>{p.troops:,.0f}</b> / {cap:,.0f} ({pct:.0f}%) "
+            f'<span style="color:{colour}">+{rate:,.0f}/s</span>')
+        pip = gold_pip(self.state, self.pid)
+        gain = ("" if pip is None else
+                f' <span style="color:{GOLD_PIP}">+{pip:,.0f}</span>')
+        self.gold_label.setText(f"골드 <b>{p.gold:,}</b>{gain}")
         self._label_ratio(self.slider.value())
 
 

@@ -81,7 +81,9 @@ def player_status(st, me: int | None = None) -> dict[int, Status]:
     tick = st.tick_count
     elapsed = tick / C.TICK_HZ
     warn = st.clock.cfg.warn_seconds
-    my_targets = set(st.targets_of(me)) if me is not None else set()
+    # ⚠ **내 표적만 보면 안 된다.** 동맹이 찍은 표적도 내 화면에 떠야
+    # 같이 친다 — 원본 `PlayerIcons` 도 `transitiveTargets()` 를 쓴다.
+    my_targets = set(st.transitive_targets_of(me)) if me is not None else set()
 
     for pid, p in st.players.items():
         if not p.alive:

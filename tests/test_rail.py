@@ -21,6 +21,7 @@ from domynion.core.rail import (RAIL_STATION_UNITS, RailNetwork, station_range_o
                                 train_gold, train_spawn_rate)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
+from domynion.ui.rates import gold_pip
 
 
 def state() -> GameState:
@@ -175,6 +176,7 @@ def test_arriving_train_pays_the_owner():
             break
     gained = st.players[0].gold - before - st.tick_count * C.GOLD_PER_TICK_HUMAN
     assert gained > 0, "기차가 골드를 안 벌었다"
+    assert gold_pip(st, 0) == gained, "철도 수입이 HUD 의 `+N` 에 안 올라온다(§5.69)"
 
 
 def test_no_factories_means_no_trains():

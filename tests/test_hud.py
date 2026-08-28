@@ -21,8 +21,9 @@ from domynion.core.buildings import DefensePostIndex              # noqa: E402
 from domynion.core.engine import GameState                        # noqa: E402
 from domynion.core.gamemap import GameMap                         # noqa: E402
 from domynion.core.state import PlayerState                       # noqa: E402
-from domynion.ui.hud import (SCOREBOARD_ROWS, ControlBar,          # noqa: E402
-                             ImmunityBar, Scoreboard)
+from domynion.ui.hud import (RATE_DOWN, RATE_UP, SCOREBOARD_ROWS,   # noqa: E402
+                             ControlBar, ImmunityBar, Scoreboard)
+from domynion.ui.rates import troop_rate                          # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -177,3 +178,46 @@ def test_a_small_game_leaves_the_extra_rows_empty(qapp):
     sb.refresh()
     filled = [r.text() for r in sb._rows if r.text()]
     assert len(filled) == 4
+
+
+# --- 증가율 (§5.69) ---------------------------------------------------------
+
+def test_the_bar_shows_how_fast_the_army_fills(qapp):
+    """막지 않았으면: 도시를 지어도 **상한만** 보이고 속도는 안 보인다."""
+    st = state()
+    c = ControlBar(st, 0)
+    c.refresh()
+    rate = troop_rate(st.players[0], st.tiles(0))
+    assert rate > 0
+    assert f"+{rate:,.0f}/s" in c.troops_label.text()
+
+
+def test_the_colour_turns_when_the_rate_falls(qapp):
+    """색이 곧 신호다 — 원본도 초록/주황으로 방향을 쓴다.
+
+    막지 않았으면: 증가율이 꺾인 것을 숫자를 기억하고 있어야만 알 수 있다."""
+    st = state()
+    c = ControlBar(st, 0)
+    c.refresh()
+    assert RATE_UP in c.troops_label.text()
+    st.players[0].troops = st.players[0].max_troops(st.tiles(0)) * 0.999
+    c.refresh()                              # 상한에 붙어 증가율이 떨어진다
+    assert RATE_DOWN in c.troops_label.text()
+
+    # ⚠ **직전 tick 과 견줘야 한다.** 처음 값과 견주면 여기서 주황으로 남는다 —
+    # 바닥을 친 뒤 회복하는 중인데 화면은 계속 "꺾이는 중"이라고 말하게 된다.
+    st.players[0].troops = st.players[0].max_troops(st.tiles(0)) * 0.5
+    c.refresh()
+    assert RATE_UP in c.troops_label.text()
+
+
+def test_a_lump_of_gold_pops_up_and_then_goes_away(qapp):
+    st = state()
+    c = ControlBar(st, 0)
+    st.note_gold_gain(0, 35_000)
+    c.refresh()
+    assert "+35,000" in c.gold_label.text()
+    st.tick_count += 20                      # 2초
+    c.refresh()
+    assert "+35,000" not in c.gold_label.text()
+    assert f"{st.players[0].gold:,}" in c.gold_label.text(), "골드 자체는 남아야 한다"

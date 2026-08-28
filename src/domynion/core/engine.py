@@ -108,6 +108,11 @@ class GameState:
     # 금수 벌점을 이미 매겼는지(`embargoMalusApplied`). 매 tick 깎으면 안 된다.
     _embargo_malus: dict[int, set[int]] = field(default_factory=dict)
 
+    # pid → (tick, 액수). HUD 의 `+N` 알림용으로 **마지막 하나만** 들고 있다.
+    # 원본 `addGold(gold, tile)` 이 흘리는 `BonusEvent` + `ConquestEvent` +
+    # `DonateEvent` 가 여기 모인다(`ControlPanel.tick`).
+    gold_gains: dict[int, tuple[int, float]] = field(default_factory=dict)
+
     _counts: dict[int, int] = field(default_factory=dict)
     _posts: DefensePostIndex | None = None
 
@@ -269,6 +274,18 @@ class GameState:
         """무슨 일이 일어났는지 남긴다. `who` 는 **이걸 봐야 하는 사람**이다."""
         self.log.add(Event(kind=kind, tick=self.tick_count, who=who, other=other,
                            tile=tile, amount=amount, text=text))
+
+    def note_gold_gain(self, pid: int, amount: float) -> None:
+        """골드가 **덩어리로** 들어온 것을 기록한다(무역·철도·정복·기부).
+
+        원본은 `addGold` 안에서 `BonusEvent` 를 흘리고 HUD 가 그걸 받아 2초간
+        `+N` 을 띄운다. 매 tick 들어오는 인구 수입(`GOLD_PER_TICK_*`)은 이 경로가
+        아니다 — 원본도 `PlayerExecution` 에서 tile 없이 `addGold` 를 부른다.
+
+        ⚠ **합치지 않고 마지막 것으로 덮는다**(원본 주석 *"Last-wins"*). 한 tick 에
+        여러 건이 와도 가장 최근 액수만 보여준다."""
+        if amount > 0:
+            self.gold_gains[pid] = (self.tick_count, amount)
 
     # --- 외교 -------------------------------------------------------------
 
@@ -551,12 +568,15 @@ class GameState:
                 pirate = self.players.get(t.captured_by)
                 if pirate is not None and pirate.alive:
                     pirate.gold += gold
+                    self.note_gold_gain(pirate.pid, gold)
                     self.emit(EventKind.GOLD_FROM_CAPTURED_SHIP,
                               who=pirate.pid, other=t.owner,
                               tile=t.dst_port, text="나포한 무역선")
             else:
                 src_p.gold += gold
                 dst_p.gold += gold
+                self.note_gold_gain(src_p.pid, gold)
+                self.note_gold_gain(dst_p.pid, gold)
         self.trade_ships = still
 
     def _capture_trade_ship(self, t: TradeShip, pid: int) -> bool:
@@ -1273,7 +1293,9 @@ class GameState:
             if not t.arrived(self.gmap):
                 still.append(t)
                 continue
-            owner.gold += train_gold(t.rel, t.cities_visited)
+            train_paid = train_gold(t.rel, t.cities_visited)
+            owner.gold += train_paid
+            self.note_gold_gain(owner.pid, train_paid)
         self.trains = still
 
     def _apply_embargo_relations(self) -> None:
@@ -1394,6 +1416,20 @@ class GameState:
                 if a == pid
                 and self.tick_count - tick < C.TARGET_DURATION_TICKS
                 and b in self.players and self.players[b].alive]
+
+    def transitive_targets_of(self, pid: int) -> list[int]:
+        """`transitiveTargets()` — **내 표적 + 동맹들의 표적**.
+
+        표적 지정은 동맹에게 보내는 부탁이라(§5.27), 찍은 쪽에게만 보이면 절반만
+        도는 규칙이다. **동맹이 찍은 것이 내 화면에도 떠야 같이 친다.**
+
+        ⚠ 전이는 **한 단계**다(원본과 같다) — 동맹의 동맹까지 따라가지 않는다."""
+        out = list(self.targets_of(pid))
+        for ally in self.diplomacy.allies_of(pid):
+            for t in self.targets_of(ally):
+                if t not in out:
+                    out.append(t)
+        return out
 
     def _expire_targets(self) -> None:
         cut = self.tick_count - C.TARGET_DURATION_TICKS
@@ -1522,6 +1558,7 @@ class GameState:
         self._donated_at[(pid, to)] = self.tick_count
         a.gold -= gold
         b.gold += gold
+        self.note_gold_gain(b.pid, gold)
         self.emit(EventKind.DONATION_SENT, who=pid, other=to, amount=gold)
         self.emit(EventKind.DONATION_RECEIVED, who=to, other=pid, amount=gold)
         # 액수에 비례한다. 덩어리 크기가 시간에 따라 커져서 후반에 관계를 살 수 없다.
@@ -1911,6 +1948,7 @@ class GameState:
             return
         taken = (loser.gold // 2 if loser.kind == "human" else loser.gold)
         winner.gold += taken
+        self.note_gold_gain(winner.pid, taken)
         loser.gold = 0                 # `removeGold(gold)` — 언제나 전액이 빠진다
         if taken:
             self.emit(EventKind.GOLD_FROM_CONQUEST, who=winner.pid,

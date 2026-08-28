@@ -24,6 +24,7 @@ from domynion.core.events import EventKind
 from domynion.core.gamemap import GameMap
 from domynion.core.relations import Relation
 from domynion.core.state import PlayerState
+from domynion.ui.status import markers, player_status
 
 
 def state(n: int = 3, kinds: dict[int, str] | None = None) -> GameState:
@@ -193,3 +194,43 @@ def test_assist_runs_before_neutral_expansion():
 
     src = inspect.getsource(NationBot._maybe_attack)
     assert src.index("_assist_allies") < src.index("has_neutral and")
+
+
+# --- 화면에 보이나 (§5.69) ---------------------------------------------------
+
+def test_my_allys_target_shows_on_my_screen_too():
+    """⚠ **이식 누락 마흔아홉.** 규칙은 §5.27 에서 옮겼는데 **찍은 쪽만** 알았다.
+
+    막지 않았으면: 동맹이 "저놈을 치자"고 찍어도 내 지도에는 아무 표시가 없다.
+    부탁이 오간 것을 사람이 알 방법이 없으니 표적 지정이 절반만 도는 규칙이 된다."""
+    st = state(4)
+    ally(st, 0, 1)
+    assert st.target_player(1, 2)
+    assert st.transitive_targets_of(0) == [2], "동맹이 찍은 표적이 내게 안 보인다"
+    assert markers(player_status(st, me=0)[2]) == "🎯"
+
+
+def test_a_stranger_s_target_stays_invisible():
+    """대조군 — 동맹이 아닌 나라가 찍은 것은 내 화면에 안 뜬다."""
+    st = state(4)
+    assert st.target_player(1, 2)
+    assert st.transitive_targets_of(0) == []
+    assert 2 not in player_status(st, me=0)
+
+
+def test_the_same_target_is_not_listed_twice():
+    """나와 동맹이 같은 상대를 찍었을 때. 원본도 `new Set` 으로 한 번만 센다."""
+    st = state(4)
+    ally(st, 0, 1)
+    assert st.target_player(0, 2)
+    assert st.target_player(1, 2)
+    assert st.transitive_targets_of(0) == [2]
+
+
+def test_a_targets_request_expires_for_the_ally_too():
+    """10초가 지나면 동맹 화면에서도 사라진다 — `targets_of` 를 거치므로 자동이다."""
+    st = state(4)
+    ally(st, 0, 1)
+    assert st.target_player(1, 2)
+    st.tick_count += C.TARGET_DURATION_TICKS
+    assert st.transitive_targets_of(0) == []

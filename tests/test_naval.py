@@ -22,6 +22,7 @@ from domynion.core.naval import (best_spawn, port_check_due,
                                  water_path)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
+from domynion.ui.rates import gold_pip
 
 
 def state(rows: list[str], owners: dict[int, tuple[int, int]]) -> GameState:
@@ -193,6 +194,9 @@ def test_trade_pays_both_port_owners():
     gained0 = st.players[0].gold - g0 - ticked * C.GOLD_PER_TICK_HUMAN
     gained1 = st.players[1].gold - g1 - ticked * C.GOLD_PER_TICK_HUMAN
     assert gained0 > 0 and gained0 == gained1, "양쪽이 같이 벌어야 한다"
+    # HUD 의 `+N` 도 같은 자리에서 나온다(§5.69) — 원본 `addGold(gold, tile)` 의
+    # `BonusEvent`. 배선이 끊기면 무역 수입이 화면에 한 번도 안 뜬다.
+    assert gold_pip(st, 0) == gained0 and gold_pip(st, 1) == gained1
 
 
 def test_embargo_stops_trade():
