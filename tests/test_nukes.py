@@ -672,7 +672,7 @@ def test_a_pending_alliance_request_is_rejected_by_the_nuke():
     give_silo(st, 0, st.gmap.ref(5, 5))
     st.players[0].gold = 10_000_000
     st.request_alliance(1, 0)                     # 1 이 0 에게 손을 내밀었다
-    assert st.diplomacy.pending.get(1) == {0}
+    assert 0 in st.diplomacy.pending.get(1, {})
     assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(40, 40)) is not None
     assert not st.diplomacy.pending.get(1), "요청이 살아남았다"
 

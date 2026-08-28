@@ -315,4 +315,33 @@ def test_a_one_way_request_still_just_waits():
     st = state()
     assert st.request_alliance(1, 0)
     assert not st.diplomacy.allied(0, 1)
-    assert st.diplomacy.pending.get(1) == {0}
+    assert 0 in st.diplomacy.pending.get(1, {})
+
+
+def test_an_unanswered_request_expires_after_twenty_seconds():
+    """⚠ **이식 누락 쉰다섯.** 만료가 없어 `pending` 이 판 끝까지 남았다.
+
+    막지 않았으면: §5.68 의 ✉(요청 중) 깃발이 한 번 켜지면 안 꺼지고, AI 는
+    판 내내 같은 요청을 다시 판단한다. 원본은 20초(`allianceRequestDuration`)다."""
+    st = state()
+    assert st.request_alliance(1, 0)
+    t0 = st.tick_count
+    while st.tick_count - t0 < C.ALLIANCE_REQUEST_DURATION_TICKS - 1:
+        st.tick()
+    assert 0 in st.diplomacy.pending.get(1, {}), "20초 전에 사라졌다"
+    st.tick()
+    assert not st.diplomacy.pending.get(1), "20초가 지났는데 요청이 남아 있다"
+    assert C.ALLIANCE_REQUEST_DURATION_TICKS == 200
+
+
+def test_expiring_tells_the_one_who_asked():
+    """거절 소식이 나가야 한다 — 원본도 `req.reject()` 를 부른다.
+
+    막지 않았으면: 요청이 조용히 사라져 **왜 답이 없는지** 알 수 없다(§5.67)."""
+    from domynion.core.events import EventKind
+    st = state()
+    st.request_alliance(1, 0)
+    for _ in range(C.ALLIANCE_REQUEST_DURATION_TICKS + 1):
+        st.tick()
+    kinds = [e.kind for e in st.log.items if e.who == 1]
+    assert EventKind.ALLIANCE_REJECTED in kinds

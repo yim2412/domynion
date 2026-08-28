@@ -333,7 +333,7 @@ class GameState:
         생각이었을 때가 정확히 그 자리다."""
         if pid in self.diplomacy.pending.get(other, set()):
             return self.accept_alliance(pid, other)
-        ok = self.diplomacy.request(pid, other)
+        ok = self.diplomacy.request(pid, other, self.tick_count)
         if ok:
             self.emit(EventKind.ALLIANCE_REQUEST, who=other, other=pid)
         return ok
@@ -1934,6 +1934,7 @@ class GameState:
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.a, other=gone.b)
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)
         self._decay_relations()
+        self._expire_alliance_requests()
         self._expire_targets()
         self._apply_embargo_relations()
         self._grow()
@@ -1951,6 +1952,12 @@ class GameState:
         self._absorb_enclaves()
         self._tick_clock()
         self._check_end()
+
+    def _expire_alliance_requests(self) -> None:
+        """20초가 지난 동맹 요청을 거절 처리한다(§5.73). 거절 소식도 그대로 나간다 —
+        원본도 `req.reject()` 를 부르므로 받는 쪽이 결과를 본다."""
+        for requestor, recipient in self.diplomacy.expire_requests(self.tick_count):
+            self.emit(EventKind.ALLIANCE_REJECTED, who=requestor, other=recipient)
 
     def _decay_relations(self) -> None:
         """`PlayerExecution.tick` 이 매 tick 부르는 것. 원한은 잊힌다."""

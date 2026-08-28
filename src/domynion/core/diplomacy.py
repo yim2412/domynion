@@ -54,7 +54,9 @@ class Diplomacy:
     traitor_since: dict[int, int] = field(default_factory=dict)     # pid -> tick
     betrayals: dict[int, int] = field(default_factory=dict)
     embargoes: dict[int, set[int]] = field(default_factory=dict)    # pid -> 대상들
-    pending: dict[int, set[int]] = field(default_factory=dict)      # 요청자 -> 받는 이들
+    # 요청자 -> {받는 이: 건 tick}. **시각을 들고 있어야 만료를 잰다**(§5.73).
+    # `x in pending[a]` 는 dict 에서도 그대로 도므로 읽는 쪽은 안 바뀐다.
+    pending: dict[int, dict[int, int]] = field(default_factory=dict)
 
     # --- 조회 -------------------------------------------------------------
 
@@ -97,23 +99,39 @@ class Diplomacy:
 
     # --- 행동 -------------------------------------------------------------
 
-    def request(self, requestor: int, recipient: int) -> bool:
+    def request(self, requestor: int, recipient: int, tick: int = 0) -> bool:
         """동맹 요청. 이미 친하거나 요청이 걸려 있으면 안 된다."""
         if self.is_friendly(requestor, recipient):
             return False
-        if recipient in self.pending.get(requestor, set()):
+        if recipient in self.pending.get(requestor, {}):
             return False
-        self.pending.setdefault(requestor, set()).add(recipient)
+        self.pending.setdefault(requestor, {})[recipient] = tick
         return True
 
+    def expire_requests(self, tick: int) -> list[tuple[int, int]]:
+        """`allianceRequestDuration` — **20초가 지난 요청은 자동 거절된다.**
+
+        ⚠ 이식 누락 쉰다섯. 만료가 없어서 `pending` 이 판 끝까지 남았다. §5.68 의
+        ✉(요청 중) 깃발이 한 번 켜지면 안 꺼졌고, AI 는 판 내내 같은 요청을
+        다시 판단했다."""
+        gone: list[tuple[int, int]] = []
+        for requestor, targets in list(self.pending.items()):
+            for recipient, at in list(targets.items()):
+                if tick - at >= C.ALLIANCE_REQUEST_DURATION_TICKS:
+                    del targets[recipient]
+                    gone.append((requestor, recipient))
+            if not targets:
+                self.pending.pop(requestor, None)
+        return gone
+
     def accept(self, recipient: int, requestor: int, tick: int) -> Alliance | None:
-        if recipient not in self.pending.get(requestor, set()):
+        if recipient not in self.pending.get(requestor, {}):
             return None
-        self.pending[requestor].discard(recipient)
+        del self.pending[requestor][recipient]
         return self.form(requestor, recipient, tick)
 
     def reject(self, recipient: int, requestor: int) -> None:
-        self.pending.get(requestor, set()).discard(recipient)
+        self.pending.get(requestor, {}).pop(recipient, None)
 
     def form(self, a: int, b: int, tick: int) -> Alliance:
         al = Alliance(a=a, b=b, created_at=tick,
@@ -151,7 +169,7 @@ class Diplomacy:
         self.alliances = [al for al in self.alliances if not al.involves(pid)]
         self.pending.pop(pid, None)
         for s in self.pending.values():
-            s.discard(pid)
+            s.pop(pid, None)
         self.embargoes.pop(pid, None)
         for s in self.embargoes.values():
             s.discard(pid)

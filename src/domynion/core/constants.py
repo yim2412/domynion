@@ -147,6 +147,9 @@ NUKE_ALLIANCE_BREAK_THRESHOLD = 100.0
 NUKE_BLAST_WEIGHT_INNER = 1.0
 NUKE_BLAST_WEIGHT_OUTER = 0.5
 
+# `allianceRequestDuration()` — 요청은 20초 뒤 자동 거절된다.
+ALLIANCE_REQUEST_DURATION_TICKS = 20 * 10
+
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
 REL_TROOP_DONATION = 50.0          # DonateTroopExecution
