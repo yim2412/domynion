@@ -5074,6 +5074,18 @@ for f in $(ls of/src/core/execution/*.ts of/src/core/execution/*/*.ts           
 초 단위로 덮어쓰자 파이썬이 옛 바이트코드를 썼고, **되돌린 뒤에도 테스트가
 실패**했다. 코드를 눈으로 보고 맞는데 결과가 다르면 `__pycache__` 부터 지운다.
 
+#### 2번(만료)을 붙일 때 손댈 자리 — 미리 세어 뒀다
+
+`pending` 은 지금 `dict[요청자, set[받는이]]` 라 **시각이 없다.**
+`dict[요청자, dict[받는이, tick]]` 으로 바꿔야 하고, 읽는 곳이 이만큼이다:
+
+| 어디 | 어떻게 읽나 | 바꿔야 하나 |
+|---|---|---|
+| `diplomacy.py` (7곳) | `setdefault/discard/pop/values` | **예** — 자료구조 본체 |
+| `ai/nation.py` · `simple_ai.py` · `tribe.py` | `pending.items()` 로 훑는다 | **예** — 값이 set 이 아니게 된다 |
+| `engine.py` · `ui/actions.py`(2) · `ui/status.py` | `x in pending.get(...)` | 아니오 — dict 도 `in` 이 같다 |
+| 테스트 8곳 | `== {0}` · `not in` | 일부 — 등호 비교만 |
+
 ⚠ 재료 주의: 2번을 붙이면 **`pending` 이 사라지는 시점이 생긴다.** 지금 요청을
 `pending` 에 넣고 한참 뒤 수락하는 테스트가 여럿 있다(§5.53 의 동맹 판단) —
 만료(200 tick)를 넘겨 세워 둔 것이 있으면 그때 무더기로 깨진다. 고칠 때 그
