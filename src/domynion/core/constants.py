@@ -393,6 +393,17 @@ SAM_COOLDOWN_TICKS = 90
 # `samUpgradeDuration()` = SAM 쿨다운의 절반. **업그레이드는 즉시가 아니다** —
 # 사거리가 옛 값에서 새 값으로 이 시간에 걸쳐 선형으로 는다(§5.82).
 SAM_UPGRADE_DURATION_TICKS = SAM_COOLDOWN_TICKS // 2
+# `computeTargetScore` — SAM 이 한 tick 에 여러 핵을 볼 때 **무엇을 막을지**.
+#
+#   점수 = 수폭 보너스 + 거리 보너스 + 급한 정도
+#
+# 원본 주석이 두 값의 관계를 못 박아 뒀다: *"70,000 offset balances the distance
+# bonus between Hydro at 100 and Atom at 30"* — **수폭이 70칸 더 멀어도 먼저**다.
+SAM_SCORE_HYDROGEN_BONUS = 70_001
+SAM_SCORE_DISTANCE_BASE = 200_000
+SAM_SCORE_DISTANCE_PER_TILE = 1_000
+SAM_SCORE_URGENCY_BASE = 10_000
+SAM_SCORE_URGENCY_PER_TICK = 100
 
 
 # --- 해상 (P4) ------------------------------------------------------------

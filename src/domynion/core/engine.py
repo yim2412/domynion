@@ -34,7 +34,8 @@ from . import enclave
 from .rot import RotState, rot_tiles
 from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
                     blast_counts, blast_tiles, death_factor,
-                    dynamic_sam_range, is_targetable, sam_range)
+                    dynamic_sam_range, is_targetable, sam_range,
+                    sam_target_score)
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
@@ -1238,16 +1239,23 @@ class GameState:
 
     def _advance_nukes(self) -> None:
         still: list[Nuke] = []
+        # ⚠ **먼저 움직이고, 그다음 SAM 이 고른다**(§5.83). 전에는 핵 하나를
+        # 옮길 때마다 그 자리에서 요격을 물어봐서, 한 SAM 이 볼 수 있는 핵이
+        # 여럿일 때 **목록 순서대로** 막았다 — 수폭과 원자탄이 같이 오면 먼저
+        # 만들어진 쪽이 막혔다. 원본은 SAM 마다 표적을 모아 **점수로 고른다.**
         for n in self.nukes:
-            # 대기 중인 핵은 **발사점에 떠 있다.** 움직이지 않지만 요격은 된다
-            # (원본도 대기 분기에서 이동만 건너뛰고 유닛은 살아 있다).
             if n.wait_ticks > 0:
+                # 대기 중인 핵은 **발사점에 떠 있다.** 움직이지 않지만 요격은 된다
+                # (원본도 대기 분기에서 이동만 건너뛰고 유닛은 살아 있다).
                 n.wait_ticks -= 1
-                if not self._sam_intercepts(n):
-                    still.append(n)
                 continue
             n.advance()
-            if self._sam_intercepts(n):
+        shot = self._sams_pick_targets()
+        for n in self.nukes:
+            if id(n) in shot:
+                continue
+            if n.wait_ticks > 0:
+                still.append(n)
                 continue
             if n.arrived(self.gmap):
                 if n.utype is UnitType.MIRV:
@@ -1283,33 +1291,56 @@ class GameState:
             return 0
         return sum(u.ready_tubes for u in p.units.of(UnitType.MISSILE_SILO))
 
-    def _sam_intercepts(self, n: Nuke) -> bool:
-        """SAM 은 **자기 것이 아닌** 핵만 요격한다. 사거리는 레벨에 따라 70~150.
+    def _sams_pick_targets(self) -> "set[int]":
+        """SAM 마다 **점수가 가장 높은 표적 하나**를 쏜다(`sortTargets`).
 
-        ⚠ 관문이 둘 앞에 붙는다(§5.49). **MIRV 본체는 아예 못 노리고**, 노릴 수
-        있는 종류라도 **발사점이나 표적에서 150 안**에 있어야 한다. 둘 다 없어서
-        우리 SAM 은 지나가는 모든 핵을 경로 어디서든 떨구고 있었다."""
-        if n.utype not in SAM_TARGETABLE_TYPES:
-            return False
-        here = n.tile(self.gmap)
-        if not is_targetable(self.gmap, n.src, n.dst, here):
-            return False
+        ⚠ 한 핵을 두 SAM 이 겹쳐 쏘지 않는다(`targetedBySAM`). 원본도 이미
+        노려진 유닛을 후보에서 뺀다 — 안 그러면 핵 한 발에 방공망 전체가 소모된다.
+
+        돌려주는 것은 **맞은 핵들의 `id()`** 다. 리스트에서 지우는 것은 부르는
+        쪽이 한다 — 여기서 지우면 순회 중인 목록을 건드리게 된다."""
+        taken: set[int] = set()
         for p in self.alive:
-            if p.pid == n.owner or self.diplomacy.is_friendly(p.pid, n.owner):
-                continue
             for sam in p.units.of(UnitType.SAM_LAUNCHER):
-                # **관이 전부 차 있으면 못 쏜다**(`SAMLauncherExecution` 이
-                # `isInCooldown()` 이면 그 tick 을 통째로 건너뛴다). 이게 없어서
-                # SAM 한 기가 판의 모든 핵을 영원히 100% 막고 있었다.
                 if sam.under_construction or sam.in_cooldown:
                     continue
                 r = dynamic_sam_range(sam, self.tick_count)
-                if self._dist_sq(sam.tile, here) <= r * r:
-                    sam.fire(self.tick_count)
-                    self.emit(EventKind.SAM_HIT, who=p.pid, other=n.owner, tile=here)
-                    self.emit(EventKind.SAM_MISS, who=n.owner, other=p.pid, tile=here)
-                    return True
-        return False
+                r2 = r * r
+                best, best_score = None, None
+                for n in self.nukes:
+                    if id(n) in taken or n.owner == p.pid:
+                        continue
+                    if n.utype not in SAM_TARGETABLE_TYPES:
+                        continue
+                    if self.diplomacy.is_friendly(p.pid, n.owner):
+                        continue
+                    here = n.tile(self.gmap)
+                    if self._dist_sq(sam.tile, here) > r2:
+                        continue
+                    if not is_targetable(self.gmap, n.src, n.dst, here):
+                        continue
+                    score = sam_target_score(self.gmap, sam.tile, n)
+                    if best_score is None or score > best_score:
+                        best, best_score = n, score
+                if best is None:
+                    continue
+                taken.add(id(best))
+                sam.fire(self.tick_count)
+                here = best.tile(self.gmap)
+                self.emit(EventKind.SAM_HIT, who=p.pid, other=best.owner, tile=here)
+                self.emit(EventKind.SAM_MISS, who=best.owner, other=p.pid, tile=here)
+        return taken
+
+    def _sam_intercepts(self, n: Nuke) -> bool:
+        """이 핵 **하나**가 지금 요격되는가.
+
+        ⚠ 판정은 `_sams_pick_targets` 가 한다 — SAM 마다 표적을 모아 점수로
+        고르기 때문에(§5.83) 핵 하나만 보고 답할 수 없다. 이 함수는 그 결과를
+        한 발에 대해 물어보는 **얇은 껍데기**다.
+
+        ⚠ **부작용이 있다** — 맞으면 SAM 의 관이 실제로 소모되고 소식이 나간다.
+        판정만 하는 함수가 아니다."""
+        return id(n) in self._sams_pick_targets()
 
     def _detonate(self, n: Nuke) -> None:
         tiles = blast_tiles(self.gmap, n.dst, n.utype, self.rng)

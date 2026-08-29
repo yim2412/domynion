@@ -49,6 +49,34 @@ def sam_range(level: int) -> float:
     return C.MAX_SAM_RANGE - 480.0 / (level + 5)
 
 
+def sam_target_score(gmap: GameMap, sam_tile: TileRef, n: "Nuke") -> float:
+    """`computeTargetScore` — SAM 이 한 tick 에 여러 핵을 볼 때 **무엇을 막을지**.
+
+    ⚠ 이식 누락 여든여섯. 우리는 `self.nukes` 에 담긴 **순서대로** 막고 있었다 —
+    수폭과 원자탄이 같이 오면 먼저 만들어진 쪽이 막혔다. 원본은 셋을 더한다:
+
+    1. **수폭이면 +70,001.** 원본 주석이 이 값의 뜻을 적어 뒀다 —
+       *"balances the distance bonus between Hydro at 100 and Atom at 30"*,
+       즉 **수폭은 70칸을 더 멀리 있어도 원자탄보다 먼저**다.
+    2. **가까울수록 높다** — 칸당 −1,000(맨해튼, 표적 칸 기준).
+    3. **빨리 터질수록 조금 높다** — tick 당 −100. 원본 주석이 스스로
+       *"only a very minor tiebreaker"* 라고 적어 뒀다.
+
+    거리를 **핵의 현재 위치가 아니라 표적 칸으로** 재는 것이 중요하다 — SAM 은
+    자기 근처에 떨어질 것을 먼저 막는다. 지나가는 핵이 아니라."""
+    w = gmap.width
+    tx, ty = n.dst % w, n.dst // w
+    sx, sy = sam_tile % w, sam_tile // w
+    dist = abs(sx - tx) + abs(sy - ty)
+    bonus = C.SAM_SCORE_HYDROGEN_BONUS if n.utype is UnitType.HYDROGEN_BOMB else 0
+    distance = max(0.0, C.SAM_SCORE_DISTANCE_BASE
+                   - dist * C.SAM_SCORE_DISTANCE_PER_TILE)
+    left = max(1.0, n.ticks_left(gmap))
+    urgency = max(0.0, C.SAM_SCORE_URGENCY_BASE
+                  - left * C.SAM_SCORE_URGENCY_PER_TICK)
+    return bonus + distance + urgency
+
+
 def dynamic_sam_range(unit, now: int) -> float:
     """`dynamicSamRange` — **업그레이드 중에는 사거리가 서서히 는다**(§5.82).
 
@@ -199,6 +227,17 @@ class Nuke:
 
     def advance(self) -> None:
         self.progress += NUKE_SPEED[self.utype]
+
+    def ticks_left(self, gmap: GameMap) -> float:
+        """터지기까지 남은 tick(`trajectory.length - trajectoryIndex`).
+
+        대기 중인 핵은 그 대기까지 더한다 — 아직 발사점에 떠 있다."""
+        w = gmap.width
+        sx, sy = self.src % w, self.src // w
+        dx, dy = self.dst % w, self.dst // w
+        total = math.hypot(dx - sx, dy - sy)
+        remaining = max(0.0, total - self.progress) / NUKE_SPEED[self.utype]
+        return remaining + self.wait_ticks
 
     def arrived(self, gmap: GameMap) -> bool:
         w = gmap.width
