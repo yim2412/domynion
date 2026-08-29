@@ -2414,6 +2414,42 @@ class GameState:
         scan = self.gmap.tile_counts(max(self.players) + 1)
         return all(int(scan[pid]) == self._counts.get(pid, 0) for pid in self.players)
 
+    def neutral_borders(self, pid: int) -> tuple[bool, bool]:
+        """내 국경에 닿은 중립 땅이 **깨끗한가 · 낙진인가**를 따로 돌려준다.
+
+        ⚠ 원본 AI 는 이 둘을 다르게 다룬다(`AiAttackBehavior`). 평소의 중립 확장은
+        *낙진이 없는* 중립만 노리고(`borderHasNonNukedTerraNullius`), 낙진 땅은
+        난이도별 전략 목록의 `nuked` 자리에서만 친다. 우리는 `border_targets` 의
+        `None` 하나로 뭉뚱그려 **핵이 터진 자리로도 그냥 밀고 들어갔다** —
+        낙진은 방어가 크게 붙으므로(§핵) 그쪽으로 확장하는 것은 손해다.
+
+        `border_targets` 와 같은 numpy 이웃 계산을 쓴다."""
+        gm = self.gmap
+        cand = self._border_neighbours(pid)
+        if cand is None:
+            return False, False
+        neutral = cand[(gm.owner[cand] < 0) & gm.passable_mask()[cand]]
+        if not len(neutral):
+            return False, False
+        if self.fallout is None:      # 최소 상태로 만든 옛 테스트 (2279줄과 같은 이유)
+            return True, False
+        dirty = self.fallout.mask[neutral]
+        return bool((~dirty).any()), bool(dirty.any())
+
+    def _border_neighbours(self, pid: int) -> "np.ndarray | None":
+        gm = self.gmap
+        w, size = gm.width, gm.size
+        refs = gm.owned_refs(pid)
+        if not len(refs):
+            return None
+        x = refs % w
+        return np.concatenate((
+            refs[x > 0] - 1,
+            refs[x < w - 1] + 1,
+            refs[refs >= w] - w,
+            refs[refs < size - w] + w,
+        ))
+
     def border_targets(self, pid: int) -> set[int | None]:
         """닿을 수 있는 상대들. AI 가 쓴다. None 은 중립.
 

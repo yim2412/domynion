@@ -57,6 +57,48 @@ MIN_ATTACK_RATIO = 0.2
 BOAT_CHANCE_NO_ENEMY = 5      # `random.chance(5)` = 1/5
 BOAT_CHANCE_WITH_ENEMY = 10   # `random.chance(10)` = 1/10
 
+# `getAttackStrategies()` — **난이도는 문턱이 아니라 순서로 들어간다.**
+#
+# ⚠ 이식 누락 예순다섯. 우리는 이 자리에 *"가장 약한 적부터"* 한 줄만 두고 있었다
+# (`_attack_best`). 원본은 열세 개의 전략을 난이도별로 **다른 순서**로 늘어놓고
+# 위에서부터 하나가 성공할 때까지 내려간다. 원본 주석: *"Easy nations get the
+# dumbest order, impossible nations get the smartest order."*
+#
+# 순서가 곧 성격이다 — impossible 은 `retaliate` 가 맨 위(맞으면 바로 되받는다)고
+# easy 는 `nuked`(핵 맞은 빈 땅 줍기)가 맨 위다. 이걸 한 줄로 접으면 **난이도가
+# 반응 주기와 사람 봐주기 말고는 아무 데도 안 남는다.**
+ATTACK_STRATEGIES: dict[str, tuple[str, ...]] = {
+    "easy": ("nuked", "bots", "retaliate", "assist", "betray", "hated",
+             "weakest"),
+    "medium": ("bots", "nuked", "retaliate", "assist", "betray", "hated",
+               "afk", "traitor", "weakest", "island", "donate"),
+    "hard": ("bots", "retaliate", "assist", "betray", "nuked", "traitor",
+             "afk", "hated", "very_weak", "victim", "weakest", "island",
+             "donate"),
+    "impossible": ("retaliate", "bots", "very_weak", "assist", "traitor",
+                   "afk", "betray", "victim", "nuked", "hated", "weakest",
+                   "island", "donate"),
+}
+
+# `getBotAttackMaxParallelism()` — 한 번에 몇 개의 봇을 동시에 칠 것인가.
+# medium 만 1/2 확률로 1 또는 2 다.
+BOT_PARALLELISM: dict[str, int] = {"easy": 1, "hard": 3, "impossible": 100}
+
+# FFA 판단에 쓰는 배수들. **팀전이면 전부 꺼진다** — 원본 주석: 팀전에서는
+# 동료가 병력을 보내 주므로 나보다 센 상대에게 덤벼도 된다.
+FFA_TRAITOR_MARGIN = 1.2      # 배신자가 나보다 1.2배 넘게 세면 안 친다
+FFA_VICTIM_MARGIN = 1.2       # 얻어맞는 중인 상대도 같은 문턱
+FFA_VERY_WEAK_MARGIN = 1.2
+FFA_HATED_MARGIN = 3.0        # 미운 상대가 3배 넘게 세면 참는다
+VICTIM_INCOMING_RATIO = 0.5   # 자기 병력의 50% 넘게 얻어맞는 중이면 "먹잇감"
+VERY_WEAK_RATIO = 0.15        # 상한의 15% 미만이면 "아주 약하다"
+ISLAND_SECOND_CHANCE = 3      # 1/3 확률로 두 번째로 가까운 섬을 고른다
+
+# `calculateBotAttackTroops` — 봇에게는 상대 병력의 네 배만 보낸다. 여유가
+# 두 배도 안 되면 아예 안 친다(easy 는 예외 — 있는 대로 쏟는다).
+BOT_ATTACK_MULTIPLE = 4
+BOT_ATTACK_MIN_MULTIPLE = 2
+
 # 건설 판단은 `structures.NationStructureBehavior` 로 옮겼다(2026-08-24).
 #
 # 여기 있던 `BUILD_WEIGHT`(가중 무작위)와 `STRUCTURE_CAP_PER_TILES`(영토 대비 개수
@@ -172,19 +214,20 @@ class NationBot:
         p = st.players[self.pid]
         reachable = st.border_targets(self.pid)
 
-        has_neutral = None in reachable
         others = [st.players[o] for o in reachable
                   if o is not None and o in st.players and st.players[o].alive]
         # **병력이 적은 쪽부터.** 원본이 오름차순으로 정렬해 그 순서로 고른다.
         others.sort(key=lambda q: q.troops)
         enemies = [q for q in others if not st.diplomacy.is_friendly(self.pid, q.pid)]
+        friends = [q for q in others if st.diplomacy.is_friendly(self.pid, q.pid)]
 
-        # 동맹의 부탁이 먼저다 — 중립 확장보다 우선한다. 안 그러면 부탁이
-        # 10초 안에 만료돼 아무도 도와주지 않는다.
-        if self._assist_allies(st):
-            return
-
-        if has_neutral and self._send_attack(st, None):
+        # ⚠ **낙진 없는 중립만 여기서 친다**(`borderHasNonNukedTerraNullius`).
+        # 전에는 중립이면 낙진이든 아니든 밀고 들어갔다 — 낙진은 방어를 크게
+        # 올리므로 그쪽 확장은 손해고, 원본은 낙진 땅을 난이도 순서의 `nuked`
+        # 자리에서만 노린다. 이 파일 맨 위 주석은 처음부터 "낙진 없는 중립"이라고
+        # 적혀 있었다. **적어만 두고 코드는 안 그랬다.**
+        clean_tn, _ = st.neutral_borders(self.pid)
+        if clean_tn and self._send_attack(st, None):
             return
 
         if not enemies:
@@ -196,15 +239,256 @@ class NationBot:
                 return
             self._alliance_requests(st, enemies)
 
-        # 배신은 **중립 확장 뒤, 최선 표적 앞**이다(원본 `AiAttackBehavior` 의
-        # 판단 사슬 순서). 앞으로 당기면 빈 땅이 남았는데도 동맹을 깨고, 뒤로
-        # 미루면 배신할 만한 상대를 그냥 이웃으로 두고 지나간다.
-        friends = [q for q in others
-                   if st.diplomacy.allied(self.pid, q.pid)]
-        if self._maybe_betray_and_attack(st, friends, enemies):
+        self._attack_best_target(st, friends, enemies)
+
+    # --- 표적 고르기 (`attackBestTarget` + `getAttackStrategies`) ----------
+
+    def _attack_best_target(self, st: GameState, friends: list,
+                            enemies: list) -> None:
+        """`attackBestTarget` — 두 개의 관문을 지나 **난이도별 전략 순서**로 간다.
+
+        ⚠ 관문 둘이 우리에게 잘못 놓여 있었다. `trigger_ratio` 검사가
+        `_attack_troops` 안에 있어서 **표적을 고르는 일 전체가 아니라 병력 계산만**
+        막고 있었고, `reserve_ratio` 관문은 아예 없었다.
+
+        원본 순서:
+
+        1. **구조물을 가진 봇 이웃이 있으면 비율 검사보다 먼저 친다.**
+           원본 주석대로 — 시작 골드가 많은 판에서 나라는 도시를 잔뜩 지어
+           확장이 느려지고, 그 사이 봇이 건물을 훔쳐 **지워 버린다.**
+        2. `reserve_ratio` 에 못 미치면 **아무것도 안 한다**(모아 둔다).
+        3. `trigger_ratio` 에 못 미치면 10번 중 9번은 안 한다(1/10 은 그냥 간다).
+        """
+        if self._has_bot_neighbour_with_structures(st, enemies):
+            if self._attack_bots(st, enemies):
+                return
+        p = st.players[self.pid]
+        cap = p.max_troops(st.tiles(self.pid))
+        if cap <= 0:
+            return
+        ratio = p.troops / cap
+        if ratio < self.reserve_ratio:
+            return
+        if ratio < self.trigger_ratio and self.rng.randrange(10) != 0:
             return
 
-        self._attack_best(st, enemies)
+        for name in ATTACK_STRATEGIES.get(self.difficulty,
+                                          ATTACK_STRATEGIES["medium"]):
+            if self._STRATEGIES[name](self, st, friends, enemies):
+                return
+
+    # --- 전략 열셋 --------------------------------------------------------
+    #
+    # 전부 **성공하면 True** 를 돌려주고, 사다리는 거기서 멈춘다.
+
+    def _s_retaliate(self, st, friends, enemies) -> bool:
+        """`retaliate` — 나를 가장 크게 치고 있는 쪽을 되받는다.
+
+        ⚠ `force=True` 다 — `shouldAttack` 의 사람 봐주기를 건너뛴다. 맞고 있는데
+        난이도 때문에 반격을 못 하면 easy 나라는 그냥 샌드백이 된다."""
+        who = self._biggest_incoming_attacker(st)
+        return who is not None and self._send_attack(st, who, force=True)
+
+    def _s_bots(self, st, friends, enemies) -> bool:
+        return self._attack_bots(st, enemies)
+
+    def _s_assist(self, st, friends, enemies) -> bool:
+        return self._assist_allies(st)
+
+    def _s_traitor(self, st, friends, enemies) -> bool:
+        """배신자를 친다 — **나보다 크게 세지 않을 때만**(FFA)."""
+        me = st.players[self.pid]
+        for foe in enemies:                      # 이미 병력 오름차순이다
+            if st.is_traitor(foe.pid) and (
+                    not self._is_ffa(st)
+                    or foe.troops < me.troops * FFA_TRAITOR_MARGIN):
+                return self._send_attack(st, foe.pid)
+        return False
+
+    def _s_afk(self, st, friends, enemies) -> bool:
+        """`afk` — 접속이 끊긴 사람을 노린다.
+
+        ⚠ **우리에게는 이 개념이 없다.** 헤드리스 판에도 UI 판에도 "연결이 끊긴
+        플레이어"가 없다(`isDisconnected`). 자리를 비워 두는 것은 **사다리의 순서를
+        보존하기 위해서다** — 지우면 medium 의 `traitor` 가 한 칸 올라간다.
+        멀티플레이가 생기면 여기에 붙인다."""
+        return False
+
+    def _s_betray(self, st, friends, enemies) -> bool:
+        return self._maybe_betray_and_attack(st, friends, enemies)
+
+    def _s_nuked(self, st, friends, enemies) -> bool:
+        """국경에 **낙진이 앉은 빈 땅**이 있으면 그리로 확장한다.
+
+        핵이 터진 자리는 주인이 없어졌으므로 주울 수 있다. 다만 방어가 붙어 있어
+        평소 확장보다 비싸고, 그래서 난이도마다 순서가 다르다."""
+        _, nuked = st.neutral_borders(self.pid)
+        return nuked and self._send_attack(st, None)
+
+    def _s_victim(self, st, friends, enemies) -> bool:
+        """남에게 크게 얻어맞는 중인 상대에 **올라탄다**(들어오는 공격이 그 나라
+        병력의 50% 초과)."""
+        me = st.players[self.pid]
+        for foe in enemies:
+            if self._is_ffa(st) and foe.troops > me.troops * FFA_VICTIM_MARGIN:
+                continue
+            incoming = sum(a.troops for a in st.attacks if a.target == foe.pid)
+            if incoming > foe.troops * VICTIM_INCOMING_RATIO:
+                return self._send_attack(st, foe.pid)
+        return False
+
+    def _s_hated(self, st, friends, enemies) -> bool:
+        """관계가 **적대**인 상대를 미운 순서대로 친다(`allRelationsSorted`).
+
+        ⚠ 국경 이웃만 보는 것이 아니다 — 관계표 전체를 본다. 그래서 이 전략은
+        상륙까지 간다(`sendAttack` 이 국경이 없으면 배를 띄운다)."""
+        me = st.players[self.pid]
+        alive = {q.pid for q in st.alive}
+        for pid, rel in me.relations.sorted_by_relation(alive):
+            if rel is not Relation.HOSTILE:
+                continue
+            if pid == self.pid or st.diplomacy.is_friendly(self.pid, pid):
+                continue
+            other = st.players.get(pid)
+            if other is None:
+                continue
+            if self._is_ffa(st) and other.troops > me.troops * FFA_HATED_MARGIN:
+                continue
+            return self._send_attack(st, pid)
+        return False
+
+    def _s_very_weak(self, st, friends, enemies) -> bool:
+        """상한의 15% 미만으로 쪼그라든 상대. 원본 주석이 대놓고 말한다 —
+        **MIRV 맞은 나라를 주우라는 것이다.**"""
+        me = st.players[self.pid]
+        for foe in enemies:
+            cap = foe.max_troops(max(1, st.tiles(foe.pid)))
+            if foe.troops >= cap * VERY_WEAK_RATIO:
+                continue
+            if self._is_ffa(st) and foe.troops >= me.troops * FFA_VERY_WEAK_MARGIN:
+                continue
+            return self._send_attack(st, foe.pid)
+        return False
+
+    def _s_weakest(self, st, friends, enemies) -> bool:
+        """가장 약한 이웃. ⚠ **FFA 에서는 나보다 약할 때만 친다** — 이 조건이
+        없어서 우리 나라들은 자기보다 센 이웃에게도 계속 들이받고 있었다."""
+        if not enemies:
+            return False
+        me, foe = st.players[self.pid], enemies[0]
+        if self._is_ffa(st) and foe.troops >= me.troops:
+            return False
+        return self._send_attack(st, foe.pid)
+
+    def _s_island(self, st, friends, enemies) -> bool:
+        """국경에 적이 하나도 없을 때만 — 바다 건너 가장 가까운 적을 노린다."""
+        if enemies:
+            return False
+        return self._island_boat(st)
+
+    def _s_donate(self, st, friends, enemies) -> bool:
+        """`donateTroops` — **팀전 전용이다.** FFA 판에서는 원본도 첫 줄에서
+        돌아선다(`gameMode !== Team`). 우리 판은 전부 FFA 라 항상 False 지만,
+        `afk` 와 같은 이유로 사다리에 자리를 남겨 둔다."""
+        return False
+
+    # 이름 → 메서드. **메서드 정의 뒤에 와야 한다**(클래스 본문은 위에서
+    # 아래로 실행된다). 위에 두면 `NameError` 로 import 자체가 죽는다.
+    _STRATEGIES = {
+        "retaliate": _s_retaliate, "bots": _s_bots, "assist": _s_assist,
+        "traitor": _s_traitor, "afk": _s_afk, "betray": _s_betray,
+        "nuked": _s_nuked, "victim": _s_victim, "hated": _s_hated,
+        "very_weak": _s_very_weak, "weakest": _s_weakest,
+        "island": _s_island, "donate": _s_donate,
+    }
+
+    # --- 전략이 쓰는 것들 -------------------------------------------------
+
+    def _is_ffa(self, st: GameState) -> bool:
+        """팀이 하나도 없으면 FFA 다. 우리 판은 지금 전부 FFA 다."""
+        return not any(t is not None for t in st.diplomacy.teams.values())
+
+    def _biggest_incoming_attacker(self, st: GameState) -> "int | None":
+        """`findIncomingAttackPlayer` — 나에게 들어오는 공격 중 **가장 큰 것**의
+        주인. 친한 쪽은 빼고, **내가 봇이 아니면 봇의 공격은 무시한다**(봇에게
+        되받아 봐야 판이 안 바뀐다)."""
+        me = st.players[self.pid]
+        best, best_troops = None, 0.0
+        for a in st.attacks:
+            if a.target != self.pid or a.attacker is None:
+                continue
+            if st.diplomacy.is_friendly(self.pid, a.attacker):
+                continue
+            other = st.players.get(a.attacker)
+            if other is None:
+                continue
+            if not me.is_bot and other.is_bot:
+                continue
+            if a.troops > best_troops:
+                best, best_troops = a.attacker, a.troops
+        return best
+
+    def _has_bot_neighbour_with_structures(self, st: GameState,
+                                           enemies: list) -> bool:
+        return any(q.kind == "bot"
+                   and any(u.utype in STRUCTURES for u in q.units.units)
+                   for q in enemies)
+
+    def _attack_bots(self, st: GameState, enemies: list) -> bool:
+        """`attackBots` — **봇은 여러 개를 동시에 친다.**
+
+        ⚠ 이게 없어서 우리 나라들은 봇을 한 번에 하나씩만 밀었다. 원본은
+        난이도만큼 병렬로 밀고(impossible 은 사실상 전부), **건물을 가진 봇을
+        먼저** 고른다 — 훔쳐 간 건물을 되찾는 것이 급하기 때문이다. 그다음이
+        밀도(병력/타일)가 낮은 순이다.
+
+        `_bot_troops_sent` 가 실제로 늘어야 True 다. 원본 주석대로 — 한 대도 못
+        보냈으면 사다리를 계속 내려가야 한다."""
+        bots = [q for q in enemies if q.kind == "bot"]
+        if not bots:
+            return False
+        self._bot_troops_sent = 0.0
+        bots.sort(key=lambda q: (
+            not any(u.utype in STRUCTURES for u in q.units.units),
+            q.troops / max(1, st.tiles(q.pid))))
+        limit = BOT_PARALLELISM.get(self.difficulty)
+        if limit is None:                     # medium 은 1/2 로 1 또는 2
+            limit = 1 if self.rng.randrange(2) == 0 else 2
+        for bot in bots[:limit]:
+            self._send_attack(st, bot.pid)
+        return self._bot_troops_sent > 0
+
+    def _island_boat(self, st: GameState) -> bool:
+        """`findNearestIslandEnemy` — 국경에 적이 없을 때 바다 건너를 노린다.
+
+        원본은 두 후보까지 모아 두고 **1/3 확률로 두 번째**를 고른다. 하나만
+        고르면 모든 나라가 같은 이웃 섬으로 몰린다."""
+        me = st.players[self.pid]
+        if sum(1 for b in st.boats if b.owner == self.pid) >= C.BOAT_MAX_NUMBER:
+            return False
+        shore = shoreline_tiles(st.gmap, self.pid)
+        if not len(shore):
+            return False
+        cands = []
+        for q in st.alive:
+            if q.pid == self.pid or st.diplomacy.is_friendly(self.pid, q.pid):
+                continue
+            if self._is_ffa(st) and q.troops >= me.troops:
+                continue
+            cands.append(q)
+        if not cands:
+            return False
+        cands.sort(key=lambda q: self._center_distance(st, q))
+        pick = cands[0]
+        if len(cands) >= 2 and self.rng.randrange(ISLAND_SECOND_CHANCE) == 0:
+            pick = cands[1]
+        return self._send_attack(st, pick.pid)
+
+    def _center_distance(self, st: GameState, other) -> int:
+        gm = st.gmap
+        ax, ay = gm.xy(st.players[self.pid].start)
+        bx, by = gm.xy(other.start)
+        return abs(ax - bx) + abs(ay - by)
 
     def _maybe_betray_and_attack(self, st: GameState, friends: list,
                                  enemies: list) -> bool:
@@ -296,12 +580,6 @@ class NationBot:
                 return True
         return False
 
-    def _attack_best(self, st: GameState, enemies: list) -> None:
-        """가장 약한 적부터 시도한다. `sendAttack` 이 여유를 보고 알아서 거른다."""
-        for foe in enemies:
-            if self._send_attack(st, foe.pid):
-                return
-
     def _should_attack(self, st: GameState, target: int | None) -> bool:
         """`shouldAttack` — **낮은 난이도는 사람을 봐준다.**
 
@@ -323,9 +601,19 @@ class NationBot:
             return self.rng.randrange(4) != 0
         return True
 
-    def _send_attack(self, st: GameState, target: int | None) -> bool:
-        if not self._should_attack(st, target):
+    def _send_attack(self, st: GameState, target: int | None,
+                     force: bool = False) -> bool:
+        """`sendAttack(target, force = false)`.
+
+        ⚠ `force` 는 **`shouldAttack` 만 건너뛴다.** 병력 계산·상한은 그대로
+        거친다 — 반격이라고 무제한으로 쏟아붓는 것이 아니다."""
+        if not force and not self._should_attack(st, target):
             return False
+        # ⚠ **`sendAttack` 은 육상과 상륙으로 갈린다**(`sharesBorderWith` 로).
+        # 우리는 육상만 옮겨 놓아서, 국경을 안 맞댄 상대를 고르는 전략들
+        # (`hated` · `island`)이 **아무 일도 못 하고 False 만 돌려주고 있었다.**
+        if target is not None and target not in st.border_targets(self.pid):
+            return self._boat_attack(st, target)
         troops = self._attack_troops(st, target)
         if troops is None:
             return False
@@ -354,9 +642,10 @@ class NationBot:
         cap = p.max_troops(st.tiles(self.pid))
         if cap <= 0:
             return None
-        if p.troops / cap < self.trigger_ratio:
-            return None          # 아직 여유가 없다 — 공격 자체를 고려하지 않는다
-
+        # ⚠ `trigger_ratio` 관문은 **여기 있으면 안 된다.** 원본은
+        # `attackBestTarget` 초입에서 한 번 보고, 통과하면 표적별 계산은 비율을
+        # 다시 안 본다. 여기 두면 사다리의 모든 전략이 매번 같은 검사를 다시
+        # 받으면서도 "봇 먼저 치기"(비율 검사보다 앞서는 자리)까지 막힌다.
         foe = st.players.get(target) if target is not None else None
         bot_with_structures = (
             foe is not None and foe.kind == "bot"
@@ -365,16 +654,71 @@ class NationBot:
             else self.reserve_ratio
         keep = cap * ratio
         troops = p.troops - keep
+        # ⚠ **봇에게는 "남은 전부"를 쏟지 않는다**(`calculateBotAttackTroops`).
+        # 상대 병력의 **네 배**만 보내고, 그마저 여유를 넘으면 — 남은 것이
+        # 상대의 두 배도 안 되면 — **아예 안 친다.**
+        #
+        # 이게 없으면 봇 하나에 가진 병력을 전부 털어 넣어 **병렬 공격이 성립하지
+        # 않는다**(둘째 봇부터 보낼 병력이 없다). 봇이 400개인 판에서 이 차이는
+        # "한 tick 에 봇 셋"과 "봇 하나"의 차이다.
+        #
+        # ⚠ 원본의 `- botAttackTroopsSent` 는 **여기서 빼지 않는다.** 원본은
+        # 공격을 Execution 으로 예약만 하고 병력은 다음 tick 에 빠지므로 루프
+        # 안에서 `troops()` 가 안 줄어 그 누적치가 필요하다. 우리 `launch_attack`
+        # 은 **그 자리에서** 병력을 깎으므로 빼면 두 번 빠진다.
+        if foe is not None and foe.is_bot and not p.is_bot:
+            troops = self._bot_attack_troops(foe, troops)
 
         if foe is not None:
             troops = min(troops, self._send_cap(st))
         if troops < C.ATTACK_MIN_TROOPS:
             return None
-        # hard 이상은 상대 병력의 20% 미만으로는 안 친다 — 병력만 버리는 짓이다
-        if foe is not None and self.difficulty in RETAIN_FRACTION \
-                and troops < foe.troops * MIN_ATTACK_RATIO:
+        # hard 이상은 상대 병력의 20% 미만으로는 안 친다 — 병력만 버리는 짓이다.
+        # ⚠ **맞고 있는 중이면 면제다**(원본 주석: *"Nations under attack may
+        # retaliate freely"*). 없으면 강한 상대에게 얻어맞는 나라가 반격조차 못 한다.
+        if (foe is not None and self.difficulty in RETAIN_FRACTION
+                and not self._under_attack(st)
+                and troops < foe.troops * MIN_ATTACK_RATIO):
             return None
+        if foe is not None and foe.is_bot and not p.is_bot:
+            self._bot_troops_sent += troops
         return troops
+
+    def _bot_attack_troops(self, foe, max_troops: float) -> float:
+        """`calculateBotAttackTroops` — easy 만 있는 대로 쏟는다."""
+        if self.difficulty == "easy":
+            return max_troops
+        troops = foe.troops * BOT_ATTACK_MULTIPLE
+        if troops > max_troops:
+            if max_troops < foe.troops * BOT_ATTACK_MIN_MULTIPLE:
+                return 0.0
+            troops = max_troops
+        return troops
+
+    def _under_attack(self, st: GameState) -> bool:
+        return any(a.target == self.pid for a in st.attacks)
+
+    def _boat_attack(self, st: GameState, target: int) -> bool:
+        """`sendBoatAttack` — 국경이 없으면 **상대 해안에 배를 붙인다.**
+
+        원본은 `closestTwoTiles(내 해안, 상대 해안)` 으로 가장 가까운 쌍을 고른다.
+        우리도 같은 것을 하되, 뒤 계산(어느 항구에서 뜰지 · 물길이 있는지)은
+        `send_boat` 이 이미 한다 — 물길이 없으면 거기서 None 이 돌아온다."""
+        gm = st.gmap
+        mine = shoreline_tiles(gm, self.pid)
+        theirs = shoreline_tiles(gm, target)
+        if not len(mine) or not len(theirs):
+            return False
+        mx, my = gm.xy(int(mine[0]))
+        best, best_d = None, None
+        for t in theirs.tolist():
+            tx, ty = gm.xy(int(t))
+            d = abs(tx - mx) + abs(ty - my)
+            if best_d is None or d < best_d:
+                best, best_d = int(t), d
+        if best is None:
+            return False
+        return st.send_boat(self.pid, best, target) is not None
 
     def _send_cap(self, st: GameState) -> float:
         """`troopSendCap()` — hard 이상은 가장 센 이웃 대비 일정 비율을 남겨 둔다.
@@ -387,8 +731,17 @@ class NationBot:
         for o in st.border_targets(self.pid):
             if o is None or o not in st.players:
                 continue
-            strongest = max(strongest, st.players[o].troops)
-        return max(0.0, p.troops - strongest * frac)
+            other = st.players[o]
+            # ⚠ **봇과 친한 쪽은 위협이 아니다**(원본이 둘 다 거른다). 안 거르면
+            # 봇 이웃 하나 때문에 상한이 바닥나 나라가 아무도 못 친다 — 판에
+            # 봇이 400개라 사실상 항상 걸린다.
+            if other.is_bot or st.diplomacy.is_friendly(self.pid, o):
+                continue
+            strongest = max(strongest, other.troops)
+        cap = float("inf") if strongest == 0.0 else max(0.0, p.troops - strongest * frac)
+        # 맞고 있으면 **들어오는 병력만큼은** 무조건 쓸 수 있다.
+        incoming = sum(a.troops for a in st.attacks if a.target == self.pid)
+        return max(cap, incoming) if incoming > 0 else cap
 
     # --- 상륙 -------------------------------------------------------------
 

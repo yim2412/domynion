@@ -39,6 +39,18 @@ def bot(pid: int = 0, difficulty: str = "medium", seed: int = 1) -> NationBot:
     return NationBot(pid=pid, rng=random.Random(seed), difficulty=difficulty)
 
 
+def border_state() -> GameState:
+    """둘을 **맞붙여** 둔다. `state()` 는 지도 양 끝에 한 칸씩이라 실제로 칠 수가
+    없다 — 사다리를 재려면 공격이 성립하는 재료가 있어야 한다."""
+    st = state()
+    for x in range(0, 10):
+        st.gmap.owner[st.gmap.ref(x, 0)] = 0
+    for x in range(10, 20):
+        st.gmap.owner[st.gmap.ref(x, 0)] = 1
+    st._counts = {0: 10, 1: 10}
+    return st
+
+
 # --- 비율 -------------------------------------------------------------------
 
 def test_ratios_land_in_the_original_ranges():
@@ -82,15 +94,38 @@ def test_expansion_keeps_far_less_than_a_player_attack():
     assert to_player == pytest.approx(p.troops - cap * b.reserve_ratio)
 
 
-def test_below_trigger_ratio_it_does_not_attack_at_all():
-    """`trigger_ratio` 아래면 **공격을 고려조차 하지 않는다.**"""
+def test_the_reserve_ratio_stops_everything():
+    """`reserve_ratio` 에 못 미치면 **표적 고르기 자체를 안 한다.**
+
+    ⚠ 전에는 이 관문이 아예 없었고 `trigger_ratio` 검사가 `_attack_troops` 안에
+    들어가 있었다(§5.76). 거기 있으면 병력 계산만 막고 *"봇 먼저 치기"* 처럼
+    비율 검사보다 앞서야 하는 자리까지 함께 막힌다."""
     st = state()
     b = bot()
     p = st.players[0]
-    p.troops = p.max_troops(1) * (b.trigger_ratio - 0.05)
-    assert b._attack_troops(st, None) is None
-    p.troops = p.max_troops(1) * (b.trigger_ratio + 0.05)
-    assert b._attack_troops(st, None) is not None
+    p.troops = p.max_troops(1) * (b.reserve_ratio - 0.05)
+    b._attack_best_target(st, [], [st.players[1]])
+    assert not st.attacks, "여유가 없는데 공격했다"
+
+
+def test_below_trigger_ratio_it_usually_waits_but_not_always():
+    """`trigger_ratio` 아래면 **10번 중 9번은** 참는다(1/10 은 그냥 간다).
+
+    막지 않았으면: 문턱 아래에서 절대 안 움직인다 — 원본은 가끔 찌른다."""
+    st = state()
+    p = st.players[0]
+    b = bot()
+    p.troops = p.max_troops(1) * (b.reserve_ratio + b.trigger_ratio) / 2
+    assert b.reserve_ratio < p.troops / p.max_troops(1) < b.trigger_ratio
+    went = 0
+    for seed in range(60):
+        st2 = border_state()
+        st2.players[0].troops = p.troops
+        b2 = bot()
+        b2.rng = random.Random(seed)
+        b2._attack_best_target(st2, [], [st2.players[1]])
+        went += bool(st2.attacks)
+    assert 0 < went < 60, f"1/10 이 아니라 전부/전무다 ({went}/60)"
 
 
 def test_hard_bots_refuse_attacks_that_are_too_weak():

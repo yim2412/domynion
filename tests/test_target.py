@@ -188,12 +188,21 @@ def test_nobody_helps_when_there_is_no_request():
     assert bot_for(st, 1)._assist_allies(st) is False
 
 
-def test_assist_runs_before_neutral_expansion():
-    """막지 않았으면: 부탁이 10초 안에 만료돼 아무도 안 도와준다."""
-    import inspect
+def test_assist_sits_inside_the_difficulty_ladder():
+    """⚠ **이 테스트는 우리 발명품을 재고 있었다**(§5.76).
 
-    src = inspect.getsource(NationBot._maybe_attack)
-    assert src.index("_assist_allies") < src.index("has_neutral and")
+    전에는 `_maybe_attack` 의 소스를 읽어 `_assist_allies` 가 중립 확장보다
+    **앞에** 오는지 봤다. 그건 우리가 넣은 순서였다 — 원본은 `assistAllies` 를
+    `getAttackStrategies` 의 한 항목으로 두고, 중립 확장은 그보다 **앞에**서
+    따로 한다(`maybeAttack`).
+
+    이제 재는 것은 *순서의 사실*이다: 사다리에 있고, 네 난이도 모두에서
+    `betray` 보다 앞이다(동맹을 돕는 것이 동맹을 깨는 것보다 먼저다)."""
+    from domynion.ai.nation import ATTACK_STRATEGIES
+
+    for difficulty, order in ATTACK_STRATEGIES.items():
+        assert "assist" in order, difficulty
+        assert order.index("assist") < order.index("betray"), difficulty
 
 
 # --- 화면에 보이나 (§5.69) ---------------------------------------------------
