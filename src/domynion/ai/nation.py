@@ -103,6 +103,10 @@ BOT_ATTACK_MIN_MULTIPLE = 2
 BOAT_TARGET_RANGE = 150
 BOAT_TARGET_TRIES = 500
 
+# `sendBoatAttackToNearbyTerraNullius` — 해안 열 칸에 하나씩, 물 건너 5칸.
+NEUTRAL_BOAT_SHORE_STRIDE = 10
+NEUTRAL_BOAT_REACH = 5
+
 # 건설 판단은 `structures.NationStructureBehavior` 로 옮겼다(2026-08-24).
 #
 # 여기 있던 `BUILD_WEIGHT`(가중 무작위)와 `STRUCTURE_CAP_PER_TILES`(영토 대비 개수
@@ -618,6 +622,13 @@ class NationBot:
         # (`hated` · `island`)이 **아무 일도 못 하고 False 만 돌려주고 있었다.**
         if target is not None and target not in st.border_targets(self.pid):
             return self._boat_attack(st, target)
+        # ⚠ **중립도 마찬가지다**(이식 누락 여든하나). 원본은
+        # `hasLandBorderWithTerraNullius()` 로 갈라, 걸어서 닿는 빈 땅이 없으면
+        # `sendBoatAttackToNearbyTerraNullius()` 로 **바다 건너 빈 땅**에 배를 띄운다.
+        # 없으면 섬나라와 사방이 막힌 나라는 **중립 확장을 아예 못 한다** —
+        # 사다리의 맨 앞(중립 확장)과 `nuked` 가 둘 다 조용히 False 가 된다.
+        if target is None and not self._has_land_border_with_neutral(st):
+            return self._boat_to_nearby_neutral(st)
         troops = self._attack_troops(st, target)
         if troops is None:
             return False
@@ -702,6 +713,53 @@ class NationBot:
     def _under_attack(self, st: GameState) -> bool:
         return any(a.target == self.pid for a in st.attacks)
 
+    def _has_land_border_with_neutral(self, st: GameState) -> bool:
+        """`hasLandBorderWithTerraNullius` — **낙진을 안 가린다.**
+
+        평소 확장(§5.76)이 보는 것은 *깨끗한* 중립이지만, 여기서 묻는 것은
+        "걸어서 빈 땅에 닿는가"뿐이다. 낙진 땅에 닿아 있으면 배를 띄우지 않는다."""
+        clean, nuked = st.neutral_borders(self.pid)
+        return clean or nuked
+
+    def _boat_to_nearby_neutral(self, st: GameState) -> bool:
+        """`sendBoatAttackToNearbyTerraNullius` — **해안에서 물 건너 5칸**을 본다.
+
+        원본이 정하는 것 셋:
+
+        1. 해안 타일을 **열 칸에 하나씩** 훑는다(전수가 아니다 — 해안이 수천 칸이다)
+        2. 네 방향으로 **바로 옆 칸이 물**이고 **5칸 앞이 빈 육지**여야 한다
+        3. **낙진이 앉은 땅은 제외**한다(평소 확장과 같은 이유)
+        """
+        gm = st.gmap
+        p = st.players[self.pid]
+        if sum(1 for b in st.boats if b.owner == self.pid) >= C.BOAT_MAX_NUMBER:
+            return False
+        shore = shoreline_tiles(gm, self.pid).tolist()
+        if not shore:
+            return False
+        troops = p.troops * C.BOAT_ATTACK_RATIO
+        if troops < C.ATTACK_MIN_TROOPS:
+            return False
+        for i in range(0, len(shore), NEUTRAL_BOAT_SHORE_STRIDE):
+            bx, by = gm.xy(int(shore[i]))
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                x1, y1 = bx + dx, by + dy
+                if not (0 <= x1 < gm.width and 0 <= y1 < gm.height):
+                    continue
+                if gm.terrain[gm.ref(x1, y1)] != Terrain.OCEAN:
+                    continue
+                nx, ny = bx + dx * NEUTRAL_BOAT_REACH, by + dy * NEUTRAL_BOAT_REACH
+                if not (0 <= nx < gm.width and 0 <= ny < gm.height):
+                    continue
+                t = gm.ref(nx, ny)
+                if not gm.passable(t) or int(gm.owner[t]) >= 0:
+                    continue
+                if st.fallout is not None and st.fallout.mask[t]:
+                    continue
+                if st.send_boat(self.pid, t, None, troops=troops) is not None:
+                    return True
+        return False
+
     def _boat_attack(self, st: GameState, target: int) -> bool:
         """`sendBoatAttack` — 국경이 없으면 **상대 해안에 배를 붙인다.**
 
@@ -722,7 +780,18 @@ class NationBot:
                 best, best_d = int(t), d
         if best is None:
             return False
-        return st.send_boat(self.pid, best, target) is not None
+        # ⚠ 원본 `sendBoatAttack` 도 `calculateAttackTroops` 를 거친다 — 상한과
+        # 20% 규칙이 **여기에도** 걸린다(§5.77 은 `_boat` 쪽만 고쳤다).
+        troops = st.players[self.pid].troops * C.BOAT_ATTACK_RATIO
+        troops = min(troops, self._send_cap(st))
+        if troops < C.ATTACK_MIN_TROOPS:
+            return False
+        foe = st.players.get(target)
+        if (foe is not None and self.difficulty in RETAIN_FRACTION
+                and not self._under_attack(st)
+                and troops < foe.troops * MIN_ATTACK_RATIO):
+            return False
+        return st.send_boat(self.pid, best, target, troops=troops) is not None
 
     def _send_cap(self, st: GameState) -> float:
         """`troopSendCap()` — hard 이상은 가장 센 이웃 대비 일정 비율을 남겨 둔다.
