@@ -200,7 +200,15 @@ class Warship:
     health: int = C.WARSHIP_MAX_HEALTH
     patrol_origin: TileRef | None = None
     cooldown: int = 0
-    veterancy: int = 0            # 격침 횟수. 포탄 피해에 실린다
+    # ⚠ **격침 횟수가 아니라 레벨이다**(0~3, `warshipMaxVeterancy`). 우리는
+    # 오래 격침 한 번마다 +1 을 했고 상한도 없었다 — 수송선을 열 척 잡은 배가
+    # 레벨 10 이 되어 포탄 피해가 3배였다(§5.75).
+    veterancy: int = 0
+    # 수송선 격침과 무역선 나포가 **같은 정수 미터**에 쌓인다(`veterancyProgress`).
+    # 한 레벨 = 10 × 25 = 250점, 수송선 한 척 25점 · 무역선 한 척 10점이라
+    # **수송선 10척 또는 무역선 25척 또는 그 섞임**이 정확히 한 레벨이 된다.
+    # 넘친 점수는 다음 레벨로 이월된다 — 전함 격침만 이 미터를 0으로 지운다.
+    veterancy_progress: int = 0
     # 지금 향하는 순찰 지점(`targetTile`). 닿으면 비우고 새로 뽑는다.
     #
     # ⚠ 이식 누락 스물둘. 이게 없어서 전함이 **태어난 자리에 붙박여 있었다** —
@@ -226,6 +234,49 @@ class Warship:
     @property
     def sunk(self) -> bool:
         return self.health <= 0
+
+    @property
+    def max_health(self) -> int:
+        """`maxHealthWithVeterancy` — 레벨당 기본 최대 체력의 20% 가 붙는다.
+
+        ⚠ **정수 내림이다**(원본이 `Math.floor`). 회복·후퇴 문턱·클락 유출이 전부
+        이 값을 기준으로 하므로, 여기서 부동소수를 쓰면 그 셋이 함께 어긋난다."""
+        if self.veterancy <= 0:
+            return C.WARSHIP_MAX_HEALTH
+        return C.WARSHIP_MAX_HEALTH + (
+            C.WARSHIP_MAX_HEALTH * self.veterancy
+            * C.WARSHIP_VETERANCY_HEALTH_BONUS) // 100
+
+    def _level_up(self) -> None:
+        """올라도 **즉시 회복되지는 않는다**(원본 주석 그대로) — 높아진 상한을
+        향해 평소대로 수리할 뿐이다."""
+        if self.veterancy < C.WARSHIP_MAX_VETERANCY:
+            self.veterancy += 1
+
+    def record_kill(self, target: str) -> None:
+        """`UnitImpl.recordKill` — **전함을 잡으면 즉시 한 레벨**이고, 쌓아 둔
+        진행도는 지워진다. 수송선은 진행도만 준다.
+
+        ⚠ 무역선은 여기 오지 않는다 — 격침이 아니라 나포다(§5.36)."""
+        if target == "warship":
+            self.veterancy_progress = 0
+            self._level_up()
+        elif target == "transport":
+            self._add_progress(C.WARSHIP_VETERANCY_TRADE_CAPTURES)
+
+    def record_trade_capture(self) -> None:
+        self._add_progress(C.WARSHIP_VETERANCY_TRANSPORT_KILLS)
+
+    def _add_progress(self, points: int) -> None:
+        if self.veterancy >= C.WARSHIP_MAX_VETERANCY:
+            return
+        per_level = (C.WARSHIP_VETERANCY_TRANSPORT_KILLS
+                     * C.WARSHIP_VETERANCY_TRADE_CAPTURES)
+        self.veterancy_progress += points
+        while (self.veterancy_progress >= per_level
+               and self.veterancy < C.WARSHIP_MAX_VETERANCY):
+            self.veterancy_progress -= per_level
+            self._level_up()
 
 
 @dataclass

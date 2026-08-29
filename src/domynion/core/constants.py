@@ -429,7 +429,15 @@ WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
 WARSHIP_DOCKING_RANGE = 5
 WARSHIP_PASSIVE_HEALING = 1          # 항구 근처면 tick 당 이만큼 회복
 WARSHIP_PASSIVE_HEALING_RANGE = 150
-WARSHIP_VETERANCY_SHELL_BONUS = 20   # 격침 1회당 포탄 피해 +20%
+# --- 전함 베테랑 (`Config.ts` "Warship veterancy" · `UnitImpl.recordKill`) ---
+#
+# ⚠ 우리는 오래 **격침 횟수를 그대로 레벨로 썼다**(§5.75). 원본은 넷을 나눠 둔다:
+# 레벨 상한 · 레벨당 최대 체력 · 수송선 몇 척이 1레벨 · 무역선 몇 척이 1레벨.
+WARSHIP_MAX_VETERANCY = 3            # `warshipMaxVeterancy`
+WARSHIP_VETERANCY_SHELL_BONUS = 20   # 레벨당 포탄 피해 +20%
+WARSHIP_VETERANCY_HEALTH_BONUS = 20  # 레벨당 최대 체력 +20%(즉시 회복은 아니다)
+WARSHIP_VETERANCY_TRANSPORT_KILLS = 10   # 수송선 10척 = 1레벨
+WARSHIP_VETERANCY_TRADE_CAPTURES = 25    # 무역선 25척 = 1레벨
 WARSHIP_MAX_HEALTH = 1000
 # 포탄 피해 = 250/250 × ((굴림−1)×25 + 200), 굴림은 1~5.
 # 그래서 한 발이 200~300 이고, 체력 1000 인 전함은 4~5발을 견딘다.

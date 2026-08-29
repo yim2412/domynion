@@ -777,7 +777,11 @@ class GameState:
             # 클락에 표시된 쪽은 애초에 수리가 안 된다 — 돌아가 봐야 헛걸음이다.
             if w.owner in self.clock.marked_at:
                 return False
-            threshold = (C.WARSHIP_MAX_HEALTH * C.WARSHIP_RETREAT_HEALTH_PERCENT) // 100
+            # ⚠ **베테랑 보정된** 최대 체력의 비율이다(원본 주석: *"so a tougher
+            # veteran ship retreats at the same relative health as a fresh one"*).
+            # 기본 1000 으로 재면 레벨 3 짜리(1600)는 체력 750 까지 버티는데,
+            # 그건 상대 비율로 47% 다 — 베테랑일수록 더 늦게 돌아간다.
+            threshold = (w.max_health * C.WARSHIP_RETREAT_HEALTH_PERCENT) // 100
             if health_before >= threshold:
                 return False
             w.retreat_port = self._nearest_port_tile(w, p)
@@ -808,7 +812,7 @@ class GameState:
             if w.docked or len(docked_here) < port.level:
                 w.docked = True
                 self._apply_docked_healing(w, port, len(docked_here) + 1)
-            elif w.health >= C.WARSHIP_MAX_HEALTH:
+            elif w.health >= w.max_health:
                 self._cancel_retreat(w)
                 return False
             # 자리가 없으면 항구 옆에서 기다린다(수동 회복은 계속 받는다)
@@ -819,7 +823,7 @@ class GameState:
                 return False
             w.tile = step
 
-        if w.health >= C.WARSHIP_MAX_HEALTH:
+        if w.health >= w.max_health:
             self._cancel_retreat(w)
         return True
 
@@ -866,7 +870,7 @@ class GameState:
         if gain <= 0:
             return
         w.heal_remainder -= gain
-        w.health = min(C.WARSHIP_MAX_HEALTH, w.health + gain)
+        w.health = min(w.max_health, w.health + gain)
 
     def _patrol(self, w: Warship) -> None:
         """`patrol()` — 순찰 지점을 하나 잡고 그쪽으로 한 칸 간다. 닿으면 새로 뽑는다.
@@ -930,7 +934,7 @@ class GameState:
         for _ in range(C.PIRACY_HUNT_STEPS):
             if manhattan(self.gmap, w.tile, t.tile) <= C.PIRACY_CAPTURE_RANGE:
                 if self._capture_trade_ship(t, w.owner):
-                    w.veterancy += 1
+                    w.record_trade_capture()
                     self.emit(EventKind.TRADE_SHIP_CAPTURED, who=t.owner,
                               other=w.owner, tile=t.tile, text="무역선")
                 elif t in self.trade_ships:
@@ -968,7 +972,7 @@ class GameState:
         if isinstance(target, Warship):
             target.health -= dmg
             if target.sunk:
-                w.veterancy += 1
+                w.record_kill("warship")
                 self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
                           tile=target.tile, text="전함")
         elif isinstance(target, TransportShip):
@@ -979,7 +983,7 @@ class GameState:
                 target.active = False
                 target.sunk_by = w.owner
                 self.boats.remove(target)
-                w.veterancy += 1
+                w.record_kill("transport")
                 self.emit(EventKind.UNIT_DESTROYED, who=target.owner, other=w.owner,
                           tile=target.tile, text="수송선")
         # ⚠ 무역선은 여기 안 온다 — **격침이 아니라 나포**라
@@ -990,12 +994,12 @@ class GameState:
         그래야 클락의 유출이 실제로 배를 가라앉힌다(원본 주석 그대로)."""
         if w.owner in self.clock.marked_at:
             return
-        if w.health >= C.WARSHIP_MAX_HEALTH:
+        if w.health >= w.max_health:
             return
         r2 = C.WARSHIP_PASSIVE_HEALING_RANGE ** 2
         for port in p.units.of(UnitType.PORT):
             if self._dist_sq(w.tile, port.tile) <= r2:
-                w.health = min(C.WARSHIP_MAX_HEALTH,
+                w.health = min(w.max_health,
                                w.health + C.WARSHIP_PASSIVE_HEALING)
                 return
 
@@ -2294,11 +2298,16 @@ class GameState:
             # 회복 억제(`_heal_warship`)만 옮겨 놓고 정작 깎는 쪽이 없었다(§5.56).
             wfrac = self.clock.warship_drain_fraction(p.pid, elapsed)
             if wfrac > 0.0:
-                ship_floor = (C.WARSHIP_MAX_HEALTH
-                              * self.clock.cfg.drain_floor_percent / 100.0)
-                dmg = C.WARSHIP_MAX_HEALTH * wfrac * C.TICK_DT
+                # ⚠ 바닥도 피해량도 **배마다 다르다** — 원본이 `ws.maxHealth()`
+                # 를 두 번 다 쓴다. 기본 1000 으로 통일하면 베테랑 배는 상대적으로
+                # 덜 닳고, 바닥이 자기 최대 체력의 훨씬 아래가 된다(§5.75).
                 for w in self.warships:
-                    if w.owner == p.pid and w.health > ship_floor:
+                    if w.owner != p.pid:
+                        continue
+                    ship_floor = (w.max_health
+                                  * self.clock.cfg.drain_floor_percent / 100.0)
+                    if w.health > ship_floor:
+                        dmg = w.max_health * wfrac * C.TICK_DT
                         w.health = max(ship_floor, w.health - dmg)
 
             if self.clock.rotting(p.pid, elapsed, p.troops, cap):
