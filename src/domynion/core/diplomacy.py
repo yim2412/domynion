@@ -46,6 +46,18 @@ class Alliance:
 
 
 @dataclass
+class Embargo:
+    """금수 한 건. `PlayerImpl.embargoes` 의 `Embargo` 그대로다.
+
+    ⚠ **임시와 수동은 다른 것이다.** 임시는 *공격이 자동으로 건 것*이라 5분 뒤
+    스스로 풀리고 동맹이 맺어지면 즉시 풀린다. 수동(사람이 건 것 · 전체 금수 ·
+    AI 가 관계를 보고 건 것)은 판 끝까지 남는다."""
+
+    created_at: int
+    temporary: bool
+
+
+@dataclass
 class Diplomacy:
     """판 전체의 외교 상태. `GameState` 가 하나 들고 있다."""
 
@@ -53,7 +65,9 @@ class Diplomacy:
     teams: dict[int, int | None] = field(default_factory=dict)
     traitor_since: dict[int, int] = field(default_factory=dict)     # pid -> tick
     betrayals: dict[int, int] = field(default_factory=dict)
-    embargoes: dict[int, set[int]] = field(default_factory=dict)    # pid -> 대상들
+    # 건 사람 -> {막힌 사람: 금수}. **값이 필요하다** — 임시(공격이 자동으로 건 것)와
+    # 수동을 구분해야 만료와 자동 해제가 갈린다(§5.74).
+    embargoes: dict[int, dict[int, Embargo]] = field(default_factory=dict)
     # 요청자 -> {받는 이: 건 tick}. **시각을 들고 있어야 만료를 잰다**(§5.73).
     # `x in pending[a]` 는 dict 에서도 그대로 도므로 읽는 쪽은 안 바뀐다.
     pending: dict[int, dict[int, int]] = field(default_factory=dict)
@@ -171,11 +185,49 @@ class Diplomacy:
         for s in self.pending.values():
             s.pop(pid, None)
         self.embargoes.pop(pid, None)
-        for s in self.embargoes.values():
-            s.discard(pid)
+        for e in self.embargoes.values():
+            e.pop(pid, None)
 
-    def start_embargo(self, by: int, target: int) -> None:
-        self.embargoes.setdefault(by, set()).add(target)
+    def start_embargo(self, by: int, target: int, tick: int = 0, *,
+                      temporary: bool = False) -> None:
+        """`PlayerImpl.addEmbargo(other, isTemporary)`.
+
+        ⚠ **이미 걸린 수동 금수는 덮어쓰지 않는다.** 원본이 그 자리에서 바로
+        돌아선다(`if (embargo !== undefined && !embargo.isTemporary) return`).
+        없으면 사람이 걸어 둔 금수를 공격 한 번이 임시로 바꿔 **5분 뒤 저절로
+        풀린다** — 푼 적이 없는데 풀린다."""
+        cur = self.embargoes.get(by, {}).get(target)
+        if cur is not None and not cur.temporary:
+            return
+        self.embargoes.setdefault(by, {})[target] = Embargo(created_at=tick,
+                                                            temporary=temporary)
 
     def stop_embargo(self, by: int, target: int) -> None:
-        self.embargoes.get(by, set()).discard(target)
+        self.embargoes.get(by, {}).pop(target, None)
+
+    def end_temporary_embargo(self, by: int, target: int) -> None:
+        """`PlayerImpl.endTemporaryEmbargo` — **자동으로 걸린 것만** 푼다.
+
+        원본 주석: *"Automatically remove embargoes only if they were
+        automatically created."* 동맹을 맺었다고 상대가 손수 건 금수까지
+        풀어 주지는 않는다."""
+        cur = self.embargoes.get(by, {}).get(target)
+        if cur is not None and not cur.temporary:
+            return
+        self.stop_embargo(by, target)
+
+    def expire_embargoes(self, tick: int) -> list[tuple[int, int]]:
+        """`PlayerExecution.tick` 의 임시 금수 만료(`temporaryEmbargoDuration`).
+
+        ⚠ 원본은 **초과**(`>`)로 잰다 — 정확히 3,000 tick 되는 순간에는 아직
+        살아 있다. 동맹 요청 만료(`>=`, §5.73)와 부호가 다르므로 옮길 때
+        섞으면 안 된다."""
+        gone: list[tuple[int, int]] = []
+        for by, targets in list(self.embargoes.items()):
+            for target, e in list(targets.items()):
+                if e.temporary and tick - e.created_at > C.TEMPORARY_EMBARGO_TICKS:
+                    del targets[target]
+                    gone.append((by, target))
+            if not targets:
+                self.embargoes.pop(by, None)
+        return gone

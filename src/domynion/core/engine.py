@@ -245,10 +245,19 @@ class GameState:
         self.attacks.append(atk)
         if target is not None:
             self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
-            # ⚠ **치는 순간 그쪽이 보낸 동맹 요청은 거절된다**
-            # (`rejectIncomingAllianceRequests`). 안 그러면 때려 놓고 그 요청을
-            # 그대로 받아 동맹이 된다 — 공격이 관계에 −70 을 주는 것과 앞뒤가 안 맞는다.
-            self.diplomacy.reject(pid, target)
+            # ⚠ **치는 순간 그쪽이 보낸 동맹 요청은 거절되고, 맞은 쪽이 나에게
+            # 임시 금수를 건다**(`AttackExecution:95~104`). 요청 거절이 없으면
+            # 때려 놓고 그 요청을 그대로 받아 동맹이 된다 — 공격이 관계에 −70 을
+            # 주는 것과 앞뒤가 안 맞는다.
+            #
+            # ⚠ 둘 다 **봇이 끼면 안 한다.** 전에는 거절만 옮기면서 이 조건을
+            # 상륙 쪽에만 달아 두고 "원본이 여기서만 본다"고 적었는데, 원본은
+            # 육상 공격에도 같은 `if` 를 두고 있다(봇은 무역을 안 하므로 금수가
+            # 의미가 없다는 원본 주석이 그 자리에 있다).
+            if not p.is_bot and not self.players[target].is_bot:
+                self.diplomacy.reject(pid, target)
+                self.diplomacy.start_embargo(target, pid, self.tick_count,
+                                             temporary=True)
             # 맞은 쪽만 나빠진다(`AttackExecution` 도 target 쪽만 갱신한다).
             self.relate(target, pid, C.REL_ATTACKED.get(self.difficulty, -70.0))
             if self.diplomacy.is_friendly(pid, target):
@@ -332,7 +341,16 @@ class GameState:
         수락하지 않은 동맹이 된다. 사람이 먼저 손을 내밀었는데 AI 도 같은
         생각이었을 때가 정확히 그 자리다."""
         if pid in self.diplomacy.pending.get(other, set()):
-            return self.accept_alliance(pid, other)
+            ok = self.accept_alliance(pid, other)
+            if ok:
+                # ⚠ **이 셋은 맞요청 분기에만 있다.** 원본 `AllianceRequestExecution`
+                # 이 여기서만 부르고, 평범한 수락(`AllianceRequestReplyExecution`)
+                # 에서는 아무것도 안 한다. "동맹이 맺어지면 언제나" 로 옮기면
+                # 원본에 없는 규칙이 된다 — 확인하고 이 자리에 둔다.
+                self.diplomacy.end_temporary_embargo(pid, other)
+                self.diplomacy.end_temporary_embargo(other, pid)
+                self._cancel_nukes_between(pid, other)
+            return ok
         ok = self.diplomacy.request(pid, other, self.tick_count)
         if ok:
             self.emit(EventKind.ALLIANCE_REQUEST, who=other, other=pid)
@@ -446,10 +464,12 @@ class GameState:
         self.boats.append(boat)
         if target is not None:
             # ⚠ 상륙도 **그쪽이 보낸 동맹 요청을 거절한다**
-            # (`TransportShipExecution.rejectIncomingAllianceRequests`).
-            # 다만 조건이 육상 공격과 **다르다** — 원본이 여기서만
-            # `targetPlayer.type() !== Bot && attacker.type() !== Bot` 를 본다.
-            # 봇이 끼면 안 건드린다.
+            # (`TransportShipExecution.rejectIncomingAllianceRequests`), 봇이
+            # 끼면 안 한다 — 육상 공격과 같은 조건이다.
+            #
+            # ⚠ 다만 **임시 금수는 여기 없다.** 원본 `TransportShipExecution` 은
+            # 같은 `if` 안에서 거절만 하고 `addEmbargo` 를 부르지 않는다. 둘이
+            # 같아 보인다고 묶으면 상륙만으로 금수가 걸린다.
             if not p.is_bot and not self.players[target].is_bot:
                 self.diplomacy.reject(pid, target)
             self.emit(EventKind.NAVAL_INVASION_INBOUND, who=target, other=pid,
@@ -1081,6 +1101,43 @@ class GameState:
             self.reject_alliance(other, pid)
             self.break_alliance(pid, other)
             self.relate(other, pid, C.REL_NUKED)
+
+    def _cancel_nukes_between(self, a: int, b: int) -> None:
+        """`cancelNukesBetweenAlliedPlayers` — 동맹이 맺어지면 **서로에게 날아가던
+        핵이 사라진다.**
+
+        ⚠ §5.72(핵이 동맹을 깬다)의 **반대 방향**이고, 짝으로 있어야 말이 된다.
+        한쪽만 있으면 *쏜 뒤 동맹을 맺어 취소하는 길*만 막히고 그 반대는 열려 있다.
+
+        ⚠ **종류마다 "그쪽으로 가는 핵"의 판정이 다르다.** 원본이 세 갈래로 나눈다:
+        MIRV 본체와 탄두는 **표적 칸의 주인**으로 보고, 일반 핵은 §5.72 와 같은
+        가중 타일·건물 판정(`wouldNukeBreakAlliance`)을 쓴다. 일반 핵까지 칸 주인만
+        보면, 동맹의 국경 바로 밖을 노린 핵 — *터지면 동맹이 깨질* 핵 — 이 남는다."""
+        for launcher, other in ((a, b), (b, a)):
+            count = 0
+            warheads = False
+            for n in list(self.nukes):
+                if n.owner != launcher:
+                    continue
+                if n.utype in (UnitType.MIRV, UnitType.MIRV_WARHEAD):
+                    if int(self.gmap.owner[n.dst]) != other:
+                        continue
+                elif other not in self._nuke_angered(launcher, n.utype, n.dst):
+                    continue
+                self.nukes.remove(n)
+                # ⚠ **탄두는 몇 발이 사라져도 소식에는 1로 센다**(원본이 발사자
+                # 집합으로 모은다). 갈라진 350발을 그대로 세면 "핵 350발이
+                # 사라졌다"가 되는데, 사람이 산 것은 MIRV 한 발이다.
+                if n.utype is UnitType.MIRV_WARHEAD:
+                    warheads = True
+                else:
+                    count += 1
+            count += 1 if warheads else 0
+            if count:
+                self.emit(EventKind.NUKES_CANCELLED_SENT, who=launcher,
+                          other=other, amount=count)
+                self.emit(EventKind.NUKES_CANCELLED_RECEIVED, who=other,
+                          other=launcher, amount=count)
 
     def _split_mirv(self, n: Nuke) -> None:
         """MIRV 는 스스로 터지지 않고 **탄두 여러 개로 갈라진다**(원본 350발 고정).
@@ -1935,6 +1992,7 @@ class GameState:
             self.emit(EventKind.ALLIANCE_EXPIRED, who=gone.b, other=gone.a)
         self._decay_relations()
         self._expire_alliance_requests()
+        self._expire_embargoes()
         self._expire_targets()
         self._apply_embargo_relations()
         self._grow()
@@ -1958,6 +2016,12 @@ class GameState:
         원본도 `req.reject()` 를 부르므로 받는 쪽이 결과를 본다."""
         for requestor, recipient in self.diplomacy.expire_requests(self.tick_count):
             self.emit(EventKind.ALLIANCE_REJECTED, who=requestor, other=recipient)
+
+    def _expire_embargoes(self) -> None:
+        """공격이 자동으로 건 금수는 5분 뒤 스스로 풀린다(`PlayerExecution`).
+
+        수동 금수는 여기서 절대 안 풀린다 — 판단은 `expire_embargoes` 안에 있다."""
+        self.diplomacy.expire_embargoes(self.tick_count)
 
     def _decay_relations(self) -> None:
         """`PlayerExecution.tick` 이 매 tick 부르는 것. 원한은 잊힌다."""

@@ -47,6 +47,11 @@ class EventKind(Enum):
     DONATION_SENT = "기부 보냄"
     DONATION_RECEIVED = "기부 받음"
     RENEW_ALLIANCE = "동맹 연장"
+    # `alliance_nukes_destroyed_outgoing` / `_incoming` — 동맹이 성립하면서
+    # 서로에게 날아가던 핵이 사라졌다. **양쪽 다 봐야 한다** — 쏜 쪽은 돈이
+    # 사라진 것이고, 맞을 뻔한 쪽은 살아난 것이다.
+    NUKES_CANCELLED_SENT = "핵 취소(내 것)"
+    NUKES_CANCELLED_RECEIVED = "핵 취소(상대 것)"
     CHAT = "이모지"
     DOOMSDAY_MARKED = "둠스데이 경고"     # 원본에는 없다 — 클락이 별도 UI 라서
 
@@ -84,6 +89,8 @@ CATEGORY: dict[EventKind, Category] = {
     EventKind.ALLIANCE_BROKEN: Category.ALLIANCE,
     EventKind.ALLIANCE_EXPIRED: Category.ALLIANCE,
     EventKind.RENEW_ALLIANCE: Category.ALLIANCE,
+    EventKind.NUKES_CANCELLED_SENT: Category.ALLIANCE,
+    EventKind.NUKES_CANCELLED_RECEIVED: Category.ALLIANCE,
     EventKind.DONATION_SENT: Category.TRADE,
     EventKind.DONATION_RECEIVED: Category.TRADE,
     EventKind.DOOMSDAY_MARKED: Category.SYSTEM,

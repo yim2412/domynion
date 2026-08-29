@@ -75,6 +75,10 @@ def describe(st: GameState, e: Event, me: int) -> str:
         return f"{who} 가 동맹 파기 — 배신"
     if k is EventKind.ALLIANCE_EXPIRED:
         return f"{who} 와의 동맹 만료"
+    if k is EventKind.NUKES_CANCELLED_SENT:
+        return f"{who} 와 동맹 — 그쪽으로 가던 핵 {int(e.amount)}발이 사라졌다"
+    if k is EventKind.NUKES_CANCELLED_RECEIVED:
+        return f"{who} 와 동맹 — 나에게 오던 핵 {int(e.amount)}발이 사라졌다"
     if k is EventKind.RENEW_ALLIANCE:
         return f"{who} 가 동맹 연장을 원한다 — 그 땅을 클릭해 동의"
     if k is EventKind.ATTACK_FAILED:
