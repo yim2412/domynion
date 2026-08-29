@@ -214,6 +214,9 @@ def test_mirv_warhead_count_is_scaled_down_on_small_maps():
 # 원본은 쫓아가 **나포**하고, 도착하면 **나포한 쪽이 전액**을 번다.
 
 def _trade_setup(st: GameState, *, dst_owner: int = 2, far: int = 40) -> TradeShip:
+    # ⚠ **목적지에 진짜 항구가 있어야 한다**(§5.81). 엔진은 목적지 항구가
+    # 사라지면 배를 지운다 — 항구 없이 만든 배는 첫 tick 에 없어져 아무것도 안 잰다.
+    port(st, dst_owner, 1, 5)
     t = TradeShip(owner=1, src_port=st.gmap.ref(far, 5), dst_port=st.gmap.ref(1, 5),
                   dst_owner=dst_owner,
                   path=[st.gmap.ref(x, 5) for x in range(29, far)])
@@ -259,6 +262,7 @@ def test_uncaptured_trade_ship_still_pays_both():
     """대조군 — 나포가 아니면 예전대로 양쪽이 함께 번다."""
     st = state()
     p1 = st.players[1]
+    port(st, 1, 30, 5)                    # 목적지 항구 — 없으면 배가 지워진다
     t = TradeShip(owner=0, src_port=st.gmap.ref(31, 5), dst_port=st.gmap.ref(30, 5),
                   dst_owner=1, path=[st.gmap.ref(31, 5), st.gmap.ref(30, 5)])
     st.trade_ships.append(t)

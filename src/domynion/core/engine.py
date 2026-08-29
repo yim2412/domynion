@@ -581,11 +581,18 @@ class GameState:
                         break
                     unit.spawn_rejections += 1
 
+        # ⚠ **목적지 항구가 아직 있는지 본다**(`!this._dstPort.isActive()`).
+        # 없으면 원본은 배를 지운다 — 이식 누락 여든셋. 우리는 주인이 살아 있기만
+        # 하면 계속 갔고, **항구가 부서졌는데도 도착해서 골드를 줬다.**
+        # (항구는 정복으로 넘어가거나 핵에 부서지거나 스스로 철거된다.)
+        live_ports = {tile for tile, _pid, _lvl, _u in ports}
         still: list[TradeShip] = []
         for t in self.trade_ships:
             src_p = self.players.get(t.owner)
             dst_p = self.players.get(t.dst_owner)
             if src_p is None or not src_p.alive or dst_p is None or not dst_p.alive:
+                continue
+            if t.dst_port not in live_ports:
                 continue
             # 나포된 배는 금수와 무관하다 — 해적이 자기 항구로 끌고 가는 것이라
             # 원래 두 나라의 관계가 항로를 끊지 않는다.
@@ -598,7 +605,7 @@ class GameState:
             if not t.arrived:
                 still.append(t)
                 continue
-            gold = trade_gold(len(t.path))
+            gold = trade_gold(t.tiles_travelled)
             if t.captured_by is not None:
                 # `wasCaptured` — **나포한 쪽이 전액**을 번다. 원래 주인은 0이다.
                 pirate = self.players.get(t.captured_by)
@@ -639,6 +646,9 @@ class GameState:
             return False
         t.captured_by = pid
         t.dst_port, t.dst_owner = best, pid
+        # ⚠ `tiles_travelled` 는 **안 건드린다.** 새 경로를 깔되 지나온 거리는
+        # 그대로 이어 센다 — 원본 `tilesTraveled` 가 배 하나에 붙어 있는 값이라
+        # 목적지가 바뀌어도 0으로 안 돌아간다(§5.81).
         t.path, t.step_i = path, 0
         return True
 

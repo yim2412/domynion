@@ -298,6 +298,11 @@ class TradeShip:
     # **나포한 쪽이 전액을 번다**(원래 주인은 한 푼도 못 받는다). 원본 통계에
     # `piracyGold` 가 별도 항목으로 있을 만큼 독립된 수입 경로다.
     captured_by: int | None = None
+    # ⚠ **골드는 "지나온 칸 수"로 매긴다**(`tilesTraveled`), 계획된 경로 길이가
+    # 아니다(§5.81). 나포되면 경로가 통째로 새로 깔리는데, 그때 `len(path)` 로
+    # 재면 **해적 항구까지의 짧은 거리**만 값을 쳐 준다 — 반대편 대륙까지 갔다가
+    # 잡힌 배와 항구 앞에서 잡힌 배가 같은 값이 된다.
+    tiles_travelled: int = 0
     # 해안선 물 칸을 밟은 마지막 tick. 그 뒤 20 tick 동안 나포당하지 않는다
     # (`_lastSetSafeFromPirates`). 항구 앞에서 잡히지 않게 하는 장치다.
     last_safe_tick: int = -10_000
@@ -317,6 +322,7 @@ class TradeShip:
     def advance(self) -> None:
         if not self.arrived:
             self.step_i += 1
+            self.tiles_travelled += 1
 
 
 def trade_gold(dist: float) -> int:
