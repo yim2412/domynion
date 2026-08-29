@@ -32,7 +32,7 @@ from ..core.engine import GameState
 from ..core.gamemap import TileRef
 from ..core import emoji
 from ..core.relations import Relation
-from ..core.naval import shoreline_tiles
+from ..core.naval import best_spawn, shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
 from .nukes import NationNukeBehavior
 from .alliance import NationAllianceBehavior
@@ -98,6 +98,10 @@ ISLAND_SECOND_CHANCE = 3      # 1/3 확률로 두 번째로 가까운 섬을 고
 # 두 배도 안 되면 아예 안 친다(easy 는 예외 — 있는 대로 쏟는다).
 BOT_ATTACK_MULTIPLE = 4
 BOT_ATTACK_MIN_MULTIPLE = 2
+
+# `findRandomBoatTarget` — 해안에서 사방 150칸 상자를 500번 찍는다.
+BOAT_TARGET_RANGE = 150
+BOAT_TARGET_TRIES = 500
 
 # 건설 판단은 `structures.NationStructureBehavior` 로 옮겼다(2026-08-24).
 #
@@ -748,40 +752,91 @@ class NationBot:
     def _boat(self, st: GameState, enemies: list) -> None:
         """`attackWithRandomBoat` — 해안에서 무작위로 고른 목표에 상륙.
 
-        빈 땅·봇 땅을 먼저 찾고, 없으면 사람 땅을 본다."""
+        빈 땅·봇 땅을 먼저 찾고, 없으면 사람 땅을 본다.
+
+        ⚠ 보낼 병력에도 **육상과 같은 두 제동**이 걸린다(§5.77): hard 이상의
+        `troopSendCap` 과 "상대 병력의 20% 미만이면 안 친다". 전에는 상륙만
+        무제한이라, 육상으로는 못 치는 상대에게 배로는 계속 들이받았다."""
+        p = st.players[self.pid]
+        if sum(1 for b in st.boats if b.owner == self.pid) >= C.BOAT_MAX_NUMBER:
+            return
         shore = shoreline_tiles(st.gmap, self.pid)
         if not len(shore):
             return
         src = int(self.rng.choice(shore.tolist()))
+        dst = None
         for high_interest in (True, False):
-            dst = self._boat_target(st, src, high_interest)
+            dst = self._boat_target(st, src, high_interest, enemies)
             if dst is not None:
-                st.send_boat(self.pid, dst)
+                break
+        if dst is None:
+            return
+        owner = int(st.gmap.owner[dst])
+        troops = p.troops * C.BOAT_ATTACK_RATIO
+        if owner >= 0:
+            troops = min(troops, self._send_cap(st))
+            if troops < C.ATTACK_MIN_TROOPS:
                 return
+            foe = st.players.get(owner)
+            if (foe is not None and self.difficulty in RETAIN_FRACTION
+                    and not self._under_attack(st)
+                    and troops < foe.troops * MIN_ATTACK_RATIO):
+                return
+        if troops < C.ATTACK_MIN_TROOPS:
+            return
+        st.send_boat(self.pid, dst, troops=troops)
 
-    def _boat_target(self, st: GameState, src: int, high_interest: bool):
+    def _boat_target(self, st: GameState, src: int, high_interest: bool,
+                     enemies: list = ()):
+        """`findRandomBoatTarget` — 해안에서 **사방 150칸 상자** 안을 무작위로
+        500번 찍어 본다.
+
+        ⚠ 우리는 반경 4~80 을 **20번**만 찍고 있었다. 원본 크기 지도(§5.47)로
+        올린 뒤로 그 범위는 이웃 나라 하나를 겨우 덮는다.
+
+        ⚠ **국경을 맞댄 적에게는 배를 안 보낸다** — 원본 주석 그대로
+        *"that usually looks stupid"*. 걸어서 갈 수 있는 상대에게 배를 돌리는
+        그림이 나온다. FFA 에서 **나보다 센 상대**도 뺀다."""
         gm = st.gmap
         sx, sy = gm.xy(src)
-        for _ in range(20):
-            r = self.rng.randint(4, 80)
-            ang = self.rng.random() * 6.283185
-            x = int(sx + r * __import__("math").cos(ang))
-            y = int(sy + r * __import__("math").sin(ang))
+        me = st.players[self.pid]
+        bordering = {q.pid for q in enemies}
+        unreachable: set[int] = set()
+        for _ in range(BOAT_TARGET_TRIES):
+            x = self.rng.randint(sx - BOAT_TARGET_RANGE, sx + BOAT_TARGET_RANGE)
+            y = self.rng.randint(sy - BOAT_TARGET_RANGE, sy + BOAT_TARGET_RANGE)
             if not (0 <= x < gm.width and 0 <= y < gm.height):
                 continue
             t = gm.ref(x, y)
             if not gm.passable(t):
                 continue
             owner = int(gm.owner[t])
-            if owner == self.pid:
+            if owner == self.pid or owner in unreachable:
                 continue
-            if owner >= 0 and st.diplomacy.is_friendly(self.pid, owner):
-                continue
+            if owner >= 0:
+                if owner in bordering:
+                    continue
+                if st.diplomacy.is_friendly(self.pid, owner):
+                    continue
+                other = st.players.get(owner)
+                if (other is not None and self._is_ffa(st)
+                        and other.troops > me.troops):
+                    continue
             interesting = owner < 0 or st.players[owner].kind == "bot"
             if high_interest and not interesting:
                 continue
+            # `canBuildTransportShip` — 물길이 없으면 그 나라는 통째로 건너뛴다
+            # (원본도 `unreachablePlayers` 로 같은 것을 기억한다).
+            if not self._reachable_by_water(st, t):
+                if owner >= 0:
+                    unreachable.add(owner)
+                continue
             return t
         return None
+
+    def _reachable_by_water(self, st: GameState, dst: TileRef) -> bool:
+        src = best_spawn(st.gmap, self.pid, dst)
+        return src is not None and st._water_path(src, dst) is not None
 
     # --- 외교 -------------------------------------------------------------
 

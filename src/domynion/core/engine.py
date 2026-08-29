@@ -428,7 +428,8 @@ class GameState:
     # --- 해상 -------------------------------------------------------------
 
     def send_boat(self, pid: int, dst: TileRef,
-                  target: int | None = "auto") -> TransportShip | None:
+                  target: int | None = "auto",
+                  troops: float | None = None) -> TransportShip | None:
         """상륙 부대를 띄운다. 병력 `troops/5`, 동시에 최대 3척(`boatMaxNumber`)."""
         p = self.players.get(pid)
         if p is None or not p.alive or self.over:
@@ -455,7 +456,10 @@ class GameState:
         path = self._water_path(src, dst)
         if path is None:
             return None
-        troops = min(p.troops * C.BOAT_ATTACK_RATIO, p.troops)
+        # 원본 `TransportShipExecution` 은 **보낼 병력을 인자로 받는다** —
+        # AI 가 상한(`troopSendCap`)을 걸어 줄여 보낼 수 있다(§5.77).
+        troops = p.troops * C.BOAT_ATTACK_RATIO if troops is None else troops
+        troops = min(troops, p.troops)
         if troops < C.ATTACK_MIN_TROOPS:
             return None
         p.troops -= troops
