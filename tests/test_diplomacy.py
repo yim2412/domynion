@@ -71,8 +71,11 @@ def test_request_accept_reject_flow():
     assert not d.request(0, 1), "같은 요청을 두 번 걸 수 없다"
     d.reject(1, 0)
     assert d.accept(1, 0, tick=5) is None, "거절된 요청은 수락할 수 없다"
-    assert d.request(0, 1)
-    assert d.accept(1, 0, tick=5) is not None
+    # ⚠ **거절당했다고 바로 다시 걸 수는 없다**(§5.82) — 같은 상대에게 30초
+    # 쿨다운이다. 전에는 이 줄이 `tick=0` 으로 다시 걸고 있었다.
+    assert not d.request(0, 1, tick=0), "쿨다운을 무시했다"
+    assert d.request(0, 1, tick=C.ALLIANCE_REQUEST_COOLDOWN_TICKS)
+    assert d.accept(1, 0, tick=C.ALLIANCE_REQUEST_COOLDOWN_TICKS) is not None
     assert d.allied(0, 1)
 
 

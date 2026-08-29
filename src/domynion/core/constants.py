@@ -149,6 +149,9 @@ NUKE_BLAST_WEIGHT_OUTER = 0.5
 
 # `allianceRequestDuration()` — 요청은 20초 뒤 자동 거절된다.
 ALLIANCE_REQUEST_DURATION_TICKS = 20 * 10
+# `allianceRequestCooldown()` — **같은 상대에게 30초 안에 다시 못 건다.**
+# 만료(20초)보다 길다. 그래서 거절당하거나 만료된 뒤에도 10초를 더 기다려야 한다.
+ALLIANCE_REQUEST_COOLDOWN_TICKS = 30 * 10
 
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
@@ -387,6 +390,9 @@ SAM_CONSTRUCTION_TICKS = 30 * 10
 # 지금 같은 값이라고 합치면 한쪽만 바뀔 때 조용히 어긋난다.
 SILO_COOLDOWN_TICKS = 90
 SAM_COOLDOWN_TICKS = 90
+# `samUpgradeDuration()` = SAM 쿨다운의 절반. **업그레이드는 즉시가 아니다** —
+# 사거리가 옛 값에서 새 값으로 이 시간에 걸쳐 선형으로 는다(§5.82).
+SAM_UPGRADE_DURATION_TICKS = SAM_COOLDOWN_TICKS // 2
 
 
 # --- 해상 (P4) ------------------------------------------------------------

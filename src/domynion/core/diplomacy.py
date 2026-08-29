@@ -76,6 +76,9 @@ class Diplomacy:
     # 요청자 -> {받는 이: 건 tick}. **시각을 들고 있어야 만료를 잰다**(§5.73).
     # `x in pending[a]` 는 dict 에서도 그대로 도므로 읽는 쪽은 안 바뀐다.
     pending: dict[int, dict[int, int]] = field(default_factory=dict)
+    # 요청자 -> {받는 이: 마지막으로 건 tick}. **끝난 요청도 기억한다**(§5.82) —
+    # 원본 `pastOutgoingAllianceRequests` 가 쿨다운을 재는 자리다.
+    last_request: dict[int, dict[int, int]] = field(default_factory=dict)
 
     # --- 조회 -------------------------------------------------------------
 
@@ -118,13 +121,28 @@ class Diplomacy:
 
     # --- 행동 -------------------------------------------------------------
 
-    def request(self, requestor: int, recipient: int, tick: int = 0) -> bool:
-        """동맹 요청. 이미 친하거나 요청이 걸려 있으면 안 된다."""
+    def can_request(self, requestor: int, recipient: int, tick: int) -> bool:
+        """`canSendAllianceRequest` — **같은 상대에게 30초 쿨다운**(§5.82).
+
+        ⚠ 만료(20초)보다 **길다.** 그래서 요청이 만료되거나 거절당한 뒤에도
+        10초를 더 기다려야 다시 걸 수 있다. 이게 없으면 AI 는 거절당한 그
+        tick 에 다시 걸고, 사람은 상대 이름 위에서 계속 클릭할 수 있다 —
+        §5.68 의 ✉ 깃발이 꺼졌다 켜졌다를 반복한다.
+
+        원본은 `pastOutgoingAllianceRequests` 에서 **가장 최근 것**만 본다."""
         if self.is_friendly(requestor, recipient):
             return False
         if recipient in self.pending.get(requestor, {}):
             return False
+        last = self.last_request.get(requestor, {}).get(recipient)
+        return last is None or tick - last >= C.ALLIANCE_REQUEST_COOLDOWN_TICKS
+
+    def request(self, requestor: int, recipient: int, tick: int = 0) -> bool:
+        """동맹 요청. 이미 친하거나 요청이 걸려 있거나 쿨다운이면 안 된다."""
+        if not self.can_request(requestor, recipient, tick):
+            return False
         self.pending.setdefault(requestor, {})[recipient] = tick
+        self.last_request.setdefault(requestor, {})[recipient] = tick
         return True
 
     def expire_requests(self, tick: int) -> list[tuple[int, int]]:
@@ -188,6 +206,9 @@ class Diplomacy:
         self.alliances = [al for al in self.alliances if not al.involves(pid)]
         self.pending.pop(pid, None)
         for s in self.pending.values():
+            s.pop(pid, None)
+        self.last_request.pop(pid, None)
+        for s in self.last_request.values():
             s.pop(pid, None)
         self.embargoes.pop(pid, None)
         for e in self.embargoes.values():

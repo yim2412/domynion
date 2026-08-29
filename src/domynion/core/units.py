@@ -102,6 +102,10 @@ class Unit:
     owner: int
     tile: TileRef
     level: int = 1
+    # SAM 업그레이드가 시작된 tick 과 그때의 사거리(`samLauncherState`).
+    # 사거리가 새 값으로 **서서히** 오르는 데 쓴다(§5.82 · `dynamic_sam_range`).
+    upgrade_started: int | None = None
+    upgrade_from: float = 0.0
     health: int | None = None
     ticks_left: int = 0                 # 건설이 끝나기까지
     active: bool = True

@@ -49,6 +49,27 @@ def sam_range(level: int) -> float:
     return C.MAX_SAM_RANGE - 480.0 / (level + 5)
 
 
+def dynamic_sam_range(unit, now: int) -> float:
+    """`dynamicSamRange` — **업그레이드 중에는 사거리가 서서히 는다**(§5.82).
+
+    ⚠ 우리는 레벨이 오른 그 tick 부터 새 사거리를 썼다. 원본은 옛 사거리에서
+    새 사거리로 `samUpgradeDuration`(쿨다운의 절반, 45 tick)에 걸쳐 선형으로
+    올린다. 즉시 적용하면 **업그레이드가 즉발 방공망 확장**이 된다 — 날아오는
+    핵을 보고 올려서 그 자리에서 막을 수 있다.
+
+    올리는 그 tick 에 `upgrade_started`(시각)와 `upgrade_from`(옛 사거리)을
+    적어 두면 여기서 그 둘로 잰다."""
+    started = getattr(unit, "upgrade_started", None)
+    if started is None:
+        return sam_range(unit.level)
+    target = sam_range(unit.level)
+    elapsed = now - started
+    if elapsed >= C.SAM_UPGRADE_DURATION_TICKS:
+        return target
+    start = unit.upgrade_from
+    return start + (target - start) * elapsed / C.SAM_UPGRADE_DURATION_TICKS
+
+
 def blast_counts(gmap: GameMap, dst: TileRef, utype: UnitType) -> dict[int, float]:
     """`computeNukeBlastCounts` — 반경 안 타일을 **주인별로 가중치로** 센다.
 

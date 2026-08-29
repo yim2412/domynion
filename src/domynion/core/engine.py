@@ -33,8 +33,8 @@ from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
 from . import enclave
 from .rot import RotState, rot_tiles
 from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
-                    blast_counts, blast_tiles, death_factor, is_targetable,
-                    sam_range)
+                    blast_counts, blast_tiles, death_factor,
+                    dynamic_sam_range, is_targetable, sam_range)
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
@@ -1303,7 +1303,7 @@ class GameState:
                 # SAM 한 기가 판의 모든 핵을 영원히 100% 막고 있었다.
                 if sam.under_construction or sam.in_cooldown:
                     continue
-                r = sam_range(sam.level)
+                r = dynamic_sam_range(sam, self.tick_count)
                 if self._dist_sq(sam.tile, here) <= r * r:
                     sam.fire(self.tick_count)
                     self.emit(EventKind.SAM_HIT, who=p.pid, other=n.owner, tile=here)
@@ -1878,12 +1878,21 @@ class GameState:
             if not self.can_upgrade(pid, unit):
                 break
             p.gold -= p.units.cost(unit.utype)
+            # ⚠ **레벨을 올리기 전에** 지금 사거리를 읽는다(§5.82). 올린 뒤에
+            # 읽으면 이미 새 레벨 값이라 "서서히 는다"가 그 자리에서 끝난다.
+            prev_range = (dynamic_sam_range(unit, self.tick_count)
+                          if unit.utype is UnitType.SAM_LAUNCHER else 0.0)
             unit.level += 1
             # `UnitImpl.increaseLevel` — 사일로·SAM 은 **새 관이 재장전부터
             # 시작한다.** 올리자마자 한 발 더 쏘게 두면 업그레이드가 즉발 화력이
             # 되어 버린다.
             if unit.utype in (UnitType.MISSILE_SILO, UnitType.SAM_LAUNCHER):
                 unit.fire(self.tick_count)
+            if unit.utype is UnitType.SAM_LAUNCHER:
+                # 사거리는 **서서히** 오른다(§5.82). 올리기 직전의 사거리에서
+                # 시작한다 — 연달아 올리면 그 중간값에서 이어진다.
+                unit.upgrade_from = prev_range
+                unit.upgrade_started = self.tick_count
             p.units.record_constructed(unit.utype)
             done += 1
         return done
