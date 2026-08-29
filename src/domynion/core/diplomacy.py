@@ -44,6 +44,11 @@ class Alliance:
     def both_agreed_to_extend(self) -> bool:
         return self._extend_a and self._extend_b
 
+    @property
+    def only_one_agreed_to_extend(self) -> bool:
+        """`onlyOneAgreedToExtend` — 한쪽만 동의한 상태. 봇은 이걸 보고 따라 동의한다."""
+        return self._extend_a != self._extend_b
+
 
 @dataclass
 class Embargo:

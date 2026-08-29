@@ -256,9 +256,9 @@ def test_high_interest_is_tried_first():
     order = []
     real = b._boat_target
 
-    def spy(st_, src, high_interest, enemies=()):
+    def spy(st_, src, high_interest, enemies=(), my_water=None):
         order.append(high_interest)
-        return real(st_, src, high_interest, enemies)
+        return real(st_, src, high_interest, enemies, my_water)
 
     b._boat_target = spy
     b._boat(st, [])
@@ -284,7 +284,7 @@ def test_the_boat_cap_is_checked_before_searching():
     b = bot()
     # 표적 탐색은 무작위라 빈손일 때가 많다 — 그러면 엔진까지 가지도 않아
     # 아무것도 안 재게 된다. 표적을 고정해 **상한 검사만** 남긴다.
-    b._boat_target = lambda st_, src, hi, en=(): st_.gmap.ref(5, 3)
+    b._boat_target = lambda st_, src, hi, en=(), mw=None: st_.gmap.ref(5, 3)
     b._boat(st, [])
     assert len(st.boats) == C.BOAT_MAX_NUMBER
     assert not [e for e in st.log.items if e.kind is EventKind.ATTACK_FAILED], \

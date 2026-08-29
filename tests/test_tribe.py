@@ -94,22 +94,39 @@ def test_a_nation_would_have_refused_the_same_request():
 # --- 건물: 지운다 -----------------------------------------------------------
 
 def test_a_bot_deletes_its_structures_one_at_a_time():
-    """정복으로 넘어온 건물이 봇 손에 쌓이면 아무도 못 쓰는 채로 남는다."""
+    """정복으로 넘어온 건물이 봇 손에 쌓이면 아무도 못 쓰는 채로 남는다.
+
+    ⚠ **이 테스트는 우리 발명품을 재고 있었다**(§5.78). 봇이 `units.remove()` 로
+    그 자리에서 지우고 쿨다운도 이 파일에만 있는 10 tick 이었다. 원본은
+    `DeleteUnitExecution` 을 예약하므로 사람이 누른 것과 **같은 경로**를 탄다 —
+    30초 쿨다운 · 30초 뒤 실제 삭제 · 그동안 건물은 계속 동작(§5.29).
+
+    막지 않았으면: 봇 손의 건물이 원본보다 30배 빨리 사라진다."""
     st = state({0: "human", 1: "bot"})
     p = st.players[1]
     for u in (UnitType.CITY, UnitType.PORT, UnitType.FACTORY):
         p.units.units.append(Unit(u, 1, tile=st.gmap.ref(7, 1)))
     b = bot(1)
+    # 판 시작 직후에는 아무도 못 지운다 — 쿨다운이 마지막 철거 시각(-1)부터
+    # 재기 때문이다. 원본도 같다. 시계를 그만큼 넘겨 둔다.
+    st.tick_count += C.DELETE_UNIT_COOLDOWN_TICKS
 
     b._delete_a_structure(st)
-    assert len(p.units.units) == 2, "한 번에 하나씩"
+    marked = [u for u in p.units.units if u.marked_for_deletion]
+    assert len(marked) == 1, "한 번에 하나씩 예약한다"
+    assert len(p.units.units) == 3, "예약만 했는데 그 자리에서 사라졌다"
 
     b._delete_a_structure(st)
-    assert len(p.units.units) == 2, "쿨다운 중에는 안 지운다"
+    assert len([u for u in p.units.units if u.marked_for_deletion]) == 1, \
+        "쿨다운 중에는 안 지운다"
 
-    st.tick_count += 10
+    st.tick_count += C.DELETE_UNIT_COOLDOWN_TICKS
     b._delete_a_structure(st)
-    assert len(p.units.units) == 1
+    assert len([u for u in p.units.units if u.marked_for_deletion]) == 2
+
+    st.tick_count += C.DELETION_MARK_DURATION_TICKS + 1
+    st._advance_deletions()
+    assert len(p.units.units) == 1, "예약이 지났는데 안 사라졌다"
 
 
 def test_deleting_does_nothing_when_there_is_nothing_to_delete():
@@ -177,9 +194,12 @@ def test_the_first_decision_always_expands_into_neutral():
     b = bot(1)
     # 문턱(상한의 50~60%)에는 못 미치되 최소 공격 병력은 넘는 값이라야,
     # 거부된 이유가 문턱인지 병력 부족인지 헷갈리지 않는다.
+    # ⚠ `expand_ratio`(10~20%) **위**여야 한다 — 그 아래면 보낼 병력이 음수라
+    # 문턱과 무관하게 안 나간다(§5.78 에서 공격 병력 공식을 원본으로 고쳤다).
     cap = st.players[1].max_troops(st.tiles(1))
-    st.players[1].troops = max(C.ATTACK_MIN_TROOPS * 4, cap * 0.1)
+    st.players[1].troops = max(C.ATTACK_MIN_TROOPS * 4, cap * 0.35)
     assert not b._has_trigger_troops(st), "문턱은 못 넘은 상태여야 한다"
+    assert st.players[1].troops > cap * b.expand_ratio, "재료: 보낼 병력이 있어야 한다"
 
     st.tick_count = b.attack_tick
     b.tick(st)

@@ -32,7 +32,7 @@ from ..core.engine import GameState
 from ..core.gamemap import TileRef
 from ..core import emoji
 from ..core.relations import Relation
-from ..core.naval import best_spawn, shoreline_tiles
+from ..core.naval import _touching_components, shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
 from .nukes import NationNukeBehavior
 from .alliance import NationAllianceBehavior
@@ -764,9 +764,14 @@ class NationBot:
         if not len(shore):
             return
         src = int(self.rng.choice(shore.tolist()))
+        # 내 해안이 접한 바다 성분을 **한 번만** 모은다 — 후보마다 다시 재면
+        # 표적 탐색이 판에서 가장 비싼 함수가 된다(아래 `_boat_target` 주석).
+        my_water: set[int] = set()
+        for t in shore.tolist():
+            my_water |= _touching_components(st.gmap, int(t))
         dst = None
         for high_interest in (True, False):
-            dst = self._boat_target(st, src, high_interest, enemies)
+            dst = self._boat_target(st, src, high_interest, enemies, my_water)
             if dst is not None:
                 break
         if dst is None:
@@ -787,7 +792,7 @@ class NationBot:
         st.send_boat(self.pid, dst, troops=troops)
 
     def _boat_target(self, st: GameState, src: int, high_interest: bool,
-                     enemies: list = ()):
+                     enemies: list = (), my_water: "set[int] | None" = None):
         """`findRandomBoatTarget` — 해안에서 **사방 150칸 상자** 안을 무작위로
         500번 찍어 본다.
 
@@ -800,6 +805,10 @@ class NationBot:
         gm = st.gmap
         sx, sy = gm.xy(src)
         me = st.players[self.pid]
+        if my_water is None:
+            my_water = set()
+            for t in shoreline_tiles(gm, self.pid).tolist():
+                my_water |= _touching_components(gm, int(t))
         bordering = {q.pid for q in enemies}
         unreachable: set[int] = set()
         for _ in range(BOAT_TARGET_TRIES):
@@ -827,16 +836,19 @@ class NationBot:
                 continue
             # `canBuildTransportShip` — 물길이 없으면 그 나라는 통째로 건너뛴다
             # (원본도 `unreachablePlayers` 로 같은 것을 기억한다).
-            if not self._reachable_by_water(st, t):
+            #
+            # ⚠ **경로를 깔면 안 된다.** 처음에는 후보마다 `water_path` 를
+            # 불렀는데, 프로파일에서 그 함수가 1,200 tick 에 **23.3초로 1등**이
+            # 됐다(1,451회 · 판 전체의 큰 몫). 원본이 여기서 쓰는
+            # `closestShoreByWater` 는 **연결 성분** 질의라 O(1) 이다 —
+            # "같은 바다에 붙어 있는가"만 보면 되고, 실제 경로는 배를 띄울 때
+            # `send_boat` 이 한 번 깐다. 우리도 성분만 본다.
+            if not (my_water & _touching_components(st.gmap, t)):
                 if owner >= 0:
                     unreachable.add(owner)
                 continue
             return t
         return None
-
-    def _reachable_by_water(self, st: GameState, dst: TileRef) -> bool:
-        src = best_spawn(st.gmap, self.pid, dst)
-        return src is not None and st._water_path(src, dst) is not None
 
     # --- 외교 -------------------------------------------------------------
 
