@@ -2642,6 +2642,11 @@ if (this.player.units(UnitType.Warship).length >= 10) {
 
 이걸로 `NationWarshipBehavior` 는 다 옮겼다.
 
+> ⚠ **"전함이 끝났다"는 뜻이 아니다.** `NationWarshipBehavior` 는 *AI 가 전함을
+> 어떻게 쓰는가*이고, 전함 자체의 규칙은 `WarshipExecution.ts`(766줄)에 있다 —
+> 거기서 **§5.87(후퇴 항구)** 이 나왔다. 원본은 *판단*과 *행동*이 다른 파일에
+> 있으므로, 한쪽을 다 옮겼다고 그 주제가 끝난 것이 아니다.
+
 #### ⚠ 변이 10개 중 처음엔 5개 — 넷이 "뒤의 검사가 앞의 검사를 가려 준다"
 
 | 살아남은 변이 | 원인 |
