@@ -111,9 +111,15 @@ def find_spot(gmap: GameMap, pid: int, near: TileRef,
 
     ⚠ **반경은 15 다**(`searchRadius`, §5.86). 전에는 40 이었다 — 클릭한 자리가
     막혔을 때 원본이 포기하는 거리에서도 우리는 계속 찾아 지었다. 40이면 사람이
-    바다를 눌러도 내륙 어딘가에 건물이 서서, 어디를 눌렀는지와 무관해진다."""
+    바다를 눌러도 내륙 어딘가에 건물이 서서, 어디를 눌렀는지와 무관해진다.
+
+    ⚠ **항구는 자를 다르게 쓴다**(`portSpawn`, §5.89). 위 반경으로 거른 자리들
+    중에서 다시 **맨해튼 20** 안만 보고 **맨해튼 거리 순**으로 고른다. 그래서
+    같은 후보 집합이어도 뽑히는 칸이 다르다 — 유클리드는 대각선을 가깝게 보고
+    맨해튼은 멀게 본다."""
     w, h = gmap.width, gmap.height
     cx, cy = near % w, near // w
+    is_port = utype is not None and utype is UnitType.PORT
     best, best_d = None, None
     for dy in range(-search, search + 1):
         y = cy + dy
@@ -124,7 +130,16 @@ def find_spot(gmap: GameMap, pid: int, near: TileRef,
             if not 0 <= x < w:
                 continue
             t = y * w + x
-            d = dx * dx + dy * dy
+            # ⚠ **원이지 정사각형이 아니다**(원본은 `euclideanDistSquared < r²`).
+            # 사각으로 두면 모서리(15,15)까지 후보가 되는데 그건 21칸이다.
+            if dx * dx + dy * dy > search * search:
+                continue
+            if is_port:
+                d = abs(dx) + abs(dy)
+                if d > C.PORT_SPAWN_RADIUS:
+                    continue
+            else:
+                d = dx * dx + dy * dy
             if best_d is not None and d >= best_d:
                 continue
             if can_place_structure(gmap, t, pid, existing, utype):

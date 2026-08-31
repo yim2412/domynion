@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 
 from domynion.core import constants as C
+from domynion.core.constants import Terrain
 from domynion.core.buildings import (all_structure_tiles, can_place_structure,
                                      find_spot, structure_tiles)
 from domynion.core.engine import GameState
@@ -118,3 +119,88 @@ def test_can_place_still_refuses_someone_elses_land() -> None:
     claim(st, 1, 31, 60, 0, 30)
     assert not can_place_structure(st.gmap, st.gmap.ref(35, 10), 0, [])
     assert can_place_structure(st.gmap, st.gmap.ref(25, 10), 0, [])
+
+
+# --- 항구만 자를 다르게 쓴다 (§5.89) ---------------------------------------
+
+def test_a_port_is_measured_in_manhattan_not_euclid() -> None:
+    """원본 `portSpawn` 은 **맨해튼 거리 순**으로 고른다(`radiusPortSpawn` = 20).
+
+    막지 않았으면(유클리드로 재면): 대각선 쪽 후보가 더 가깝게 보여 먼저 뽑힌다.
+    아래 대조군이 그것을 못 박는다 — 유클리드로는 대각선 쪽이 이긴다."""
+    rows = ["~" + "." * 39 for _ in range(40)]
+    gm = GameMap.from_rows(rows)
+    players = {0: PlayerState(pid=0, name="P0", kind="nation", start=gm.ref(1, 20))}
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 0}
+    n = 0
+    for y in range(40):
+        st.gmap.owner[st.gmap.ref(1, y)] = 0            # 해안 한 줄만 내 땅이다
+        n += 1
+    st._counts[0] = n
+    st.players[0].gold = 10_000_000
+
+    near = st.gmap.ref(9, 20)                            # 해안에서 8칸 안쪽
+    got = st.can_build(0, UnitType.PORT, near)
+    assert got is not None, "항구를 지을 자리가 있어야 한다"
+    assert got == st.gmap.ref(1, 20), "가장 가까운 해안이 아니다"
+    assert C.PORT_SPAWN_RADIUS == 20
+
+
+def test_a_port_beyond_the_manhattan_radius_is_refused() -> None:
+    """맨해튼 20 을 넘으면 항구는 안 선다 — 다른 건물은 유클리드 15 로 잰다.
+
+    ⚠ **둘이 갈리는 자리를 정확히 짚어야 뜻이 있다.** 오프셋 (11,10) 은
+    유클리드 14.87(≤15, 통과)인데 맨해튼 21(>20, 탈락)이다. (10,10) 은
+    유클리드 14.14 · 맨해튼 20 으로 둘 다 통과한다 — 그 둘을 나란히 잰다."""
+    rows = ["." * 40 for _ in range(40)]
+    rows[15] = rows[15][:17] + "~" + rows[15][18:]     # 바다 한 칸
+    gm = GameMap.from_rows(rows)
+    players = {0: PlayerState(pid=0, name="P0", kind="nation", start=gm.ref(5, 5))}
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    n = 0
+    for y in range(40):
+        for x in range(40):
+            if gm.terrain[gm.ref(x, y)] != Terrain.OCEAN:
+                st.gmap.owner[st.gmap.ref(x, y)] = 0
+                n += 1
+    st._counts = {0: n}
+    st.players[0].gold = 10_000_000
+
+    # ⚠ 바다 한 칸에는 **해안이 넷** 붙는다(상하좌우). 특정 칸을 기대하지 말고
+    # "그 넷 중 하나인가"로 잰다.
+    shores = {st.gmap.ref(16, 15), st.gmap.ref(18, 15),
+              st.gmap.ref(17, 14), st.gmap.ref(17, 16)}
+    assert all(st.gmap.is_shore(t) for t in shores), "재료: 넷 다 해안이어야 한다"
+
+    ok = st.can_build(0, UnitType.PORT, st.gmap.ref(6, 5))
+    assert ok in shores, "맨해튼 20 안인데 항구가 안 섰다"
+
+    # (5,5) 에서 네 해안까지 맨해튼은 21·21·23·23 — 전부 20 을 넘는다
+    far = st.gmap.ref(5, 5)
+    for t in shores:
+        d = abs(t % st.gmap.width - 5) + abs(t // st.gmap.width - 5)
+        assert d > C.PORT_SPAWN_RADIUS, f"재료: {d} 가 20 이하다"
+    assert st.can_build(0, UnitType.PORT, far) is None, "맨해튼 21 인데 지어졌다"
+    # 대조군: 같은 자리에 도시는 선다(항구만 맨해튼 자를 쓴다)
+    assert st.can_build(0, UnitType.CITY, far) is not None
+
+
+def test_the_search_area_is_a_circle_not_a_square() -> None:
+    """반경 15 는 **원**이다(`euclideanDistSquared < r²`).
+
+    막지 않았으면(사각으로 두면): 모서리 (15,15) 까지 후보가 되는데 그건
+    실제로 21칸이다 — 반경을 15 로 맞춰 놓고 21칸을 허용하는 셈이다.
+    아래 대조군이 자리를 못 박는다: (11,11) 은 사각 안이고 원 밖이다."""
+    st = make_state(width=80, height=80)
+    # 내 땅은 (30,30) 한 칸뿐 — 거기서만 지을 수 있다
+    st.gmap.owner[st.gmap.ref(30, 30)] = 0
+    st._counts[0] = 1
+    st.players[0].gold = 10_000_000
+
+    inside = st.gmap.ref(30 + 10, 30 + 10)      # 유클리드 14.14 ≤ 15
+    assert st.can_build(0, UnitType.CITY, inside) == st.gmap.ref(30, 30)
+
+    corner = st.gmap.ref(30 + 11, 30 + 11)      # 유클리드 15.56 > 15, 사각 안
+    assert max(11, 11) <= C.STRUCTURE_SEARCH_RADIUS, "재료: 사각 안이어야 한다"
+    assert st.can_build(0, UnitType.CITY, corner) is None, "모서리까지 지었다"

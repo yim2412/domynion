@@ -359,6 +359,10 @@ STRUCTURE_MIN_DIST = 15
 # (`validStructureSpawnTiles` 의 `searchRadius`). 최소 거리와 같은 값이다 —
 # 원본이 둘 다 15 를 쓴다. 전에 우리는 40 이었다(§5.86).
 STRUCTURE_SEARCH_RADIUS = 15
+# ⚠ **항구만 다르다**(`radiusPortSpawn`). 원본 `portSpawn` 은 위 반경으로 거른
+# 자리들 중에서, 다시 **맨해튼 20** 안의 것만 보고 **맨해튼 거리 순**으로 고른다.
+# 유클리드 순으로 고르면 대각선 쪽 후보가 먼저 뽑혀 자리가 달라진다(§5.89).
+PORT_SPAWN_RADIUS = 20
 
 # Game.ts :: MAX_UPGRADE_AMOUNT — 한 번에 올릴 수 있는 최대 레벨 수.
 # 우리는 오래 1레벨씩만 올릴 수 있었다. 도시 값이 25만 → 50만 → 100만으로 뛰므로
