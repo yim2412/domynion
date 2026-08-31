@@ -166,6 +166,23 @@ def test_a_structure_under_construction_is_not_spared():
     assert u.owner == 1
 
 
+def test_a_taken_building_finishes_under_its_new_owner():
+    """뺏긴 건물은 **새 주인 밑에서 완공된다**(원본 `ConstructionExecution.tick`
+    의 `this.player = this.structure.owner()`).
+
+    막지 않았으면: 짓던 사람이 완공을 가져가, 남의 땅 위에 내 도시가 선다."""
+    st = state()
+    u = put(st, 0, UnitType.CITY, 10, 10)
+    u.ticks_left = 3
+    take(st, 1, 10, 10)
+    for _ in range(6):
+        st.tick()
+    assert not u.under_construction, "완공이 안 됐다 — 대조군이 깨졌다"
+    assert u.owner == 1
+    assert u in st.players[1].units.units
+    assert u not in st.players[0].units.units
+
+
 def test_the_new_owner_pays_more_for_the_next_city():
     """⚠ **완공 집계(`record_constructed`)도 같이 넘어가야 한다.**
 
