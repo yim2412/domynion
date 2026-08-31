@@ -16,7 +16,7 @@ from domynion.core.buildings import DefensePostIndex
 from domynion.core.constants import Terrain
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
-from domynion.core.naval import (best_spawn, port_check_due,
+from domynion.core.naval import (best_spawn, landing_tile, port_check_due,
                                  proximity_bonus_count, shoreline_tiles,
                                  trade_gold, trade_spawn_rate, trading_ports,
                                  water_path)
@@ -587,3 +587,93 @@ def test_water_path_still_rejects_unreachable():
     """이어지지 않은 바다는 여전히 None 이다(연결성분 검사)."""
     gm = GameMap.from_rows(["~~AA~~"] * 10)
     assert water_path(gm, gm.ref(0, 5), gm.ref(5, 5)) is None
+
+
+# --- 상륙 지점을 옮긴다 (closestReachableShore) -----------------------------
+
+def _two_shores(rows: list[str]) -> GameState:
+    """왼쪽은 0번(공격자) 섬, 오른쪽은 1번 대륙, 가운데는 바다.
+
+    ⚠ **공격자에게 바다에 닿는 땅이 있어야 한다.** 없으면 `landing_tile` 이
+    무조건 None 을 돌려주고, 그러면 아래 시험들이 전부 *같은 이유로* 통과해
+    아무것도 안 재게 된다 — 처음에 그렇게 썼다가 잡혔다."""
+    gm = GameMap.from_rows(rows)
+    players = {}
+    for pid, x in ((0, 0), (1, len(rows[0]) - 1)):
+        t = gm.ref(x, 0)
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", is_bot=False, start=t)
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    return st
+
+
+def _claim(st: GameState, pid: int, xs: range) -> None:
+    n = 0
+    for y in range(st.gmap.height):
+        for x in xs:
+            t = st.gmap.ref(x, y)
+            if st.gmap.terrain[t] != Terrain.OCEAN:
+                st.gmap.owner[t] = pid
+                n += 1
+    st._counts = {**getattr(st, "_counts", {}), pid: n}
+
+
+def test_clicking_inland_lands_at_the_nearest_shore() -> None:
+    """**클릭한 칸이 곧 상륙 지점이 아니다.**
+
+    막지 않았으면(클릭 칸을 그대로 쓰면): 안쪽을 누른 순간 `water_path` 가
+    None 이 되어 배가 아예 안 뜬다 — 아래 둘째 단언이 그 상태를 못 박는다."""
+    st = _two_shores(["..~~~...."] * 3)
+    _claim(st, 0, range(0, 2))
+    _claim(st, 1, range(5, 9))
+    inland = st.gmap.ref(7, 1)                       # 바다에서 두 칸 안쪽
+    assert water_path(st.gmap, st.gmap.ref(1, 1), inland) is None,         "안쪽 칸이어야 시험이 뜻을 갖는다"
+    assert landing_tile(st.gmap, 0, inland) == st.gmap.ref(5, 1),         "가장 가까운 해안으로 안 옮겼다"
+
+
+def test_the_landing_tile_keeps_the_clicked_owner() -> None:
+    """옮긴 자리도 **클릭한 칸과 주인이 같아야** 한다 — 엉뚱한 나라에 상륙하면 안 된다."""
+    st = _two_shores(["..~~~...."] * 3)
+    _claim(st, 0, range(0, 2))
+    _claim(st, 1, range(6, 9))
+    _claim(st, 2, range(5, 6))                       # 해안 한 줄은 2번의 것
+    # 2번을 클릭하면 2번 해안으로 간다
+    assert landing_tile(st.gmap, 0, st.gmap.ref(5, 1)) == st.gmap.ref(5, 1)
+    # 1번을 클릭하면 1번 땅에 해안이 없으므로 갈 곳이 없다
+    assert landing_tile(st.gmap, 0, st.gmap.ref(7, 1)) is None,         "남의 해안으로 상륙시켰다"
+
+
+def test_a_shore_on_an_inland_lake_is_never_chosen() -> None:
+    """내 배가 **물로 닿을 수 없는** 해안은 안 고른다.
+
+    원본 주석이 그대로 적어 뒀다 — *\"a shore facing a disconnected inland lake
+    is never chosen\"*. 막지 않았으면: 호수를 낀 해안이 **거리 0**(클릭한 칸
+    자신)이라 그대로 뽑히고, 배는 거기까지 갈 수 없어 출발조차 못 한다."""
+    st = _two_shores(["..~~~.......",
+                      "..~~~....~..",              # (9,1) 이 내륙 호수
+                      "..~~~......."])
+    _claim(st, 0, range(0, 2))
+    _claim(st, 1, range(5, 12))
+    clicked = st.gmap.ref(10, 1)                     # 호수 바로 옆 = 해안이다
+    assert st.gmap.is_shore(clicked), "클릭 칸이 해안이어야 시험이 뜻을 갖는다"
+    got = landing_tile(st.gmap, 0, clicked)
+    assert got != clicked, "호수를 낀 해안을 골랐다"
+    assert got == st.gmap.ref(5, 1), "바깥 바다에 닿는 가장 가까운 해안이어야 한다"
+
+
+def test_send_boat_actually_uses_the_moved_landing_tile() -> None:
+    """**배선을 따로 잰다.** 위 셋은 `landing_tile` 만 직접 부르므로,
+    `send_boat` 이 그것을 안 불러도 전부 통과한다 — 변이 하네스가 실제로
+    그 구멍을 잡았다(호출을 통째로 지워도 초록이었다).
+
+    막지 않았으면: 안쪽을 클릭했을 때 `water_path` 가 None 이라 배가 안 뜬다."""
+    st = _two_shores(["..~~~...."] * 3)
+    _claim(st, 0, range(0, 2))
+    _claim(st, 1, range(5, 9))
+    st.players[0].troops = 100_000.0
+    inland = st.gmap.ref(7, 1)
+    boat = st.send_boat(0, inland)
+    assert boat is not None, "안쪽을 클릭했다고 배가 안 떴다"
+    assert boat.dst == st.gmap.ref(5, 1), "옮긴 상륙 지점을 안 썼다"
+    assert boat.path[-1] == boat.dst, "경로 끝이 상륙 지점이 아니다"

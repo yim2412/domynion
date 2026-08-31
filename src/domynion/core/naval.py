@@ -124,6 +124,83 @@ def shoreline_tiles(gmap: GameMap, pid: int) -> np.ndarray:
     return np.flatnonzero((mine & touch).ravel()).astype(np.int64)
 
 
+def landing_tile(gmap: GameMap, attacker: int, clicked: TileRef,
+                 max_dist: int = C.LANDING_SEARCH_RANGE) -> TileRef | None:
+    """상륙 **지점**을 정한다 — 원본 `closestReachableShore`.
+
+    ⚠ **클릭한 칸이 곧 상륙 지점이 아니다.** 원본은 클릭한 칸에서 맨해튼 거리
+    50 안을 훑어 이런 칸을 고른다:
+
+    1. **육지이면서 해안**이고
+    2. **클릭한 칸과 주인이 같고**(엉뚱한 나라에 상륙하지 않는다)
+    3. 그 칸이 접한 바다가 **내 해안에서 물로 닿는 곳**이어야 한다
+
+    셋째가 규칙이다. 원본 주석이 직접 적어 뒀다 — *"a shore facing a
+    disconnected inland lake is never chosen"*. 내륙 호수를 낀 해안은
+    거기까지 배가 못 가므로 애초에 고르지 않는다.
+
+    전에는 **클릭한 칸을 그대로 목적지로 썼다.** 그래서 사람은 해안 한 칸을
+    정확히 눌러야 했고, 조금만 안쪽을 누르면 *"배를 못 보낸다"* 만 떴다.
+    원본은 그 자리에서 가장 가까운 해안으로 옮겨 준다.
+
+    맨해튼 거리가 같은 후보가 여럿이면 **칸 번호가 작은 것**을 고른다. 원본은
+    LIFO 순회 순서에 달렸는데 그건 재현할 이유가 없는 세부다 — 우리는 대신
+    **결정론적이고 설명 가능한** 기준을 쓴다."""
+    h, w = gmap.height, gmap.width
+    cx, cy = clicked % w, clicked // w
+    target = int(gmap.owner[clicked])
+
+    x0, x1 = max(0, cx - max_dist), min(w - 1, cx + max_dist)
+    y0, y1 = max(0, cy - max_dist), min(h - 1, cy + max_dist)
+    # ⚠ **상자 안에서만 센다.** 해안 마스크를 지도 전체에 만들면 원본 크기에서
+    # 200만 칸짜리 배열을 네 방향으로 미는 일이 **호출마다** 벌어진다
+    # (`passable_mask` 가 판 시간의 28% 였던 것과 같은 함정, §5.50). 이웃을
+    # 보려면 한 칸 여유가 필요해 상자를 1칸 넓혀 자른다.
+    mx0, mx1 = max(0, x0 - 1), min(w - 1, x1 + 1)
+    my0, my1 = max(0, y0 - 1), min(h - 1, y1 + 1)
+    sub = gmap.terrain.reshape(h, w)[my0:my1 + 1, mx0:mx1 + 1]
+    land = (sub >= Terrain.PLAINS) & (sub <= Terrain.MOUNTAIN)
+    ocean = (sub == Terrain.OCEAN)
+    touch = np.zeros(sub.shape, dtype=bool)
+    touch[:, :-1] |= ocean[:, 1:]
+    touch[:, 1:] |= ocean[:, :-1]
+    touch[:-1, :] |= ocean[1:, :]
+    touch[1:, :] |= ocean[:-1, :]
+
+    iy, ix = y0 - my0, x0 - mx0                  # 여유분을 뺀 진짜 상자
+    ny, nx = y1 - y0 + 1, x1 - x0 + 1
+    owner = gmap.owner.reshape(h, w)[y0:y1 + 1, x0:x1 + 1]
+    # ⚠ `touch` 는 **결과를 안 바꾼다**(순수 성능 가드다). 아래에서 후보마다
+    # 다시 묻는 `_touching_components(t) & reach` 가 이미 "바다에 접했는가"를
+    # 포함하기 때문이다 — 지우는 변이가 살아남는 것이 정상이니 파지 말 것.
+    # 없으면 상자 안 **모든** 육지가 후보가 되어(반경 50이면 5,000칸) 칸마다
+    # 성분을 묻게 된다. 실제로 변이 하네스가 이걸 잡아 확인했다.
+    box = (slice(iy, iy + ny), slice(ix, ix + nx))
+    ok = (owner == target) & land[box] & touch[box]
+    ys, xs = np.nonzero(ok)
+    if not len(ys):
+        return None
+    dist = np.abs(xs + x0 - cx) + np.abs(ys + y0 - cy)
+    keep = dist <= max_dist
+    ys, xs, dist = ys[keep], xs[keep], dist[keep]
+    if not len(ys):
+        return None
+
+    # 내 해안에서 물로 닿는 바다 성분들. 여기에 접하지 않는 해안은 못 간다.
+    reach: set[int] = set()
+    for t in shoreline_tiles(gmap, attacker):
+        reach |= _touching_components(gmap, int(t))
+    if not reach:
+        return None
+
+    order = np.lexsort((((ys + y0) * w + (xs + x0)), dist))   # 거리 → 칸 번호
+    for i in order:
+        t = int((ys[i] + y0) * w + (xs[i] + x0))
+        if _touching_components(gmap, t) & reach:
+            return t
+    return None
+
+
 def best_spawn(gmap: GameMap, pid: int, toward: TileRef) -> TileRef | None:
     """`toward` 에 가장 가까운 내 해안 칸. 원본 `bestTransportShipSpawn` 자리다."""
     shore = shoreline_tiles(gmap, pid)

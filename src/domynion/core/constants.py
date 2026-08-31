@@ -411,6 +411,9 @@ SAM_SCORE_URGENCY_PER_TICK = 100
 # Config.ts :: boatMaxNumber() / warship*() / tradeShip*()
 
 BOAT_MAX_NUMBER = 3            # 동시에 띄울 수 있는 수송선 수
+# 클릭한 칸에서 상륙 지점을 찾는 반경(`closestReachableShore` 의 `maxDist`).
+# 안쪽을 눌러도 이 안의 가장 가까운 해안으로 옮겨 준다.
+LANDING_SEARCH_RANGE = 50
 BOAT_TICKS_PER_MOVE = 1        # TransportShipExecution.ticksPerMove
 # 퇴각해 돌아온 병력의 손실 비율. 원본 `TransportShipExecution.ts` 의
 # `const malusForRetreat = 25` — 배를 돌리면 태운 병력의 25% 가 사라진다.

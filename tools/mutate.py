@@ -79,10 +79,18 @@ def _write(p: Path, data: bytes) -> None:
 
 
 def apply(m: Mutation) -> tuple[Path, bytes] | None:
-    """변이를 넣는다. 패턴이 **정확히 한 번** 맞지 않으면 None(=INVALID)."""
+    """변이를 넣는다. 패턴이 **정확히 한 번** 맞지 않으면 None(=INVALID).
+
+    ⚠ **줄바꿈을 파일에 맞춘다.** 이 저장소는 CRLF 와 LF 가 섞여 있고 명세는
+    JSON 이라 줄바꿈이 항상 LF 다. 맞춰 주지 않으면 여러 줄 패턴이 CRLF 파일에서
+    **한 번도 안 맞아 전부 INVALID 로 샌다** — 이 도구를 처음 써 보자마자 변이
+    여섯 중 둘이 이걸로 날아갔다. 명세를 쓰는 쪽이 파일의 줄바꿈을 알아야 하는
+    것은 함정이라, 하네스가 대신 맞춘다."""
     p = ROOT / m.file
     original = _read(p)
-    old, new = m.old.encode("utf-8"), m.new.encode("utf-8")
+    nl = b"\r\n" if b"\r\n" in original else b"\n"
+    old = m.old.encode("utf-8").replace(b"\n", nl)
+    new = m.new.encode("utf-8").replace(b"\n", nl)
     if original.count(old) != 1:
         return None
     _write(p, original.replace(old, new))

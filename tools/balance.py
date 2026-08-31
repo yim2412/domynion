@@ -39,7 +39,8 @@ TICKS = 9_000
 
 
 def run(seed: int, size: str, difficulty: str, ticks: int,
-        nations: int, bots: int, clock: str | None = None) -> dict:
+        nations: int, bots: int, clock: str | None = None,
+        progress: int = 0) -> dict:
     t0 = time.perf_counter()
     rng = random.Random(seed)
     st = GameState.new(nations, rng, map_name="world", human=-1,
@@ -51,10 +52,18 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
         st.clock.cfg.enabled = True
         st.clock.cfg.speed = clock
     ai = nation.attach(st, rng, difficulty=difficulty)
+    # ⚠ **진행을 찍는다.** 이 도구는 세 판이 다 끝나야 표를 내므로, 그전에는
+    # 얼마나 남았는지 알 방법이 없었다 — 실제로 3시간 넘게 "0/3 seed" 만 보며
+    # 기다린 적이 있다(2026-08-31). 추측으로 보고하지 않으려면 실제 출력이
+    # 있어야 한다(공통 규칙 §1). 워커가 다른 프로세스라 stderr 로 낸다.
     while not st.over and st.tick_count < ticks:
         st.tick()
         for b in ai:
             b.tick(st)
+        if progress and st.tick_count % progress == 0:
+            print(f"[seed {seed}] {st.tick_count}/{ticks} tick  "
+                  f"{time.perf_counter() - t0:.0f}초  생존 {len(list(st.alive))}",
+                  file=sys.stderr, flush=True)
 
     golds = sorted(int(p.gold) for p in st.alive) or [0]
     launched = sum(p.units.constructed(UnitType.ATOM_BOMB)
@@ -95,10 +104,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bots", type=int, default=BOTS)
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--out", type=Path, default=None, help="JSON 으로도 남긴다")
+    ap.add_argument("--progress", type=int, default=1000, metavar="N",
+                    help="N tick 마다 진행을 stderr 로 찍는다 (0이면 끈다). "
+                         "판이 한 시간을 넘으므로 기본으로 켜 둔다")
     a = ap.parse_args(argv)
 
-    jobs = [(s, a.size, a.difficulty, a.ticks, a.nations, a.bots, a.clock)
-            for s in a.seeds]
+    jobs = [(s, a.size, a.difficulty, a.ticks, a.nations, a.bots, a.clock,
+             a.progress) for s in a.seeds]
     t0 = time.perf_counter()
     if a.jobs > 1:
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:

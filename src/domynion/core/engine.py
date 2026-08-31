@@ -27,8 +27,8 @@ from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
-                    _touching_components, manhattan, port_check_due,
-                    trade_gold, trade_spawn_rate,
+                    _touching_components, landing_tile, manhattan,
+                    port_check_due, trade_gold, trade_spawn_rate,
                     trading_ports, water_path)
 from . import enclave
 from .rot import RotState, rot_tiles
@@ -450,6 +450,15 @@ class GameState:
             target = None if o < 0 else o
         if not self.can_attack(pid, target):
             return None
+
+        # ⚠ **상륙 지점을 먼저 옮긴다**(원본 `TransportShipExecution.init` 이
+        # `targetTransportTile` → `canBuild(..., dst)` 순서다). 클릭한 칸이 곧
+        # 상륙 지점이 아니다 — 안쪽을 눌러도 50칸 안의 가장 가까운 해안으로
+        # 간다. 출발지도 **옮긴 뒤의** 목적지를 기준으로 골라야 한다.
+        moved = landing_tile(self.gmap, pid, dst)
+        if moved is None:
+            return None
+        dst = moved
 
         src = best_spawn(self.gmap, pid, dst)
         if src is None:
