@@ -181,7 +181,7 @@ def test_breaking_an_alliance_warns_about_the_traitor_mark():
 
 def test_embargo_toggles_and_donations_move_resources():
     st = state()
-    st.players[0].gold = 4_000
+    st.players[0].gold = 3_000
     by_label(diplomacy_items(st, 0, 1, noop), "금수").action()
     assert st.diplomacy.embargoed(0, 1)
     assert by_label(diplomacy_items(st, 0, 1, noop), "금수 해제") is not None
@@ -197,7 +197,11 @@ def test_embargo_toggles_and_donations_move_resources():
     gold = by_label(diplomacy_items(st, 0, 1, noop), "골드 주기")
     assert gold.enabled
     gold.action()
-    assert st.players[1].gold == 1_000
+    # ⚠ **기대값을 상수로 만들면 안 된다.** `3_000 // C.DONATION_DIVISOR` 로 쓰면
+    # 상수를 4 로 되돌려도 양쪽이 같이 움직여 통과한다 — 실제로 변이가 살아남았다.
+    # 한 번에 **1/3** 이 나간다(원본 `DonateGoldExecution` 의 `gold()/3n`, §5.90).
+    assert st.players[1].gold == 1_000, "3,000 의 1/3 이 아니다"
+    assert C.DONATION_DIVISOR == 3
 
     # 같은 상대에게 연달아는 안 된다 — 쿨다운 10초.
     assert not by_label(diplomacy_items(st, 0, 1, noop), "병력 주기").enabled

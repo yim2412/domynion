@@ -156,6 +156,11 @@ ALLIANCE_REQUEST_COOLDOWN_TICKS = 30 * 10
 REL_NUKED = -100.0                 # NukeExecution
 REL_MIRV = -100.0                  # MIRVExecution (양방향)
 REL_TROOP_DONATION = 50.0          # DonateTroopExecution
+# 기부 버튼 한 번에 나가는 몫. **원본은 골드도 병력도 1/3 이다**
+# (`defaultDonationAmount` = `troops()/3`, `DonateGoldExecution` 의 `gold()/3n`).
+# 우리는 1/4 였다(§5.90). 라디얼 메뉴가 액수를 안 넘기므로 이 기본값이 곧
+# 사람이 보내는 액수다.
+DONATION_DIVISOR = 3
 REL_EMBARGO = -20.0                # NationExecution (걸면 −20, 풀면 +20)
 REL_ATTACKED_ALLY = -20.0          # AiAttackBehavior — 동맹을 친 벌
 REL_WARSHIP_SANK_TRADE = -7.5      # NationWarshipBehavior

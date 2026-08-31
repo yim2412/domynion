@@ -474,12 +474,14 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
              hint="무역선 항로를 끊는다 (양쪽 다 손해다)", colour=COL_DIPLO),
         Item("골드 주기", action=lambda: _donate_gold(st, me, target, notify),
              enabled=can_donate and mine.gold > 0,
-             hint=(f"가진 골드의 1/4 ({_gold(mine.gold // 4)}) 을 보낸다"
+             hint=(f"가진 골드의 1/{C.DONATION_DIVISOR} "
+                   f"({_gold(mine.gold // C.DONATION_DIVISOR)}) 을 보낸다"
                    if can_donate else _no_donate),
              colour=COL_PLAIN),
         Item("병력 주기", action=lambda: _donate_troops(st, me, target, notify),
              enabled=can_donate and mine.troops > 1,
-             hint=(f"병력의 1/4 ({mine.troops / 4:,.0f}) 을 보낸다"
+             hint=(f"병력의 1/{C.DONATION_DIVISOR} "
+                   f"({mine.troops / C.DONATION_DIVISOR:,.0f}) 을 보낸다"
                    if can_donate else _no_donate),
              colour=COL_PLAIN),
     ]
@@ -563,13 +565,13 @@ def _extend(st: GameState, me: int, target: int, notify) -> None:
 
 
 def _donate_gold(st: GameState, me: int, target: int, notify) -> None:
-    amount = st.players[me].gold // 4
+    amount = st.players[me].gold // C.DONATION_DIVISOR
     notify(f"P{target} 에게 골드 {_gold(amount)}" if st.donate_gold(me, target, amount)
            else "보낼 골드가 없다")
 
 
 def _donate_troops(st: GameState, me: int, target: int, notify) -> None:
-    amount = st.players[me].troops / 4
+    amount = st.players[me].troops / C.DONATION_DIVISOR
     # ⚠ 실패 이유가 둘이다(§5.71) — 내 병력이 없거나, **상대가 상한이라 못 받거나**.
     # 앞의 것만 말하면 상한에 붙은 동맹에게 보내려다 "내 병력이 없다"는 틀린 답을 본다.
     notify(f"P{target} 에게 병력 {amount:,.0f}"
