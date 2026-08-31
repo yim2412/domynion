@@ -810,10 +810,30 @@ class GameState:
             if health_before >= threshold:
                 return False
             w.retreat_port = self._nearest_port_tile(w, p)
-        elif not any(u.tile == w.retreat_port and not u.under_construction
-                     for u in p.units.of(UnitType.PORT)):
-            w.retreat_port = self._nearest_port_tile(w, p)   # 항구가 사라졌다
-            w.docked = False
+        else:
+            # `refreshRetreatPortTile` — **매 tick 다시 본다**(§5.87). 전에는
+            # 항구가 사라졌을 때만 골랐다. 그래서 꽉 찬 항구 앞에서 영원히
+            # 기다리는 배가 생겼고, 훨씬 가까운 항구가 새로 서도 안 갔다.
+            port = next((u for u in p.units.of(UnitType.PORT)
+                         if u.tile == w.retreat_port
+                         and not u.under_construction), None)
+            if port is None:
+                w.retreat_port = self._nearest_port_tile(w, p)   # 항구가 사라졌다
+                w.docked = False
+            elif not w.docked and self._port_full_of_healing(port, exclude=w):
+                alt = self._nearest_port_tile(w, p, free_only=True)
+                if alt is not None:
+                    w.retreat_port = alt
+            elif not w.docked:
+                # ⚠ **문턱이 없으면 두 항구 사이에서 제자리걸음한다.** 새 항구가
+                # 지금 목적지보다 `0.75` 배보다 더 가까울 때만 바꾼다.
+                got = self._nearest_port(w, p, free_only=True)
+                if got is not None:
+                    tile, d = got
+                    cur = self._dist_sq(w.tile, w.retreat_port)
+                    closer = d < cur * C.WARSHIP_PORT_SWITCH_THRESHOLD
+                    if tile != w.retreat_port and closer:
+                        w.retreat_port = tile
 
         # ⚠ None 검사는 **한 곳에만** 둔다. 위 두 갈래에 각각 두면 한쪽을 지워도
         # 다른 쪽이 가려 줘서 변이가 살아남는다(실제로 살아남았다).
@@ -831,12 +851,10 @@ class GameState:
         if self._dist_sq(w.tile, w.retreat_port) <= C.WARSHIP_DOCKING_RANGE ** 2:
             port = next(u for u in p.units.of(UnitType.PORT)
                         if u.tile == w.retreat_port)
-            docked_here = [o for o in self.warships
-                           if o is not w and o.docked and not o.sunk
-                           and o.retreat_port == w.retreat_port]
-            if w.docked or len(docked_here) < port.level:
+            docked_here = self._docked_at(port, exclude=w)
+            if w.docked or docked_here < port.level:
                 w.docked = True
-                self._apply_docked_healing(w, port, len(docked_here) + 1)
+                self._apply_docked_healing(w, port, docked_here + 1)
             elif w.health >= w.max_health:
                 self._cancel_retreat(w)
                 return False
@@ -855,7 +873,15 @@ class GameState:
     def _cancel_retreat(self, w: Warship) -> None:
         w.retreat_port, w.docked, w.heal_remainder = None, False, 0.0
 
-    def _nearest_port_tile(self, w: Warship, p: PlayerState) -> "TileRef | None":
+    def _nearest_port_tile(self, w: Warship, p: PlayerState,
+                           free_only: bool = False) -> "TileRef | None":
+        """가장 가까운 내 항구. `free_only` 면 **정박 자리가 남은 곳만** 본다
+        (원본 `nearestAvailablePortTile`)."""
+        return (self._nearest_port(w, p, free_only) or (None, None))[0]
+
+    def _nearest_port(self, w: Warship, p: PlayerState,
+                      free_only: bool = False):
+        """(칸, 거리제곱) 또는 None. 거리를 쓰는 쪽이 있어 따로 둔다."""
         comp = _touching_components(self.gmap, w.tile)
         best, best_d = None, None
         for u in p.units.of(UnitType.PORT):
@@ -863,10 +889,22 @@ class GameState:
                 continue
             if comp and not (comp & _touching_components(self.gmap, u.tile)):
                 continue          # 수로가 안 이어져 있으면 갈 수 없다
+            if free_only and self._port_full_of_healing(u, exclude=w):
+                continue
             d = self._dist_sq(w.tile, u.tile)
             if best_d is None or d < best_d:
                 best, best_d = u.tile, d
-        return best
+        return None if best is None else (best, best_d)
+
+    def _docked_at(self, port, exclude: "Warship | None" = None) -> int:
+        """그 항구에 정박해 수리 중인 배 수(`dockedShipsAtPort`)."""
+        return sum(1 for o in self.warships
+                   if o is not exclude and not o.sunk and o.owner == port.owner
+                   and o.docked and o.retreat_port == port.tile)
+
+    def _port_full_of_healing(self, port, exclude: "Warship | None" = None) -> bool:
+        """`isPortFullOfHealing` — 정박한 배가 **항구 레벨만큼** 있으면 꽉 찼다."""
+        return self._docked_at(port, exclude) >= port.level
 
     def _pick_retreat_aggro(self, w: Warship, r2: int):
         """`findRetreatAggroTarget` — 후퇴 중에는 **무역선을 안 쫓는다.**

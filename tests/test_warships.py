@@ -911,3 +911,87 @@ def test_no_warship_no_button():
     item = next(i for i in attack_items(st, 0, st.gmap.ref(40, 20), lambda _m: None)
                 if i.label == "전함 부르기")
     assert not item.enabled and "전함이 없다" in item.hint
+
+
+# --- 후퇴 항구를 매 tick 다시 본다 (§5.87) ---------------------------------
+
+def _two_ports(level_a: int = 1, level_b: int = 1):
+    """항구 둘 — 가까운 쪽(x=40)과 먼 쪽(x=5). 전함은 x=45 에서 출발한다."""
+    st = state()
+    for x, lv in ((40, level_a), (5, level_b)):
+        u = Unit(UnitType.PORT, 0, tile=st.gmap.ref(x, 5), level=lv)
+        st.gmap.owner[u.tile] = 0
+        st.players[0].units.units.append(u)
+        st.players[0].units.record_constructed(UnitType.PORT)
+    return st
+
+
+def test_a_full_port_sends_the_ship_to_another_one():
+    """가까운 항구가 **꽉 찼으면 자리 있는 다른 항구**로 간다(`findNearestAvailablePort`).
+
+    막지 않았으면(항구가 사라졌을 때만 다시 고르면): 꽉 찬 항구 앞에서 영원히
+    기다린다. 아래 둘째 단언이 그 상태를 못 박는다 — 자리는 정말 없다."""
+    st = _two_ports(level_a=1, level_b=4)
+    near, far = st.gmap.ref(40, 5), st.gmap.ref(5, 5)
+    squatter = Warship(owner=0, tile=near, health=500,
+                       retreat_port=near, docked=True)
+    st.warships.append(squatter)
+    w = Warship(owner=0, tile=st.gmap.ref(45, 5), health=500)
+    st.warships.append(w)
+
+    st.tick_count += 1
+    st._advance_warships()
+    assert w.retreat_port == near, "처음에는 가까운 쪽을 고른다"
+
+    for _ in range(3):
+        st.tick_count += 1
+        st._advance_warships()
+    port_near = next(u for u in st.players[0].units.of(UnitType.PORT)
+                     if u.tile == near)
+    assert st._port_full_of_healing(port_near, exclude=w), "자리가 남아 있다 — 대조군이 깨졌다"
+    assert w.retreat_port == far, "꽉 찬 항구를 계속 붙들고 있다"
+
+
+def test_a_much_closer_port_wins_but_only_past_the_threshold():
+    """훨씬 가까운 항구가 생기면 갈아탄다 — **0.75배보다 가까울 때만**.
+
+    막지 않았으면(문턱이 1.0 이면): 두 항구 사이에서 매 tick 목적지가 바뀌어
+    배가 제자리걸음한다."""
+    st = _two_ports(level_a=4, level_b=4)
+    near, far = st.gmap.ref(40, 5), st.gmap.ref(5, 5)
+    w = Warship(owner=0, tile=st.gmap.ref(45, 5), health=500, retreat_port=far)
+    st.warships.append(w)
+    st.tick_count += 1
+    st._advance_warships()
+    assert w.retreat_port == near, "40칸 거리가 5칸 거리보다 한참 가까운데 안 갈아탔다"
+    assert C.WARSHIP_PORT_SWITCH_THRESHOLD == 0.75
+
+
+def test_the_switch_threshold_refuses_a_marginal_gain():
+    """조금 가까운 정도로는 안 바꾼다."""
+    st = state()
+    for x in (40, 39):
+        u = Unit(UnitType.PORT, 0, tile=st.gmap.ref(x, 5), level=4)
+        st.gmap.owner[u.tile] = 0
+        st.players[0].units.units.append(u)
+        st.players[0].units.record_constructed(UnitType.PORT)
+    w = Warship(owner=0, tile=st.gmap.ref(45, 5), health=500,
+                retreat_port=st.gmap.ref(40, 5))
+    st.warships.append(w)
+    st.tick_count += 1
+    st._advance_warships()
+    assert w.retreat_port == st.gmap.ref(40, 5), "한 칸 차이로 목적지를 바꿨다"
+
+
+def test_docked_count_is_one_place_only():
+    """정박 수를 세는 곳이 둘이면 한쪽만 고쳐도 다른 쪽이 가려 준다."""
+    st, port = _retreat_bed(port_x=5, level=2)
+    a = Warship(owner=0, tile=port.tile, health=500,
+                retreat_port=port.tile, docked=True)
+    b = Warship(owner=0, tile=port.tile, health=500,
+                retreat_port=port.tile, docked=True)
+    st.warships += [a, b]
+    assert st._docked_at(port) == 2
+    assert st._docked_at(port, exclude=a) == 1
+    assert st._port_full_of_healing(port)
+    assert not st._port_full_of_healing(port, exclude=a)

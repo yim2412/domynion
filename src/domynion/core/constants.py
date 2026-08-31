@@ -448,9 +448,12 @@ WARSHIP_DOCKING_RANGE = 5            # 이 안에 들어오면 정박이다
 # 정박 회복은 **항구 레벨 × 이 값**을 그 항구에 정박한 배들이 나눠 갖는다.
 # 그래서 레벨이 곧 수리 능력이고, 한 항구에 몰리면 각자 느려진다.
 WARSHIP_PORT_HEALING_PER_LEVEL = 5
+# 후퇴 중에 **더 가까운 항구로 갈아타는** 문턱(`warshipPortSwitchThreshold`).
+# 새 항구가 지금 목적지보다 이 비율보다 더 가까울 때만 바꾼다 — 1.0 으로 두면
+# 배가 두 항구 사이에서 매 tick 목적지를 바꿔 제자리걸음한다.
+WARSHIP_PORT_SWITCH_THRESHOLD = 0.75
 WARSHIP_TARGETTING_RANGE = 130
 WARSHIP_SHELL_ATTACK_RATE = 20  # 이 tick 마다 한 발
-WARSHIP_DOCKING_RANGE = 5
 WARSHIP_PASSIVE_HEALING = 1          # 항구 근처면 tick 당 이만큼 회복
 WARSHIP_PASSIVE_HEALING_RANGE = 150
 # --- 전함 베테랑 (`Config.ts` "Warship veterancy" · `UnitImpl.recordKill`) ---
