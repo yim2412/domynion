@@ -6275,6 +6275,23 @@ defaultDonationAmount(sender: Player): number { return Math.floor(sender.troops(
 
 전체 1,027 통과. 변이 1개 잡힘.
 
+#### `Config.ts` 재대조를 여기서 마친다 (2026-08-31)
+
+§5.82 의 방법을 다시 돌렸다. 메서드 107개 중 우리 쪽에 이름이 한 번도 안 나오는
+것이 **서른**이었고, 하나씩 따라간 결과:
+
+| | |
+|---|---|
+| **진짜 누락** | `radiusPortSpawn`(§5.89) · `defaultDonationAmount`(§5.90) — **둘** |
+| 옮기면 **안 되는** 것 | `armyLimitWarningThreshold` — 원본이 **공개 팀전 + 병력 기부 허용**일 때만 띄운다(*남는 병력을 팀원에게 주라*는 뜻이다). FFA 에는 대응물이 없다 |
+| 원본에서 **죽은 값** | `defensePostShellAttackRate` · `defensePostTargettingRange` — `DefensePostExecution.tick()` 의 사격 코드가 통째로 주석 처리돼 있다(`// TODO: Reconsider how/if defense posts target ships`). **상수만 남고 아무도 안 쓴다** |
+| 이미 있는 것 | `proximityBonusPortsNb`(`proximity_bonus_count`) · `nationSpawnImmunityDuration` · `emojiMessageDuration` 등 |
+| 로비 설정·치트 | `infiniteGold` · `instantBuild` · `isReplay` · `numBots` · `playerTeams` … 대부분이 여기다 |
+
+> ⚠ **"상수가 있으니 규칙이 있다"가 아니다.** 방어초소 사격이 그 예다 — 값 둘이
+> 멀쩡히 정의돼 있고 이름도 그럴듯한데, 쓰는 코드가 주석이라 **원본에서도 안
+> 일어나는 일**이다. 상수 대조는 후보를 주는 것이지 답을 주지 않는다.
+
 ### 5.79 기준선 — 커밋 `765d13a`, 원본 해상도, 25,000 tick
 
 §5.66(커밋 `8770524`) 이후 **§5.64~§5.74** 가 들어간 상태에서 다시 떴다. 조건은
