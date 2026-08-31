@@ -6177,6 +6177,8 @@ python tools/profile_game.py --ticks 1200 --size map
 | **`maxConnectionDistance = 4`** | 규칙 | `RailNetworkImpl.connectToNearbyStations` | 새 역은 가까운 상대부터 훑되 **이미 그래프상 4홉 안에 닿는 역과는 선로를 안 깐다** — 원본 철도망은 그래서 성기고, 우리 것은 사거리 안이면 전부 이웃이라 촘촘하다. 옮기려면 역 그래프를 **삽입 순서까지 들고 있어야** 하는데(어느 역이 먼저 생겼느냐로 간선이 달라진다) 우리 `rebuild` 는 매 tick 역 목록을 새로 만든다. §5.84 에서 `rebuild` 가 판 시간의 0.1% 임을 쟀으니 **성능이 이유는 아니고**, 증분 갱신 구조를 새로 짜야 하는 것이 이유다 |
 | `connectToExistingRails` · `Railroad.split` | 규칙 | `RailNetworkImpl` | 새 역이 **기존 선로 3칸 안**에 있으면 역끼리가 아니라 **그 선로를 쪼개** 붙는다. **우리는 선로를 안 깔므로 대응물이 없다**(§5.60 의 범위 결정) — `maxConnectionDistance` 를 옮기게 되면 그때 같이 본다 |
 | `TrainExecution.numCars = 5` | 표시 | — | **옮길 것이 없다.** 기차 뒤에 따라붙는 차량 그림이고 골드·속도·피격에 관여하지 않는다 |
+| **`WaterManager.finalizeWaterChanges`** | 규칙 | 834줄 중 세 보정 | **물 핵을 켰을 때만 갈린다**(`WATER_NUKES` 는 원본도 우리도 기본 false). 원본은 육지를 바다로 바꾼 뒤 셋을 보정한다: ① **바다 비트 전파** — 바뀐 칸이 기존 바다에 안 닿으면 *물이지만 바다가 아니다*(내륙 호수). 우리는 `raw[t] = OCEAN_BIT` 로 무조건 바다로 만든다 ② magnitude(해안까지 거리) 재계산 ③ **해안선 비트 갱신**(폭심의 2링). 우리는 `raw` 를 통째로 덮어 그 칸의 해안선 비트를 날리고 이웃 것은 안 고친다. ⚠ ③은 `is_shoreline` 을 쓰는 모든 규칙(무역선 나포 보호 · §5.84 의 선로 통행)에 조용히 번진다 — **물 핵을 켜기 전에 반드시 같이 옮긴다** |
+| ~~물 핵이 산을 바다로 만든다~~ | — | `!isImpassable(tile)` | **이미 처리돼 있었다.** `blast_tiles` 가 `Terrain.IMPASSABLE` 을 먼저 걸러서 폭심에 애초에 안 들어온다(`test_impassable_survives_the_blast`). 원본과 거는 자리가 다를 뿐 결과가 같다 — 한 줄 고치려다 **죽은 코드를 넣을 뻔했다** |
 | `SharedWaterCache` | 성능 | 102줄 | 항구 자리를 고를 때 "무역 상대와 물을 공유하는가"를 3초 캐시로 답한다. 우리는 `_touch_cc` 로 비슷한 일을 하지만 **TTL 구조가 아니다** — 성능 문제가 실제로 드러나면 본다 |
 | 클락의 팀 판정 | 규칙 | `sides()` | FFA 만 쓰므로 편이 곧 개인이다. 팀 모드를 열 때 같이 온다 |
 | `TeamStats` · `AllianceClusters` | 표시 | 팀 모드용 | 팀 모드가 없으니 뒤 |
