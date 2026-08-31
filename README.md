@@ -68,7 +68,10 @@ python tools/profile_game.py --ticks 1200 --size map
 
 # 테스트
 python -m pytest tests -q
-PYTHONDONTWRITEBYTECODE=1 python -m pytest tests -q   # 변이 테스트는 캐시를 끈다
+
+# 변이 하네스 — 테스트가 규칙을 진짜로 재는지 확인한다.
+# ⚠ 도는 동안 pytest 도 실측 스크립트도 새로 띄우지 않는다 (소스를 제자리에서 고친다)
+python tools/mutate.py --spec <변이명세.json> --timeout 180
 ```
 
 조작: **좌클릭 = 메뉴**(공격 · 건설 · 상륙 · 외교) · 우클릭 드래그/WASD = 이동 ·
