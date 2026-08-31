@@ -64,7 +64,12 @@ def euclid_sq(gmap: GameMap, a: TileRef, b: TileRef) -> int:
 def can_place_structure(gmap: GameMap, tile: TileRef, pid: int,
                         existing: list[TileRef],
                         utype: "UnitType | None" = None) -> bool:
-    """내 영토 위이고, 다른 건물에서 `structureMinDist` 이상 떨어져 있어야 한다.
+    """내 영토 위이고, **아무 건물에서든** `structureMinDist` 이상 떨어져 있어야 한다.
+
+    ⚠ `existing` 에는 **남의 건물도 들어간다**(§5.86). 원본
+    `validStructureSpawnTiles` 가 `nearbyUnits(..., predicate=undefined)` 로
+    주인을 안 가리고 훑는다. 국경 근처는 내 땅이어도 적 도시가 15칸 안일 수
+    있고, 전에는 거기에 붙여 지을 수 있었다.
 
     **항구만 예외로 해안이어야 한다**(`portSpawn` 이 `isShore` 로 거른다).
     이걸 빼면 내륙에 항구가 서고, 그 항구에서 배가 못 떠서 무역선이 한 척도 안 뜬다."""
@@ -77,19 +82,36 @@ def can_place_structure(gmap: GameMap, tile: TileRef, pid: int,
 
 
 def structure_tiles(player_units) -> list[TileRef]:
-    """최소 거리 판정에 걸리는 건물들의 타일. 건설 중인 것도 자리를 차지한다."""
+    """최소 거리 판정에 걸리는 건물들의 타일. 건설 중인 것도 자리를 차지한다.
+
+    ⚠ 한 플레이어 것만 돌려준다. **최소 거리는 주인을 안 가리므로**(§5.86)
+    엔진은 `all_structure_tiles` 를 쓴다 — 이 함수는 한 명만 볼 때 쓴다."""
     return [u.tile for u in player_units.units
             if u.active and u.utype in STRUCTURES]
 
 
+def all_structure_tiles(players) -> list[TileRef]:
+    """**모든** 플레이어의 건물 타일. 원본 `nearbyUnits` 가 주인을 안 가린다."""
+    out: list[TileRef] = []
+    for p in players:
+        out.extend(u.tile for u in p.units.units
+                   if u.active and u.utype in STRUCTURES)
+    return out
+
+
 def find_spot(gmap: GameMap, pid: int, near: TileRef,
-              existing: list[TileRef], search: int = 40,
+              existing: list[TileRef],
+              search: int = C.STRUCTURE_SEARCH_RADIUS,
               utype: "UnitType | None" = None) -> TileRef | None:
     """`near` 근처에서 지을 수 있는 칸을 찾는다 — 가까운 곳부터.
 
     원본 `validStructureSpawnTiles()` 는 BFS 로 내 영토를 훑어 거리순으로 정렬한 뒤
     첫 칸을 쓴다. 여기서는 같은 결과를 사각 탐색으로 낸다(내 영토는 연결돼 있고
-    반경이 작아서 차이가 없다)."""
+    반경이 작아서 차이가 없다).
+
+    ⚠ **반경은 15 다**(`searchRadius`, §5.86). 전에는 40 이었다 — 클릭한 자리가
+    막혔을 때 원본이 포기하는 거리에서도 우리는 계속 찾아 지었다. 40이면 사람이
+    바다를 눌러도 내륙 어딘가에 건물이 서서, 어디를 눌렀는지와 무관해진다."""
     w, h = gmap.width, gmap.height
     cx, cy = near % w, near // w
     best, best_d = None, None

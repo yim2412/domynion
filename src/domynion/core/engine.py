@@ -21,7 +21,8 @@ import numpy as np
 from . import constants as C
 from .constants import Terrain
 from .attack import Attack
-from .buildings import DefensePostIndex, euclid_sq, find_spot, structure_tiles
+from .buildings import (DefensePostIndex, all_structure_tiles, euclid_sq,
+                        find_spot, structure_tiles)
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
 from .events import Event, EventKind, EventLog
@@ -1837,8 +1838,11 @@ class GameState:
         if p.gold < p.units.cost(utype):
             return None
         if utype in STRUCTURES:
-            return find_spot(self.gmap, pid, near, structure_tiles(p.units),
-                             utype=utype)
+            # ⚠ **남의 건물도 자리를 막는다**(§5.86). 원본 `nearbyUnits` 가
+            # 주인을 안 가린다 — 국경 근처는 내 땅이어도 적 도시가 15칸 안일
+            # 수 있고, 전에는 거기에 붙여 지을 수 있었다.
+            return find_spot(self.gmap, pid, near,
+                             all_structure_tiles(self.alive), utype=utype)
         return near if self.gmap.passable(near) else None
 
     def build(self, pid: int, utype: UnitType, near: TileRef) -> Unit | None:
