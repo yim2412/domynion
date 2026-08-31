@@ -245,6 +245,8 @@ class GameState:
         p.troops -= troops
         p.attacks_sent += 1
         self.attacks.append(atk)
+        if not self._merge_attack(atk):
+            return None                 # 맞공격에 통째로 상쇄됐다
         if target is not None:
             self.emit(EventKind.ATTACK_REQUEST, who=target, other=pid, amount=troops)
             # ⚠ **치는 순간 그쪽이 보낸 동맹 요청은 거절되고, 맞은 쪽이 나에게
@@ -265,6 +267,44 @@ class GameState:
             if self.diplomacy.is_friendly(pid, target):
                 self.relate(pid, target, C.REL_ATTACKED_ALLY)
         return atk
+
+    def _merge_attack(self, atk: Attack) -> bool:
+        """새 공격을 기존 공격들과 정리한다(`AttackExecution.init` 의 두 루프).
+
+        **1) 맞공격은 상쇄된다.** 상대가 나를 치고 있으면 병력을 서로 깎는다 —
+        큰 쪽만 남고 작은 쪽은 사라진다. 없으면 두 부대가 서로를 통과해 지나가,
+        *A가 B의 땅을 먹는 동시에 B가 A의 땅을 먹는* 그림이 된다.
+
+        **2) 같은 상대를 치는 내 공격은 하나로 합쳐진다.** 없으면 공격 버튼을
+        연타해 부대를 여러 개로 쪼갤 수 있고, 쪼갠 쪽이 유리하다 — 확장은
+        국경 길이를 따라가므로 부대 수가 많을수록 전선이 넓어진다.
+
+        ⚠ **상륙은 합치지 않는다**(`sourceTile !== null`). 상륙 부대는 배가 내린
+        칸에서 시작하므로 육상 부대에 합치면 그 자리를 잃는다.
+
+        돌려주는 값은 *이 공격이 살아남았는가* 다."""
+        # ⚠ **퇴각 중인 공격도 그대로 센다.** 원본에 그 예외가 없다 — 물러나는
+        # 부대에 새 부대를 합치면 그대로 되돌아온다. 처음에 `retreated` 를
+        # 거르는 줄을 넣었다가 지웠다: 퇴각이 끝난 공격은 **같은 tick 에 목록에서
+        # 빠지므로** 여기서 볼 수가 없다(죽은 코드였다).
+        for other in list(self.attacks):
+            if other is atk:
+                continue
+            # (1) 상대가 나를 치는 중인가
+            if other.attacker == atk.target and other.target == atk.attacker:
+                if other.troops > atk.troops:
+                    other.troops -= atk.troops
+                    self.attacks.remove(atk)
+                    return False
+                atk.troops -= other.troops
+                self.attacks.remove(other)
+                continue
+            # (2) 내가 같은 상대를 이미 치는 중인가
+            if (atk.source_tile is None and other.attacker == atk.attacker
+                    and other.target == atk.target):
+                atk.troops += other.troops
+                self.attacks.remove(other)
+        return True
 
     # --- 이벤트 -----------------------------------------------------------
 

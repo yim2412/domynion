@@ -110,10 +110,12 @@ def test_ordering_twice_changes_nothing():
 
 
 def test_my_attacks_lists_only_mine():
+    # ⚠ **표적을 겹치면 안 된다**(§5.88). 0↔1 로 서로 치면 맞공격이 상쇄돼
+    # 둘 중 하나가 사라진다 — 그러면 "내 것만 고르는가"가 아니라 상쇄를 재게 된다.
     st = state()
     a = launch(st, 1)
-    b = st.launch_attack(1, 0)
-    assert b is not None
+    b = st.launch_attack(1, None)          # 1번은 **중립**을 친다
+    assert b is not None, "재료: 상대의 공격이 실제로 떠야 한다"
     assert st.my_attacks(0) == [a]
 
 

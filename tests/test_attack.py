@@ -19,7 +19,9 @@ import pytest
 from domynion.core import constants as C
 from domynion.core.attack import (Attack, attack_logic, sigmoid,
                                   tiles_per_tick, within)
+from domynion.core.buildings import DefensePostIndex
 from domynion.core.constants import Terrain
+from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
 from domynion.core.state import PlayerState
 
@@ -241,3 +243,90 @@ def test_impassable_is_never_conquered():
             break
     assert gm.owner[2] == -1, "통행 불가 칸을 먹었다"
     assert gm.owner[1] == 0, "그 앞의 평야는 먹었어야 한다"
+
+
+# --- 새 공격은 기존 공격들과 정리된다 (§5.88) ------------------------------
+
+def _duel_state() -> GameState:
+    """0번과 1번이 국경을 맞댄 판. 서로 칠 수 있다."""
+    gm = GameMap.from_rows(["." * 60] * 6)
+    players = {}
+    for pid in (0, 1):
+        for x in range(pid * 30, pid * 30 + 30):
+            for y in range(0, 3):
+                gm.owner[gm.ref(x, y)] = pid
+        p = PlayerState(pid=pid, name=f"P{pid}", kind="nation",
+                        start=gm.ref(pid * 30, 0))
+        p.troops = 60_000.0
+        p.attack_ratio = 1.0
+        players[pid] = p
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 90, 1: 90}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    return st
+
+
+def test_opposing_attacks_cancel_each_other_out() -> None:
+    """서로 치면 **병력이 상쇄된다** — 큰 쪽만 남는다.
+
+    막지 않았으면: 두 부대가 서로를 통과해 지나가, A가 B의 땅을 먹는 동시에
+    B가 A의 땅을 먹는 그림이 된다. 아래 둘째 단언이 그 상태를 못 박는다 —
+    상쇄가 없으면 공격이 둘 다 남는다."""
+    st = _duel_state()
+    st.players[0].troops = 30_000.0
+    st.players[1].troops = 50_000.0
+    a = st.launch_attack(0, 1)
+    assert a is not None and len(st.attacks) == 1
+    big = st.launch_attack(1, 0)
+    assert big is not None, "큰 쪽은 살아남아야 한다"
+    assert len(st.attacks) == 1, "맞공격이 상쇄되지 않고 둘 다 남았다"
+    assert st.attacks[0] is big
+    assert big.troops == pytest.approx(50_000.0 - 30_000.0)
+
+
+def test_the_smaller_opposing_attack_disappears_entirely() -> None:
+    """작은 쪽은 **아예 뜨지 않는다**(`this.active = false`)."""
+    st = _duel_state()
+    st.players[0].troops = 50_000.0
+    st.players[1].troops = 20_000.0
+    big = st.launch_attack(0, 1)
+    assert big is not None
+    small = st.launch_attack(1, 0)
+    assert small is None, "작은 맞공격이 그대로 떴다"
+    assert len(st.attacks) == 1 and st.attacks[0] is big
+    assert big.troops == pytest.approx(50_000.0 - 20_000.0)
+
+
+def test_two_attacks_on_the_same_target_merge() -> None:
+    """같은 상대를 두 번 치면 **하나로 합쳐진다.**
+
+    막지 않았으면: 공격 버튼을 연타해 부대를 쪼갤 수 있고 쪼갠 쪽이 유리하다 —
+    확장이 국경 길이를 따라가므로 부대가 많을수록 전선이 넓어진다."""
+    st = _duel_state()
+    st.players[0].attack_ratio = 0.5
+    first = st.launch_attack(0, 1)
+    assert first is not None
+    before = first.troops
+    second = st.launch_attack(0, 1)
+    assert second is not None
+    assert len(st.attacks) == 1, "같은 표적인데 부대가 둘로 남았다"
+    assert st.attacks[0] is second
+    assert second.troops > before, "합쳐졌는데 병력이 안 늘었다"
+
+
+def test_a_boat_attack_is_never_merged() -> None:
+    """**상륙은 합치지 않는다**(`sourceTile !== null`).
+
+    합치면 배가 내린 칸에서 시작하는 부대가 육상 부대에 흡수돼 그 자리를 잃는다."""
+    st = _duel_state()
+    st.players[0].attack_ratio = 0.5
+    land = st.launch_attack(0, 1)
+    assert land is not None
+    src = st.gmap.ref(30, 1)
+    boat = Attack.launch(st.gmap, 0, 1, 5_000.0, st.rng, st.tick_count,
+                         source_tile=src)
+    assert boat is not None
+    st.attacks.append(boat)
+    assert st._merge_attack(boat), "상륙 부대가 사라졌다"
+    assert len(st.attacks) == 2, "상륙 부대가 육상 부대에 합쳐졌다"

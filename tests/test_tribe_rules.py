@@ -115,9 +115,16 @@ def test_a_bot_hits_back_at_its_biggest_attacker():
         st.launch_attack(pid, 1)
     assert len(st.attacks) == 2, "재료: 둘 다 나를 치고 있어야 한다"
     assert b._biggest_incoming_attacker(st) == 2, "작은 쪽을 골랐다"
+
+    # ⚠ **반격이 목록에 남는 것으로 재면 안 된다**(§5.88). 맞공격은 서로
+    # 상쇄되므로, 봇의 반격은 2번이 보낸 공격에 흡수돼 사라진다 — 원본도
+    # 그렇다. 대신 **2번의 공격이 줄었는가**로 잰다. 그게 곧 "2번을 쳤다"이다.
+    def incoming(pid: int) -> float:
+        return sum(a.troops for a in st.attacks if a.attacker == pid)
+    before_2, before_0 = incoming(2), incoming(0)
     b._attack_random(st)
-    assert any(a.attacker == 1 and a.target == 2 for a in st.attacks), \
-        "가장 크게 때리는 쪽을 안 되받았다"
+    assert incoming(2) < before_2, "가장 크게 때리는 쪽을 안 되받았다"
+    assert incoming(0) == before_0, "엉뚱한 쪽을 쳤다 — 대조군이 깨졌다"
 
 
 def test_a_bot_counts_bot_attackers_too():
