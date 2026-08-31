@@ -4306,8 +4306,21 @@ API · §5.62 의 `PlayerImpl` 이름 · `MessageType` · 죽은 이벤트).
 | `isLobbyCreator` | 방장 |
 | `canSendQuickChat` · `recordQuickChat` | 정해진 문구 채팅 |
 
-우리는 싱글이므로 대응물이 없는 것이 맞다. 즉 **`PlayerImpl` 쪽 이식은 끝났고**
-남은 것은 `transitiveTargets` 의 **표시**뿐이다.
+우리는 싱글이므로 대응물이 없는 것이 맞다. ~~즉 **`PlayerImpl` 쪽 이식은 끝났고**
+남은 것은 `transitiveTargets` 의 **표시**뿐이다.~~
+
+> ⚠ **이 단정이 틀렸다(2026-08-31).** 그 뒤 **§5.86 이 바로 이 파일에서
+> 나왔다** — `validStructureSpawnTiles` 의 탐색 반경(15 vs 우리 40)과
+> `nearbyUnits(..., undefined, ...)` 의 "주인을 안 가린다".
+>
+> 왜 이름 대조가 놓쳤나: **`landBasedStructureSpawn` 은 이름이 있었다.** 우리
+> `find_spot` 이 그 자리이고, `structureMinDist` 도 옮겨져 있었다. 틀린 것은
+> *값*과 *누구를 세는가*였다. 바로 아래 경고("이름이 같아도 하는 일이 다를 수
+> 있다")가 정확히 이 경우인데, 그래 놓고 **"끝났다"고 단정한 것이 모순이다.**
+>
+> **한계를 적어 뒀으면 결론도 그 한계 안에서 써야 한다.** 이름 대조가 약한
+> 방법이라고 적은 문단 바로 뒤에 "이식은 끝났다"를 쓰면, 다음 사람은 경고가
+> 아니라 결론만 읽는다.
 
 > ⚠ 이 대조 방식의 한계: 이름이 같아도 **하는 일이 다를 수 있다.** 이번 세션의
 > 누락 중 `unitsOwned`(§5.30) · `train_spawn_rate`(§5.60)가 그랬다 — 이름은
