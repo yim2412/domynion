@@ -245,16 +245,6 @@ class RailNetwork:
                         self.stations.append(
                             Station(tile=u.tile, owner=p.pid, unit=u))
 
-    def links(self, gmap: GameMap, pid: int) -> list[Station]:
-        """내 역에서 이어지는 상대 역들."""
-        mine = [s for s in self.stations if s.owner == pid]
-        out: list[Station] = []
-        for s in self.stations:
-            if any(m.tile != s.tile and self.connected(gmap, m.tile, s.tile)
-                   for m in mine):
-                out.append(s)
-        return out
-
     def relation(self, diplomacy, pid: int, other: int) -> str:
         if pid == other:
             return "self"
