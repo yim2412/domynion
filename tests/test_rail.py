@@ -642,3 +642,55 @@ def test_the_link_cache_is_dropped_when_terrain_changes() -> None:
             st.gmap.raw[t] = C.OCEAN_BIT
     st.gmap.invalidate_terrain_caches()
     assert not st.rail.connected(st.gmap, a, b), "캐시가 옛 답을 그대로 돌려줬다"
+
+
+def test_the_route_respects_the_minimum_range() -> None:
+    """기차는 **15칸보다 가까운 역으로는 못 간다.**
+
+    원본에서 기차는 `connect()` 가 만든 노선 위를 걷고, 그 노선에는 하한이
+    걸려 있다(`neighbor.distSquared > trainStationMinRange ** 2`).
+
+    막지 않았으면(하한 없이 사거리만 보면): 붙어 있는 두 역 사이를 오가며
+    골드를 찍어낸다 — 하한이 애초에 그걸 막으려고 있는 값이다."""
+    st = state()
+    give(st, 0, UnitType.FACTORY, 20, 20)
+    near = give(st, 0, UnitType.CITY, 25, 20)     # 5칸 — 하한 미만
+    far = give(st, 0, UnitType.CITY, 60, 20)      # 40칸 — 하한 이상
+    st.rail.rebuild(st.gmap, st.alive)
+    assert {near.tile, far.tile} <= {s.tile for s in st.rail.stations},         "둘 다 역이어야 시험이 뜻을 갖는다"
+    src = next(s for s in st.rail.stations if s.tile == st.gmap.ref(20, 20))
+    # **첫 홉만** 본다. 홉을 늘리면 먼 역을 거쳐 가까운 역에 닿는데,
+    # 그건 하한 위반이 아니라 정상이다(그 구간은 35칸이다).
+    first = set()
+    for seed in range(30):
+        step = st.rail.route(st.gmap, src, random.Random(seed), 1)
+        first.update(s.tile for s in step)
+    assert far.tile in first, "먼 역에는 갈 수 있어야 한다"
+    assert near.tile not in first, "하한 미만인 역으로 곧장 갔다"
+
+
+def test_the_cap_is_exactly_the_diagonal_of_the_max_range() -> None:
+    """상한은 **110×√2 = 155** 다. 하나 더 늘리면 안 된다.
+
+    원본은 `railroadMaxSize() = trainStationMaxRange() * 1.4142` 이고
+    `path.length < railroadMaxSize` 로 본다 — 155 는 되고 156 은 안 된다.
+    경계를 재는 테스트가 없으면 상한이 있다는 것만 재고 **값은 안 잰다**
+    (변이 하네스가 155 → 156 변이를 놓쳤다)."""
+    assert int(C.RAILROAD_MAX_SIZE) == 155
+
+    # ⚠ **직선 복도로는 이걸 못 잰다.** 곧은 길에서는 맨해튼 거리가 곧 경로
+    # 길이라, `land_path_len` 첫 줄의 `h(a) > limit` 이 먼저 걸러 버린다 —
+    # 경계를 155 → 156 으로 늘리는 변이가 그대로 통과했다(변이 하네스가 잡았다).
+    # **우회가 있어야** 루프 안의 경계 검사가 유일한 방어가 된다.
+    rows = ["." * 200 for _ in range(20)]
+    for y in range(0, 13):                        # y=13 만 열어 둔 세로 벽
+        rows[y] = rows[y][:85] + "#" + rows[y][86:]
+    gm = GameMap.from_rows(rows)
+    a, b = gm.ref(10, 10), gm.ref(160, 10)
+    assert abs(160 - 10) == 150 <= 155, "맨해튼 거리는 상한 안이어야 한다"
+    assert land_path_len(gm, a, b, 10_000) == 156, "벽을 돌아 156칸"
+    assert land_path_len(gm, a, b, int(C.RAILROAD_MAX_SIZE)) is None
+
+    # 155 는 통과한다 — 상한이 정상까지 막으면 안 된다
+    ok = gm.ref(159, 10)
+    assert land_path_len(gm, a, ok, int(C.RAILROAD_MAX_SIZE)) == 155
