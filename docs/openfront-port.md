@@ -4639,8 +4639,19 @@ MIRV 비용 · 스폰 면역 · 관계도 · 이모지 · 배신자 거절 · �
 | 규칙(`core/game/` · `core/execution/`) | 파일 대조 + `init` 읽기 | **넷**(§5.85~§5.88) |
 | UI(`client/hud/layers/`) | 파일 대조 | 없다. `RelationSmiley` 는 치장, `ActionableEvents` 는 우리 이벤트 로그가 대응 |
 
-> **다음은 어디를 볼까**: `core/pathfinding/`(A\* 어댑터들 — §5.84 에서
-> `AStar.Rail` 하나만 봤다) · `client/render/`(표시 규칙).
+> **다음은 어디를 볼까**: `client/render/`(표시 규칙) · `core/utilities/`.
+>
+> ⚠ `core/pathfinding/` 도 **훑었고 새 누락은 없다**(2026-08-31). 열여덟 파일
+> 중 열넷이 0회인데 전부 **자료구조나 성능 계층**이다(`PriorityQueue` ·
+> `FlatBinaryHeap` · `AbstractGraph`(HPA\*) · `ConnectedComponents` ·
+> 물 A\* 네 변종). 우리는 `water_path` 하나로 그 자리를 대신한다(§5.8).
+>
+> 다만 **`PathFinder.Parabola` 는 적어 둘 값이 있다.** 원본은 **모든 핵이
+> 포물선**으로 난다 — 일반 핵도 MIRV 도 `UniversalPathFinding.Parabola` 를
+> 쓰고, 베지에 곡선의 높이가 **거리/3(최소 50)** 이다. 우리는 직선으로 뒀고
+> (§5.60 계열의 범위 결정), 그래서 SAM 의 preshoot·궤적 요격이 통째로 대응물이
+> 없다. **그 결정의 근거 코드가 여기다** — 지금까지 문서에 *"직선으로 뒀다"* 만
+> 있고 원본이 정확히 무엇을 하는지는 없었다.
 >
 > ⚠ `client/controllers/` 는 **훑었고 없다**(2026-08-31). 아홉 개 중 여덟이
 > 순수 렌더링이고(WebGL 라벨 보간 · 하이라이트 · 사운드), 규칙을 부르는 것은
