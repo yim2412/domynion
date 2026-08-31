@@ -18,7 +18,8 @@ from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
 from domynion.core.nukes import Fallout
 from domynion.core.rail import (RAIL_STATION_UNITS, RailNetwork, Train, TrainStop,
-                                station_range_ok, train_gold, train_spawn_rate)
+                                land_path_len, station_range_ok, train_gold,
+                                train_spawn_rate)
 from domynion.core.state import PlayerState
 from domynion.core.units import Unit, UnitType
 from domynion.ui.rates import gold_pip
@@ -528,3 +529,116 @@ def test_a_route_that_would_end_at_a_factory_is_trimmed():
             continue
         for stop in t.stops:
             assert stop.trade is (stop.tile not in factories)
+
+
+# --- 선로가 실제로 지나갈 수 있는가 (railroadMaxSize) --------------------
+
+def test_land_path_follows_land() -> None:
+    """빈 육지에서는 맨해튼 거리 그대로다."""
+    gm = GameMap.from_rows(["." * 40] * 20)
+    assert land_path_len(gm, gm.ref(2, 2), gm.ref(12, 7), 200) == 15
+
+
+def test_land_path_goes_around_impassable() -> None:
+    """산맥은 못 뚫는다 — 돌아가느라 길이가 늘어난다."""
+    rows = ["." * 21 for _ in range(21)]
+    for y in range(0, 20):                       # 위쪽만 막은 벽. 아래로 돌아간다
+        rows[y] = rows[y][:10] + "#" + rows[y][11:]
+    gm = GameMap.from_rows(rows)
+    a, b = gm.ref(5, 0), gm.ref(15, 0)
+    straight = 10
+    got = land_path_len(gm, a, b, 200)
+    assert got is not None and got > straight    # 벽을 돌았다
+    assert got == 10 + 2 * 20                    # 아래 끝까지 내려갔다 올라온다
+
+
+def test_land_path_none_when_over_limit() -> None:
+    """상한을 넘으면 None. 이어질 수 없다는 뜻이다."""
+    gm = GameMap.from_rows(["." * 60] * 10)
+    a, b = gm.ref(1, 1), gm.ref(51, 1)
+    assert land_path_len(gm, a, b, 49) is None
+    assert land_path_len(gm, a, b, 50) == 50
+
+
+def test_land_path_crosses_a_narrow_strait() -> None:
+    """좁은 해협은 건넌다 — 원본도 해안선 물은 지난다(`isTraversable`)."""
+    rows = ["." * 5 + "~" * 2 + "." * 5 for _ in range(9)]
+    gm = GameMap.from_rows(rows)
+    assert land_path_len(gm, gm.ref(4, 4), gm.ref(7, 4), 50) == 3
+
+
+def test_land_path_stops_at_open_ocean() -> None:
+    """넓은 바다는 못 건넌다. 해안선이 아닌 물이 가운데 있으면 끊긴다."""
+    rows = ["." * 3 + "~" * 8 + "." * 3 for _ in range(9)]
+    gm = GameMap.from_rows(rows)
+    assert land_path_len(gm, gm.ref(2, 4), gm.ref(11, 4), 200) is None
+
+
+# --- 선로가 닿아야 이어진다 (RailNetwork.connected) ----------------------
+
+def _sea_state(rows: list[str]) -> GameState:
+    """지형을 직접 그린 판. `state()` 는 전부 육지라 바다를 못 시험한다."""
+    gm = GameMap.from_rows(rows)
+    ps = {}
+    for pid in (0, 1):
+        ps[pid] = PlayerState(pid=pid, name=f"P{pid}", kind="nation", start=0)
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 0, 1: 0}
+    st._posts = DefensePostIndex(gm.size)
+    st.fallout = Fallout(gm.size)
+    return st
+
+
+def test_a_station_across_open_water_never_links() -> None:
+    """직선 거리는 맞아도 **선로가 못 간다.**
+
+    막지 않았으면: 바다 건너 110칸 떨어진 다른 섬의 역과 이어져, 육지로 버는
+    기차가 배 없이 바다를 건넌다. 아래 첫 단언이 그것을 못 박는다 —
+    거리 검사만으로는 통과한다."""
+    rows = ["." * 20 + "~" * 30 + "." * 20 for _ in range(9)]
+    st = _sea_state(rows)
+    a, b = st.gmap.ref(19, 4), st.gmap.ref(50, 4)
+    assert station_range_ok(st.gmap, a, b), "거리 검사는 통과하는 쌍이어야 뜻이 있다"
+    assert not st.rail.connected(st.gmap, a, b)
+
+
+def test_a_long_detour_over_the_cap_never_links() -> None:
+    """육지로 이어져 있어도 **155칸을 넘게 돌면** 안 이어진다(`railroadMaxSize`).
+
+    막지 않았으면: 만을 크게 돌아가는 두 도시가 코앞인 것처럼 이어진다."""
+    # 위아래로 갈라진 두 팔. 오른쪽 끝에서만 붙는다 — 20칸 떨어진 두 역이
+    # 실제로는 오른쪽 끝을 돌아 200칸 넘게 가야 만난다.
+    w = 100
+    rows = []
+    rows.append("." * w)                              # y=0  위 팔
+    rows.append("." * (w - 1) + ".")                  # y=1  위 팔
+    for _ in range(4):
+        rows.append("~" * (w - 1) + ".")              # 오른쪽 끝만 육지
+    rows.append("." * w)                              # 아래 팔
+    st = _sea_state(rows)
+    a, b = st.gmap.ref(5, 0), st.gmap.ref(25, 6)
+    assert station_range_ok(st.gmap, a, b), "거리 검사는 통과하는 쌍이어야 뜻이 있다"
+    assert land_path_len(st.gmap, a, b, 10_000) > C.RAILROAD_MAX_SIZE
+    assert not st.rail.connected(st.gmap, a, b)
+
+
+def test_a_normal_neighbour_still_links() -> None:
+    """막는 규칙이 정상까지 막으면 안 된다 — 빈 육지의 이웃은 그대로 이어진다."""
+    st = state()
+    a, b = st.gmap.ref(20, 20), st.gmap.ref(60, 20)
+    assert st.rail.connected(st.gmap, a, b)
+
+
+def test_the_link_cache_is_dropped_when_terrain_changes() -> None:
+    """핵이 육지를 바다로 만들면 선로도 끊긴다 — 캐시가 그걸 못 보면 안 된다."""
+    rows = ["." * 60 for _ in range(9)]
+    st = _sea_state(rows)
+    a, b = st.gmap.ref(5, 4), st.gmap.ref(45, 4)
+    assert st.rail.connected(st.gmap, a, b)
+    for y in range(9):                                # 지도를 세로로 자른다
+        for x in (25, 26, 27, 28):
+            t = st.gmap.ref(x, y)
+            st.gmap.terrain[t] = C.Terrain.OCEAN
+            st.gmap.raw[t] = C.OCEAN_BIT
+    st.gmap.invalidate_terrain_caches()
+    assert not st.rail.connected(st.gmap, a, b), "캐시가 옛 답을 그대로 돌려줬다"

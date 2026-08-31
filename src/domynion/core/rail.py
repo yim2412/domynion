@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import heapq
 import math
 import random
 from dataclasses import dataclass, field
@@ -67,6 +68,65 @@ def station_range_ok(gmap: GameMap, a: TileRef, b: TileRef) -> bool:
     w = gmap.width
     d = math.hypot(a % w - b % w, a // w - b // w)
     return C.TRAIN_STATION_MIN_RANGE <= d <= C.TRAIN_STATION_MAX_RANGE
+
+
+def land_path_len(gmap: GameMap, a: TileRef, b: TileRef,
+                  limit: int) -> int | None:
+    """`a`~`b` 를 **선로가 실제로 지나갈 수 있는가**, 지나간다면 몇 칸인가.
+    `limit` 칸을 넘으면 None — 넘는지만 알면 되므로 넘는 순간 끊는다.
+
+    원본 `AStarRail` 의 통행 규칙을 따른다(`isTraversable`):
+
+    - 통행불가 지형(산 이상)은 못 지난다
+    - 육지는 지난다
+    - **물은 해안선일 때만** 지난다 — 좁은 해협은 건너지만 먼바다는 못 나간다.
+      원본은 `fromShoreline || isShoreline(to)` 라 해안선 칸에서 한 칸 나가는
+      것까지 허용한다. 그대로 옮겼다
+
+    ⚠ **비용은 균일 1로 둔다. 원본은 물 +5 · 방향 전환 +3 이다.** 우리가 쓰는
+    것은 경로의 *모양*이 아니라 *길이가 상한을 넘는가* 뿐이고, 최단 길이는
+    원본이 고른 비용최적 경로의 길이보다 **항상 짧거나 같다.** 즉 우리 판정은
+    원본보다 **너그러운 쪽**으로만 틀린다 — 원본이 잇는 것을 우리가 끊는 일은
+    없다. 페널티까지 옮기면 다익스트라가 되고 이 자리는 판마다 수천 번 돈다.
+
+    상자로 탐색을 묶지 않는다(`water_path` 와 다른 점). `limit` 이 이미 곧
+    반경 상한이라 A* 가 `f > limit` 에서 스스로 멈춘다."""
+    if a == b:
+        return 0
+    w = gmap.width
+    bx, by = b % w, b // w
+
+    def h(t: TileRef) -> int:
+        return abs(t % w - bx) + abs(t // w - by)
+
+    def traversable(t: TileRef, from_shore: bool) -> bool:
+        if gmap.is_impassable(t):
+            return False
+        if not gmap.is_ocean(t):
+            return True
+        return from_shore or gmap.is_shoreline(t)
+
+    if h(a) > limit:
+        return None
+    g: dict[TileRef, int] = {a: 0}
+    heap: list[tuple[int, int, TileRef]] = [(h(a), 0, a)]
+    while heap:
+        f, gc, cur = heapq.heappop(heap)
+        if f > limit:
+            return None              # 힙의 머리가 이미 상한을 넘었다 = 전부 넘는다
+        if gc > g.get(cur, 1 << 30):
+            continue
+        from_shore = gmap.is_shoreline(cur)
+        for n in gmap.neighbors(cur):
+            if n in g:
+                continue             # 4방향 균일 비용이라 다시 볼 일이 없다
+            if not traversable(n, from_shore):
+                continue
+            if n == b:
+                return gc + 1
+            g[n] = gc + 1
+            heapq.heappush(heap, (gc + 1 + h(n), gc + 1, n))
+    return None
 
 
 def _is_trade_station(s: "Station") -> bool:
@@ -133,9 +193,38 @@ class Train:
 
 @dataclass
 class RailNetwork:
-    """역들과 그 사이 노선. 노선은 역 쌍이 사거리 안이면 자동으로 생긴다."""
+    """역들과 그 사이 노선. 노선은 역 쌍이 사거리 안이고 **선로가 실제로 닿을 때**
+    생긴다."""
 
     stations: list[Station] = field(default_factory=list)
+    # 역 쌍 → 이어지는가. **판 전체에 걸쳐 남긴다** — 원본도 역이 생길 때 한 번
+    # `findTilePath` 를 돌고 그 결과를 `Railroad` 로 들고 있지, 매 tick 다시
+    # 재지 않는다. 키는 정렬한 칸 쌍이라 방향이 없다.
+    _linked: dict[tuple[int, int], bool] = field(default_factory=dict)
+    # 캐시를 언제 버릴지. 지형이 바뀌면(핵이 육지를 바다로) 선로도 끊긴다.
+    _terrain_epoch: int = -1
+
+    def connected(self, gmap: GameMap, a: TileRef, b: TileRef) -> bool:
+        """두 역이 이어지는가 — **거리도 맞고 선로도 닿아야 한다.**
+
+        원본 `RailNetworkImpl.connect` 는 거리 검사를 통과한 쌍에 대해
+        `findTilePath` 를 돌고 **길이가 `railroadMaxSize`(=110×√2≈155) 미만일
+        때만** 노선을 만든다(§5.84). 그래서 만 사이로 15칸 떨어진 두 도시라도
+        육로가 크게 돌아가면 안 이어지고, 다른 섬이면 아예 못 이어진다.
+
+        전에는 직선 거리만 봤다 — **바다 건너 110칸도 이어졌다.**"""
+        if not station_range_ok(gmap, a, b):
+            return False
+        epoch = gmap.terrain_epoch
+        if epoch != self._terrain_epoch:
+            self._linked.clear()
+            self._terrain_epoch = epoch
+        key = (a, b) if a < b else (b, a)
+        hit = self._linked.get(key)
+        if hit is None:
+            hit = land_path_len(gmap, a, b, int(C.RAILROAD_MAX_SIZE)) is not None
+            self._linked[key] = hit
+        return hit
 
     def rebuild(self, gmap: GameMap, players) -> None:
         """건물 목록에서 역을 다시 만든다. 건물이 핵에 날아가면 역도 같이 사라진다.
@@ -161,7 +250,7 @@ class RailNetwork:
         mine = [s for s in self.stations if s.owner == pid]
         out: list[Station] = []
         for s in self.stations:
-            if any(station_range_ok(gmap, m.tile, s.tile) and m.tile != s.tile
+            if any(m.tile != s.tile and self.connected(gmap, m.tile, s.tile)
                    for m in mine):
                 out.append(s)
         return out
@@ -188,7 +277,8 @@ class RailNetwork:
         seen = {src.tile}
         for _ in range(hops):
             nxt = [s for s in self.stations
-                   if s.tile not in seen and near_station(gmap, here.tile, s.tile)]
+                   if s.tile not in seen
+                   and self.connected(gmap, here.tile, s.tile)]
             if not nxt:
                 break
             here = rng.choice(nxt)

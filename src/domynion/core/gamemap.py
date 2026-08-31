@@ -92,7 +92,7 @@ class GameMap:
 
     __slots__ = ("width", "height", "size", "raw", "owner",
                  "terrain", "land_count", "name", "_ocean_cc", "nations",
-                 "_touch_cc", "_passable")
+                 "_touch_cc", "_passable", "terrain_epoch")
 
     def __init__(self, width: int, height: int, raw: np.ndarray, name: str = ""):
         if raw.size != width * height:
@@ -111,6 +111,10 @@ class GameMap:
         # 칸이 접한 바다 연결성분. 지형이 안 바뀌므로 한 번 재면 끝이다.
         # ⚠ 핵이 육지를 바다로 만들면 여기도 비워야 한다(`_path_cache` 와 함께).
         self._touch_cc: dict[int, frozenset[int]] = {}
+        # 지형이 바뀔 때마다 오른다. `GameMap` **밖**에 사는 캐시(철도의 선로
+        # 캐시)가 이 값을 들고 있다가 달라지면 스스로 버린다 — 무효화 목록에
+        # 남의 모듈을 끌어들이지 않으려는 것이다.
+        self.terrain_epoch = 0
 
     # --- 적재 -------------------------------------------------------------
 
@@ -221,10 +225,14 @@ class GameMap:
 
     def invalidate_terrain_caches(self) -> None:
         """지형이 바뀌었을 때 버려야 하는 것 전부. **한 곳에 모아 둔다** —
-        새 캐시를 늘릴 때 무효화를 빠뜨리는 것이 이 자리의 유일한 위험이다."""
+        새 캐시를 늘릴 때 무효화를 빠뜨리는 것이 이 자리의 유일한 위험이다.
+
+        ⚠ `GameMap` 밖에 사는 캐시는 여기서 못 지운다(철도의 선로 캐시가 그렇다).
+        그쪽은 `terrain_epoch` 를 보고 스스로 버린다."""
         self._ocean_cc = None
         self._passable = None
         self._touch_cc.clear()
+        self.terrain_epoch += 1
 
     def ocean_components(self) -> np.ndarray:
         """바다 연결성분 라벨(육지는 -1). 처음 부를 때 한 번 계산해 둔다."""
