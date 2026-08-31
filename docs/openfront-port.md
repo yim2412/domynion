@@ -6005,6 +6005,9 @@ python tools/profile_game.py --ticks 1200 --size map
 | **SAM 계통 전체** | 규칙 | `SAMLauncherExecution` | §5.49 에서 **요격 창만** 옮겼다. preshoot(도착 지점 예측 사격) · SAM 미사일 비행 · `dynamicSamRange` · 표적 점수는 안 옮겼다 — 우리 핵이 직선 비행이라 대응물이 없는 것이 절반이다 |
 | ~~`decreaseLevel` 의 관 `pop`~~ | — | `UnitImpl.decreaseLevel` | **옮길 것이 없다.** §5.49 에서 원본을 `grep` 하니 이 함수는 `Game.ts` 의 인터페이스 선언과 `UnitImpl` 의 정의, **딱 두 곳**에만 있고 **부르는 코드가 없다**(테스트 제외). 우리에게 레벨 감소 경로가 없는 것이 원본과 같은 상태다 |
 | `PlayerPanel` | 표시 | 상대 정보 패널(1,069줄) | 지금은 호버 + 외교 메뉴 힌트로 대체. **동맹 만료 카운트다운**만 §5.53 에서 "동맹 연장" 항목의 힌트로 옮겼다 — 그게 없으면 사람은 동맹이 언제 끝나는지 알 방법이 없다 |
+| **`maxConnectionDistance = 4`** | 규칙 | `RailNetworkImpl.connectToNearbyStations` | 새 역은 가까운 상대부터 훑되 **이미 그래프상 4홉 안에 닿는 역과는 선로를 안 깐다** — 원본 철도망은 그래서 성기고, 우리 것은 사거리 안이면 전부 이웃이라 촘촘하다. 옮기려면 역 그래프를 **삽입 순서까지 들고 있어야** 하는데(어느 역이 먼저 생겼느냐로 간선이 달라진다) 우리 `rebuild` 는 매 tick 역 목록을 새로 만든다. §5.84 에서 `rebuild` 가 판 시간의 0.1% 임을 쟀으니 **성능이 이유는 아니고**, 증분 갱신 구조를 새로 짜야 하는 것이 이유다 |
+| `connectToExistingRails` · `Railroad.split` | 규칙 | `RailNetworkImpl` | 새 역이 **기존 선로 3칸 안**에 있으면 역끼리가 아니라 **그 선로를 쪼개** 붙는다. **우리는 선로를 안 깔므로 대응물이 없다**(§5.60 의 범위 결정) — `maxConnectionDistance` 를 옮기게 되면 그때 같이 본다 |
+| `TrainExecution.numCars = 5` | 표시 | — | **옮길 것이 없다.** 기차 뒤에 따라붙는 차량 그림이고 골드·속도·피격에 관여하지 않는다 |
 | `SharedWaterCache` | 성능 | 102줄 | 항구 자리를 고를 때 "무역 상대와 물을 공유하는가"를 3초 캐시로 답한다. 우리는 `_touch_cc` 로 비슷한 일을 하지만 **TTL 구조가 아니다** — 성능 문제가 실제로 드러나면 본다 |
 | 클락의 팀 판정 | 규칙 | `sides()` | FFA 만 쓰므로 편이 곧 개인이다. 팀 모드를 열 때 같이 온다 |
 | `TeamStats` · `AllianceClusters` | 표시 | 팀 모드용 | 팀 모드가 없으니 뒤 |
