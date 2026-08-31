@@ -4625,11 +4625,39 @@ MIRV 비용 · 스폰 면역 · 관계도 · 이모지 · 배신자 거절 · �
 | **`maxConnectionDistance = 4`** | 역 그래프를 삽입 순서까지 들고 있어야 한다. ⚠ **성능이 이유가 아니다** — §5.84 에서 `rebuild` 가 판 시간의 0.1% 임을 쟀다 | `rebuild` 를 증분 갱신으로 |
 | ~~`RailNetwork.links()` 가 죽은 코드다~~ | **지웠다.** 아무도 안 불렀다(테스트도). 이 프로젝트에서 죽은 코드를 찾은 게 네 번째다 — ⚠ §5.84 에서 `station_range_ok` → `connected` 로 **고쳐 놓고서야** 아무도 안 부른다는 걸 알았다. 죽은 코드는 고쳐질 때 티가 안 난다 | — |
 
-##### 이번 세션에서 새로 생긴 탐색 방법
+##### 이번 세션에서 새로 생긴 탐색 방법 — 과 그 **한계**
 
-**문서에 한 번도 안 나오는 원본 파일을 센다**(§5.85). `execution/` 과 `game/`
-에서 0회가 스물아홉 개 나왔고, 대부분 배관이거나 멀티플레이 전용이었지만
-`TransportShipUtils` 하나가 진짜였다.
+**문서에 한 번도 안 나오는 원본 파일을 센다**(§5.85).
+
+```bash
+for f in of/src/core/execution/*.ts; do n=$(basename "$f" .ts); \
+  echo "$(grep -c "$n" docs/openfront-port.md) $n"; done | sort -n | head -20
+```
+
+`execution/` 과 `game/` 에서 0회가 스물아홉 개 나왔고, 대부분 배관이거나
+멀티플레이 전용이었지만 **`TransportShipUtils` 하나가 진짜였다**(§5.85).
+
+⚠ **같은 방법을 메서드 이름에 적용하면 오탐이 쏟아진다.** 확인해 봤다:
+
+| 대상 | 0회로 나온 것 | 그중 진짜 |
+|---|---|---|
+| `NationStructureBehavior` 메서드 37개 | 3 | **0** |
+| `AiAttackBehavior` 메서드 36개 | 11 | **0** |
+
+열넷 전부 오탐이었다. 이유는 하나다 — **우리가 이름을 우리 말로 옮겼다.**
+`findVeryWeakEnemy` → `_s_very_weak`, `countDefensePostsNearFront` →
+`_posts_near_front`, `isBorderingNukedTerritory` → `_s_nuked`. camelCase 를
+snake_case 로 바꿔 찾아도 안 걸린다.
+
+> **파일 단위는 쓸 만하고 메서드 단위는 아니다.** 파일 이름은 원본 그대로
+> 문서에 인용하지만(그게 근거니까), 함수 이름은 옮기면서 바꾼다.
+> §5.82(`Config.ts` **상수** 이름 대조)가 통했던 것도 같은 이유다 — 상수는
+> 원본 이름을 그대로 쓴다.
+
+한 가지는 건졌다: `NationStructureBehavior` 1,354줄 대 우리 `structures.py`
+566줄이라는 **2.4배 격차의 정체**를 확인했다. 보류해 둔 *"종류별 자리 값 함수
+5개 + 철도 연결성 점수(600줄)"* 가 그 차이의 거의 전부다(`structures.py:32`).
+줄 수 대조가 가리키던 곳이 이미 알고 있던 자리였다는 뜻이다.
 
 ---
 
