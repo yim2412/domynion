@@ -4639,9 +4639,15 @@ MIRV 비용 · 스폰 면역 · 관계도 · 이모지 · 배신자 거절 · �
 | 규칙(`core/game/` · `core/execution/`) | 파일 대조 + `init` 읽기 | **넷**(§5.85~§5.88) |
 | UI(`client/hud/layers/`) | 파일 대조 | 없다. `RelationSmiley` 는 치장, `ActionableEvents` 는 우리 이벤트 로그가 대응 |
 
-> **다음은 어디를 볼까**: `core/pathfinding/`(A\* 어댑터들 — §5.84 에서 `AStar.Rail`
-> 하나만 봤다) · `client/render/`(표시 규칙) · 그리고 **아직 아무도 안 읽은
-> `of/tests/`** — 원본 테스트가 곧 원본이 무엇을 규칙으로 여기는지의 목록이다.
+> **다음은 어디를 볼까**: `core/pathfinding/`(A\* 어댑터들 — §5.84 에서
+> `AStar.Rail` 하나만 봤다) · `client/render/`(표시 규칙) ·
+> `client/controllers/`(§5.85 에서 `BuildPreviewController` 가 규칙 함수를
+> 부르는 것을 봤다 — 클라이언트가 미리 계산하는 것들이 곧 규칙이다).
+>
+> ⚠ **`of/tests/` 는 없다.** `package.json` 의 `"test": "vitest run && vitest
+> run tests/server"` 가 그 폴더를 가리키는데 **이 클론에는 안 들어 있다**
+> (`node_modules` 안의 남의 테스트만 있다). *"원본 테스트를 읽자"* 는 좋은
+> 생각이지만 **여기서는 못 한다** — 확인해 봤으니 다시 찾지 말 것.
 
 ##### ⚠ 기준선은 이 조건으로는 못 잰다 (2026-08-31 실측)
 
