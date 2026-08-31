@@ -4659,6 +4659,25 @@ snake_case 로 바꿔 찾아도 안 걸린다.
 5개 + 철도 연결성 점수(600줄)"* 가 그 차이의 거의 전부다(`structures.py:32`).
 줄 수 대조가 가리키던 곳이 이미 알고 있던 자리였다는 뜻이다.
 
+##### AI 계층 전체 대조 — **없다**(2026-08-31)
+
+기왕 붙은 김에 `execution/nation/` 과 `AiAttackBehavior` 를 **전부** 훑었다.
+찾은 것이 없다는 것도 기록이다 — 없으면 다음 세션이 또 훑는다.
+
+| 원본 | 줄 | 우리 | 결과 |
+|---|---|---|---|
+| `AiAttackBehavior` | 1,173 | `nation.py` | **전략 열셋 전부 있다**(`_s_retaliate`~`_s_donate`) |
+| `NationNukeBehavior` | 1,104 | `nukes.py` 727 | 팀 모드 둘(`findStrongestTeamTarget` · `isTeammateAlreadyNukingThisSpot`) 빼고 전부 |
+| `NationStructureBehavior` | 1,354 | `structures.py` 566 | 보류 600줄이 격차의 전부 |
+| `NationWarshipBehavior` | 465 | `nation.py` | `findTeamGameWarshipTarget`(팀 모드) 빼고 전부 |
+| `NationAllianceBehavior` | 435 | `alliance.py` 238 | `shouldRejectInTeamGame`(팀 모드) 빼고 전부 |
+| `NationEmojiBehavior` | 344 | `chatter.py` 215 | **13개 전부** |
+| `NationMIRVBehavior` | 306 | `mirv.py` 166 | **17개 전부**(상수형 넷 포함) |
+| `NationUtils` | 49 | `nukes.py :: rand_territory_tiles` | 100회 시도 · 100칸 이하 예외 · 중복 허용 · **난수 소비 횟수까지** |
+
+> **AI 쪽에 남은 것은 팀 모드와 이미 보류로 적어 둔 자리 값 함수뿐이다.**
+> 다음 누락은 다른 계층에서 찾아야 한다.
+
 ---
 
 #### 다음 세션이 바로 집을 것 (2026-08-29 기준 — 지난 기록)
