@@ -39,6 +39,49 @@ PLAYER_COLORS: list[RGB] = [
 
 OWNER_BLEND = 0.66      # 소유자 색을 이만큼 섞는다. 1.0 이면 지형이 안 보인다
 BORDER_COLOR: RGB = (18, 18, 22)
+
+# 국경 색은 **이웃과의 관계로 갈린다**(§5.93 · 원본 `PlayerView.computeColors`).
+# 원본이 기본 국경색을 목표색 쪽으로 35% 섞는다 — 색을 갈아 치우지 않고 *물들인다*.
+# 그래야 나라 색을 여전히 알아볼 수 있다.
+BORDER_TINT_RATIO = 0.35
+FRIENDLY_TINT_TARGET: RGB = (0, 255, 0)
+EMBARGO_TINT_TARGET: RGB = (255, 0, 0)
+
+
+def _mix(base: RGB, target: RGB, ratio: float) -> RGB:
+    return tuple(round(b * (1 - ratio) + t * ratio)      # type: ignore[return-value]
+                 for b, t in zip(base, target))
+
+
+BORDER_COLOR_NEUTRAL: RGB = BORDER_COLOR
+BORDER_COLOR_FRIENDLY: RGB = _mix(BORDER_COLOR, FRIENDLY_TINT_TARGET, BORDER_TINT_RATIO)
+BORDER_COLOR_EMBARGO: RGB = _mix(BORDER_COLOR, EMBARGO_TINT_TARGET, BORDER_TINT_RATIO)
+
+# 방어된 국경은 **체커보드로 교차**한다(`defendedBorderColors` + `(x+y)` 패리티).
+#
+# ⚠ **원본은 두 단계를 다 어둡게 뺀다**(darken 0.2 / 0.4). 우리 기본 국경색이
+# 거의 검정(18,18,22)이라 그대로 옮기면 둘 다 검정으로 뭉개진다 — 그래서 방향만
+# 뒤집어 **밝은 쪽으로** 두 단계를 뺐다.
+#
+# ⚠ **두 단계가 다 기본색과 달라야 한다.** 처음에 어두운 쪽을 기본색 그대로 뒀는데,
+# 그러면 방어된 국경의 절반이 평범한 국경과 똑같아져 **교차가 신호가 아니라
+# 얼룩으로 읽힌다.** 변이(패리티 고정)가 살아남아서 알았다 — 원본이 굳이 두 값을
+# 다 옮기는 이유가 여기 있었다.
+DEFENDED_LIGHTEN_LIGHT = 0.45
+DEFENDED_LIGHTEN_DARK = 0.20
+
+
+def defended_pair(base: RGB) -> tuple[RGB, RGB]:
+    """방어된 국경의 (밝은 칸, 어두운 칸). **둘 다 기본색과 다르다.**"""
+    return (_mix(base, (255, 255, 255), DEFENDED_LIGHTEN_LIGHT),
+            _mix(base, (255, 255, 255), DEFENDED_LIGHTEN_DARK))
+
+
+# 관계 → 색. 순서가 `BorderRelation` 값 그대로다.
+BORDER_RELATION_COLORS: tuple[RGB, RGB, RGB] = (
+    BORDER_COLOR_NEUTRAL, BORDER_COLOR_FRIENDLY, BORDER_COLOR_EMBARGO,
+)
+
 COAST_COLOR: RGB = (20, 38, 56)
 LABEL_COLOR: RGB = (255, 255, 255)
 LABEL_SHADOW: RGB = (0, 0, 0)

@@ -6,7 +6,7 @@
 | 원본 | 우리 |
 |---|---|
 | `PlayerStatus.ts` | `status.py` (§5.68) |
-| `RelationMatrix.ts` | 관계는 `diplomacy` 가 직접 답한다 — 행렬을 미리 만들 이유가 없다 |
+| `RelationMatrix.ts` | 1024x1024 버퍼는 GPU 에 넘길 값이라 필요 없다. **분류는 필요하다** → `border_relation` |
 | `NukeTelegraphs.ts` | **없었다** → 아래 `nuke_telegraphs` |
 | `AttackRings.ts` | **없었다** → 아래 `attack_rings` |
 
@@ -111,3 +111,53 @@ def attack_rings(st, me: int | None = None) -> list[AttackRing]:
             continue
         out.append(AttackRing(b.dst % w, b.dst // w))
     return out
+
+
+# --- 국경 색 — 원본 `PlayerView.borderColor` / `borderRelationFlags` ----------
+
+
+class BorderRelation(IntEnum):
+    """국경 한 변이 무엇 사이인가 — 원본 `RelationMatrix.ts` 의 셋 그대로.
+
+    **금수가 우호를 이긴다.** 원본이 이웃을 훑다 금수를 만나면 그 자리에서
+    `break` 한다(우호는 계속 훑는다) — 둘 다 해당하는 관계에서 사람이 먼저 알아야
+    하는 것은 무역이 끊겼다는 쪽이기 때문이다."""
+
+    NEUTRAL = 0
+    FRIENDLY = 1
+    EMBARGO = 2
+
+
+def border_relation(a: int, b: int, diplomacy) -> BorderRelation:
+    """두 나라 사이 국경의 관계.
+
+    ⚠ **금수를 양방향으로 본다.** 원본은 칸 주인 쪽에서만 보고(`this.hasEmbargo`)
+    양쪽이 각자 자기 국경을 그리므로, A 만 금수를 걸면 A 쪽 선만 빨갛다. 우리는
+    두 칸 사이에 **선을 하나만** 긋기 때문에 한쪽만 보면 방향에 따라 신호가
+    사라진다. `status.py` 의 금수 깃발과 같은 이유로 양방향으로 합친다."""
+    if diplomacy.embargoed(a, b) or diplomacy.embargoed(b, a):
+        return BorderRelation.EMBARGO
+    if diplomacy.allied(a, b):
+        return BorderRelation.FRIENDLY
+    return BorderRelation.NEUTRAL
+
+
+# --- 클락의 다음 파도 — 원본 `DoomsdayClockPanel` 의 한 줄 -------------------
+
+
+def wave_text(w) -> str:
+    """다음 파도를 한 줄로. 원본 `zoneDetail` 의 세 갈래 그대로다.
+
+    ⚠ **셋을 한 문구로 뭉치면 안 된다.** *오르는 중*과 *쉬는 중*은 사람이 할 일이
+    다르다 — 오르는 중이면 지금 잃는 중이고, 쉬는 중이면 다음 파도까지가 남은
+    시간이다. 마지막 단계는 더 안 오르므로 카운트다운 자체가 거짓말이 된다."""
+    if w.done:
+        return f"최종 {w.target_percent:.0f}%"
+    if w.growing:
+        return f"{w.target_percent:.0f}% 로 오르는 중 {_hms(w.seconds_to_target)}"
+    return f"다음 {w.target_percent:.0f}% 까지 {_hms(w.seconds_to_next_growth)}"
+
+
+def _hms(seconds: float) -> str:
+    t = max(0, int(seconds))
+    return f"{t // 60}:{t % 60:02d}"

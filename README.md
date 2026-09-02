@@ -130,11 +130,12 @@ src/domynion/
     simple_ai.py   v0.1 규칙 기반 AI (대조용으로 남겨 둔다)
   ui/
     frame.py       타일 해상도 프레임 생성 (확대는 Qt 가 한다)
-    map_widget.py  지도 + 국경선 + 이름
-    hud.py         순위표 · 병력바 · 공격 슬라이더 · 증가율
+    map_widget.py  지도 + 국경선(관계·방어로 색이 갈린다) + 이름
+    hud.py         순위표 · 병력바 · 공격 슬라이더 · 증가율 · 클락의 다음 파도
     status.py      이름 옆 상태 깃발 (`derive/PlayerStatus.ts`) — Qt 없는 순수 계산
-    overlays.py    핵 낙하 예고 원 · 상륙 고리 (`derive/NukeTelegraphs.ts` ·
-                   `AttackRings.ts`) — 같은 방침
+    overlays.py    핵 낙하 예고 원 · 상륙 고리 · 국경 관계 · 파도 문구
+                   (`derive/NukeTelegraphs.ts` · `AttackRings.ts` ·
+                   `PlayerView.borderColor` · `DoomsdayClockPanel`) — 같은 방침
     rates.py       병력 `+N/s` · 골드 `+N` (`ControlPanel.ts`) — 같은 방침
     main_window.py 조립 + 실시간 타이머
     app.py         진입점 (--shot 스크린샷 모드)

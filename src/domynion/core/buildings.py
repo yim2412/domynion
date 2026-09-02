@@ -54,6 +54,13 @@ class DefensePostIndex:
     def covers(self, gmap: GameMap, tile: TileRef, pid: int) -> bool:
         return bool(self._cover[tile] == pid + 1)
 
+    def covers_many(self, tiles: np.ndarray, pids: np.ndarray) -> np.ndarray:
+        """칸마다 **그 칸 주인의** 초소가 덮고 있는가. 국경선을 그릴 때 수만 칸을
+        한 번에 물어보므로 `covers` 를 파이썬 반복으로 부르면 프레임을 잡아먹는다."""
+        # ⚠ **주인 없는 칸(-1)을 먼저 잘라야 한다.** `_cover` 의 0 이 "아무도 안
+        # 덮음"이고 `-1 + 1` 도 0 이라, 안 자르면 중립 땅이 전부 "덮여 있음"이 된다.
+        return (pids >= 0) & (self._cover[tiles] == pids + 1)
+
 
 def euclid_sq(gmap: GameMap, a: TileRef, b: TileRef) -> int:
     ax, ay = a % gmap.width, a // gmap.width

@@ -13,8 +13,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget)
 
 from ..core import constants as C
+from ..core.doomsday import wave_state
 from ..core.engine import GameState
 from . import palette as P
+from .overlays import wave_text
 from .rates import gold_pip, rate_rising, troop_rate
 
 # 순위표에 몇 줄을 보여줄 것인가. 원본 기본 구성이 472명이라 전부 쓰면 화면을 덮는다.
@@ -68,6 +70,10 @@ class Scoreboard(QWidget):
         if st.clock.cfg.enabled:
             need = st.clock.bar_tiles(st.elapsed, st.gmap.land_count)
             bar = f"   기준선 {need / max(1, st.gmap.land_count) * 100:.1f}%"
+            # ⚠ **다음 파도를 같이 보여준다**(§5.94). 지금 기준선만 보이면 사람은
+            # 표시된 뒤에야 안다 — 12% 를 쥐고 있어도 다음이 17% 면 지금 쳐야 한다.
+            bar += "   " + wave_text(
+                wave_state(st.elapsed, st.clock.cfg.speed))
         self.clock_label.setText(f"{int(st.elapsed) // 60:02d}:{int(st.elapsed) % 60:02d}{bar}")
 
         order = sorted(st.players.values(), key=lambda p: -st.tiles(p.pid))

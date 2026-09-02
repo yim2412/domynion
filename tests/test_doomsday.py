@@ -15,7 +15,8 @@ import pytest
 from domynion.core import constants as C
 from domynion.core.buildings import DefensePostIndex
 from domynion.core.doomsday import (LEVELS, LEVELS_TEAM, SCHEDULES, DoomsdayClock,
-                                    required_basis_points, required_tiles)
+                                    required_basis_points, required_tiles,
+                                    wave_state)
 from domynion.core.engine import GameState, Victory
 from domynion.core.gamemap import GameMap
 from domynion.core.nukes import Fallout
@@ -539,3 +540,74 @@ def test_the_engine_stamps_the_moment_a_tile_actually_rots():
     assert st.tiles(1) < 40, "아직 안 썩었다"
     assert st.clock.rotted_at.get(1) is not None, "썩었는데 아무도 안 찍었다"
     assert st.clock.is_decaying(1, st.tick_count)
+
+
+# --- 다음 파도 예고 (§5.94) ----------------------------------------------------
+
+def test_the_grace_period_counts_down_to_the_first_wave():
+    """유예 동안 기준선은 0 이지만 **첫 파도까지 남은 시간**은 보여야 한다.
+
+    막지 않았으면: 처음 10분간 화면에 아무 예고가 없어, 클락이 켜진 판인지조차
+    알 수 없다."""
+    s = SCHEDULES["normal"]
+    w = wave_state(0)
+    assert w.current_percent == 0 and not w.growing and not w.done
+    assert w.seconds_to_next_growth == s.grace_seconds
+    assert w.target_percent == LEVELS[0] / 100
+
+
+def test_growing_and_resting_are_different_states():
+    """⚠ 둘을 뭉치면 안 된다 — 오르는 중이면 **지금 잃는 중**이고, 쉬는 중이면
+    다음 파도까지가 **남은 시간**이다. 사람이 할 일이 다르다.
+
+    막지 않았으면: 한 문구로 뭉쳐도 화면에 글자는 나온다."""
+    s = SCHEDULES["normal"]
+    g = wave_state(s.grace_seconds + 10)
+    assert g.growing and g.seconds_to_target > 0 and g.seconds_to_next_growth == 0
+
+    r = wave_state(s.grace_seconds + s.ramp_seconds[0] + 10)
+    assert not r.growing and r.seconds_to_next_growth > 0 and r.seconds_to_target == 0
+    assert r.target_percent == LEVELS[1] / 100, "쉬는 중에는 **다음** 목표를 가리킨다"
+
+
+def test_the_last_wave_does_not_promise_another_one():
+    """⚠ `levels[i + 1]` 을 그냥 읽으면 범위를 넘고, 넘지 않게 감싸면 "다음이
+    있다"고 거짓말한다. 마지막에서는 자기 목표를 그대로 둔다.
+
+    막지 않았으면: 다 오른 뒤에도 카운트다운이 계속 돈다."""
+    w = wave_state(99_999)
+    assert w.done and w.target_percent == LEVELS[-1] / 100
+    assert w.seconds_to_next_growth == 0 and not w.wave_flash
+
+
+def test_the_flash_window_opens_just_before_a_wave_and_not_in_the_middle():
+    """파도 시작 전후 5초만 튄다 — 계속 켜져 있으면 신호가 아니다.
+
+    막지 않았으면: 항상 참으로 둬도 "튀는 창이 있다"는 테스트는 통과한다."""
+    s = SCHEDULES["normal"]
+    assert wave_state(s.grace_seconds - 1).wave_flash
+    assert not wave_state(s.grace_seconds - 60).wave_flash
+    assert wave_state(s.grace_seconds + 1).wave_flash
+    assert not wave_state(s.grace_seconds + s.ramp_seconds[0] // 2).wave_flash
+
+
+def test_the_current_percent_is_the_same_ladder_the_rule_walks():
+    """⚠ **사다리를 두 벌 두지 않는다.** 원본이 이 함수를 규칙 파일 안에 둔 이유가
+    그것이다(*"Lives here so the schedule is defined once"*).
+
+    막지 않았으면: 화면이 자기 사다리를 걸어도 처음엔 같은 값이 나오고, 규칙만
+    바뀔 때 조용히 어긋난다."""
+    for t in (0, 601, 700, 780, 1500, 3000):
+        assert wave_state(t).current_percent == required_basis_points(t) / 100
+        # ⚠ **팀 인자까지 넘기는지 재야 한다.** 위 줄만 두면 `team_game` 을
+        # 안 넘겨도 통과한다 — FFA 값은 같으니까. 변이가 살아남아서 알았다.
+        assert (wave_state(t, team_game=True).current_percent
+                == required_basis_points(t, team_game=True) / 100)
+
+
+def test_the_team_ladder_is_a_different_ladder():
+    """막지 않았으면: 팀 인자를 안 넘겨도 값이 나오므로 눈에 안 띈다."""
+    s = SCHEDULES["normal"]
+    t = s.grace_seconds + s.ramp_seconds[0] + 10
+    assert wave_state(t, team_game=True).target_percent == LEVELS_TEAM[1] / 100
+    assert wave_state(t).target_percent == LEVELS[1] / 100

@@ -221,3 +221,33 @@ def test_a_lump_of_gold_pops_up_and_then_goes_away(qapp):
     c.refresh()
     assert "+35,000" not in c.gold_label.text()
     assert f"{st.players[0].gold:,}" in c.gold_label.text(), "골드 자체는 남아야 한다"
+
+
+# --- 클락의 다음 파도가 화면에 뜨는가 (§5.94) ---------------------------------
+
+def test_the_clock_line_shows_the_next_wave_not_just_the_current_bar(qapp):
+    """⚠ **배선이다.** `wave_state` 가 맞아도 HUD 가 안 쓰면 화면은 그대로다.
+
+    막지 않았으면: 사람은 기준선만 보고, 다음 파도가 몇 %로 언제 오는지는
+    표시된 뒤에야 알게 된다."""
+    from domynion.core.doomsday import SCHEDULES
+
+    st = state()
+    st.clock.cfg.enabled = True
+    st.tick_count = int((SCHEDULES["normal"].grace_seconds + 10) * C.TICK_HZ)
+
+    sb = Scoreboard(st)
+    sb.refresh()
+    text = sb.clock_label.text()
+    assert "기준선" in text, "기준선이 사라졌다"
+    assert "오르는 중" in text, f"다음 파도가 안 보인다: {text!r}"
+
+
+def test_the_clock_line_stays_short_when_the_clock_is_off(qapp):
+    """클락이 꺼진 판에서는 시계만 나온다 — 대조군이 없으면 위 테스트는
+    "항상 붙인다"도 통과시킨다."""
+    st = state()
+    st.clock.cfg.enabled = False
+    sb = Scoreboard(st)
+    sb.refresh()
+    assert "기준선" not in sb.clock_label.text()

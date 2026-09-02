@@ -33,7 +33,7 @@ from ..core.constants import Terrain
 from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
-from .overlays import attack_rings, nuke_telegraphs
+from .overlays import attack_rings, border_relation, nuke_telegraphs
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -86,6 +86,7 @@ class MapWidget(QWidget):
         self._lod_stride = 1
         self._crop_y0 = 0                 # 오버레이가 담고 있는 첫 줄(타일 좌표)
         self._borders: tuple[np.ndarray, np.ndarray] | None = None
+        self._border_kind: tuple[np.ndarray, np.ndarray] | None = None
         # 라벨 위치는 **게임 tick 마다만** 바뀐다. paint 마다(그것도 순환 사본마다)
         # 다시 계산하면 200만 칸을 플레이어 수만큼 훑는다 — 실측으로 그게 병목이었다.
         self._labels: list[tuple[int, float, float, float]] = []
@@ -184,6 +185,7 @@ class MapWidget(QWidget):
         self._overlay_img = QImage(self._overlay_buf.data, w, h, w * 4,
                                    QImage.Format.Format_RGBA8888)
         self._borders = self.frames.border_segments(self.visible_tiles())
+        self._border_kind = self._classify_borders()
         # 라벨은 전체 지도를 플레이어 수만큼 훑는다(원본 크기에서 12~14ms 실측).
         # 나라 중심은 1초에 한 번만 다시 잡아도 눈에 띄지 않는다.
         self._label_age -= 1
@@ -241,21 +243,81 @@ class MapWidget(QWidget):
             self.menu.draw(p, lambda size, bold: ui_font(size, bold))
         p.end()
 
+    def _classify_borders(self) -> tuple[np.ndarray, np.ndarray]:
+        """국경 변마다 `관계 * 2 + 방어여부`. 그리기 전에 **한 번만** 계산한다.
+
+        ⚠ **나라 쌍을 정수 키로 묶어 `np.unique` 로 한 번에 접는다.** 처음에는
+        쌍마다 `(a == pa) & (b == pb)` 마스크를 만들었는데 **그게 더 느렸다** —
+        쌍이 60개면 2만 변을 60번 훑는다. 실측 6.7ms → **0.5ms**(2만 3천 변 ·
+        나라 60). 변마다 관계를 묻는 순진한 방법(13.1ms)보다도 느렸으니,
+        최적화라고 생각한 쪽이 반대였던 것이다. 지금 이 함수는 **0.88ms** 이고
+        10Hz `refresh` 에서만 돈다(그리기는 60Hz 지만 분류는 다시 안 한다).
+
+        방어는 `DefensePostIndex` 를 통째로 색인해서 잰다(`covers_many`).
+        **양쪽 칸 중 하나라도 자기 초소에 덮여 있으면** 방어된 국경이다 — 원본은
+        칸마다 자기 쪽을 칠하지만 우리는 두 칸 사이에 선을 하나만 긋는다."""
+        vx, hx = self._borders
+        st = self.state
+        vt, ht = self.frames.border_pairs(vx, hx)
+        owner = st.gmap.owner
+        out = []
+        for seg_tiles in (vt, ht):
+            if not len(seg_tiles):
+                out.append(np.empty(0, dtype=np.int8))
+                continue
+            a = owner[seg_tiles[:, 0]].astype(np.int64)
+            b = owner[seg_tiles[:, 1]].astype(np.int64)
+            # 주인 없는 칸은 -1 이라 +1 해서 0 부터 담는다. 자릿수는 **실제
+            # 최대 pid 에서 뽑는다** — 상수로 박으면 나라 수를 늘렸을 때 키가
+            # 겹쳐 국경 색이 조용히 틀린다.
+            stride = int(max(a.max(), b.max())) + 2
+            key = (a + 1) * stride + (b + 1)
+            uniq, inv = np.unique(key, return_inverse=True)
+            rels = np.zeros(len(uniq), dtype=np.int8)
+            for i, k in enumerate(uniq):
+                pa = int(k) // stride - 1
+                pb = int(k) % stride - 1
+                if pa < 0 or pb < 0:
+                    continue                  # 중립 땅과의 경계는 관계가 없다
+                rels[i] = int(border_relation(pa, pb, st.diplomacy))
+            kind = (rels[inv] * 2).astype(np.int8)
+            if st._posts is not None:
+                cov = (st._posts.covers_many(seg_tiles[:, 0], owner[seg_tiles[:, 0]])
+                       | st._posts.covers_many(seg_tiles[:, 1], owner[seg_tiles[:, 1]]))
+                kind[cov] |= 1
+            out.append(kind)
+        return out[0], out[1]
+
     def _draw_borders(self, p: QPainter, ox: float) -> None:
-        if self._borders is None:
+        """국경선. **색이 관계로 갈리고, 방어된 곳은 교차한다** (§5.93).
+
+        원본 `PlayerView.borderColor` 가 하는 일이다. 우리는 한 가지 색으로만
+        그려서, 지도만 봐서는 **어디가 동맹이고 어디가 금수인지**도, 어느 국경이
+        **초소에 덮여 있는지**도 알 수 없었다."""
+        if self._borders is None or self._border_kind is None:
             return
         vx, hx = self._borders
         n = len(vx) + len(hx)
         if n == 0 or n > MAX_BORDER_LINES:
             # 너무 촘촘하면 그리지 않는다. 그 배율에서는 색 경계로 이미 보인다.
             return
-        p.setPen(QPen(QColor(*P.BORDER_COLOR), max(1.0, self.zoom / 4)))
         z, oy = self.zoom, self.offset.y()
-        lines = [QLineF(ox + x * z, oy + y * z, ox + x * z, oy + (y + 1) * z)
-                 for x, y in vx]
-        lines += [QLineF(ox + x * z, oy + y * z, ox + (x + 1) * z, oy + y * z)
-                  for x, y in hx]
-        p.drawLines(lines)
+        groups: dict[tuple[int, int], list[QLineF]] = {}
+        for seg, kinds, vertical in ((vx, self._border_kind[0], True),
+                                     (hx, self._border_kind[1], False)):
+            for (x, y), k in zip(seg, kinds):
+                line = (QLineF(ox + x * z, oy + y * z, ox + x * z, oy + (y + 1) * z)
+                        if vertical else
+                        QLineF(ox + x * z, oy + y * z, ox + (x + 1) * z, oy + y * z))
+                # 체커보드 패리티는 원본 그대로 `(x + y)` 의 홀짝이다.
+                groups.setdefault((int(k), (int(x) + int(y)) & 1), []).append(line)
+        pen_w = max(1.0, self.zoom / 4)
+        for (kind, parity), lines in groups.items():
+            color = P.BORDER_RELATION_COLORS[kind >> 1]
+            if kind & 1:
+                color = P.defended_pair(color)[parity]
+            p.setPen(QPen(QColor(*color), pen_w))
+            p.drawLines(lines)
 
     def _draw_hover(self, p: QPainter, ox: float) -> None:
         """커서가 얹힌 나라의 국경을 밝게 덧그린다 — **무엇을 치게 되는지** 보여야 한다.

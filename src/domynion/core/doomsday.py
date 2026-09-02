@@ -71,6 +71,70 @@ def required_basis_points(elapsed: float, speed: str = "normal",
     return levels[-1]
 
 
+@dataclass(frozen=True)
+class WaveState:
+    """지금 파도가 어디쯤인가 — 원본 `doomsdayClockWaveState`.
+
+    **이식 누락 아흔아홉**(§5.94). 우리 HUD 는 *지금* 기준선만 보여 줬다.
+    그런데 클락에서 사람이 정할 것은 *지금 안전한가*가 아니라 **다음 파도가 몇 %
+    까지, 언제 오는가**다 — 지금 12% 를 쥐고 있어도 다음 파도가 17% 면 지금
+    쳐야 한다. 그게 안 보이면 표시된 뒤에야 알게 된다.
+
+    원본이 이 함수를 **규칙 파일 안에** 둔 이유를 주석으로 적어 뒀다:
+    *"Lives here so the schedule is defined once."* 화면에서 사다리를 다시
+    걸으면 두 벌이 되고, 그러면 언젠가 어긋난다."""
+
+    current_percent: float      # 지금 기준선(%)
+    target_percent: float       # 지금 오르는 중이면 그 목표, 쉬는 중이면 **다음** 목표
+    growing: bool
+    seconds_to_next_growth: float   # 다음 파도가 시작되기까지(오르는 중이면 0)
+    seconds_to_target: float        # 지금 파도가 목표에 닿기까지(쉬는 중이면 0)
+    wave_flash: bool            # 파도 시작 전후 5초 — 눈에 띄게 할 창
+    done: bool                  # 마지막 단계에 닿았다
+
+
+# 파도 시작 전후로 표시를 튀게 하는 창. 원본이 앞뒤 모두 5초를 쓴다.
+WAVE_FLASH_SECONDS = 5
+
+
+def wave_state(elapsed: float, speed: str = "normal",
+               team_game: bool = False) -> WaveState:
+    """`required_basis_points` 와 **같은 사다리를 걸어** 지금 위치를 돌려준다."""
+    s = SCHEDULES.get(speed, SCHEDULES["normal"])
+    levels = LEVELS_TEAM if team_game else s.levels
+    current = required_basis_points(elapsed, speed, team_game) / 100
+    n = len(levels)
+
+    if elapsed <= s.grace_seconds:
+        left = s.grace_seconds - elapsed
+        return WaveState(0.0, levels[0] / 100, False, left, 0.0,
+                         left <= WAVE_FLASH_SECONDS, False)
+
+    t = elapsed - s.grace_seconds
+    for i in range(n):
+        ramp, pause = s.ramp_seconds[i], s.pause_seconds[i]
+        last = i == n - 1
+        if t < ramp:
+            return WaveState(current, levels[i] / 100, True, 0.0, ramp - t,
+                             t <= WAVE_FLASH_SECONDS, False)
+        t -= ramp
+        if t < pause:
+            # ⚠ **마지막 파도에서는 자기 목표를 그대로 둔다.** `levels[i + 1]` 을
+            # 그냥 읽으면 범위를 넘고, 넘지 않게 감싸면 "다음이 있다"고 거짓말한다.
+            #
+            # ⚠ **`last` 분기는 변이로 안 잡힌다. 정상이다** — 네 속도 전부
+            # 마지막 `pause_seconds` 가 0 이라 `t < 0` 이 참일 수가 없다. 다 오른
+            # 판은 아래 `return` 으로 빠진다. 원본도 같은 자리에 `isLast` 를
+            # 두고 있어 그대로 옮긴다(일정이 바뀌면 그때 살아난다). **파지 말 것.**
+            target = levels[i] if last else levels[i + 1]
+            return WaveState(current, target / 100, False,
+                             0.0 if last else pause - t, 0.0,
+                             (not last) and pause - t <= WAVE_FLASH_SECONDS,
+                             last)
+        t -= pause
+    return WaveState(current, levels[-1] / 100, False, 0.0, 0.0, False, True)
+
+
 def required_tiles(elapsed: float, land_count: int, speed: str = "normal",
                    team_game: bool = False) -> int:
     bp = required_basis_points(elapsed, speed, team_game)

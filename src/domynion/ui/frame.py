@@ -158,6 +158,27 @@ class FrameBuilder:
                 np.stack([hx + x0, hy + y0 + 1], axis=1) if len(hx)
                 else np.empty((0, 2), int))
 
+    def border_pairs(self, v: np.ndarray, h: np.ndarray
+                     ) -> tuple[np.ndarray, np.ndarray]:
+        """국경 변마다 **양쪽 칸 번호**. `(세로변용, 가로변용)` 각각 (n, 2).
+
+        소유자가 아니라 칸을 돌려주는 이유는, 색을 정하는 데 **관계**(소유자)와
+        **방어 여부**(칸 + 소유자)가 둘 다 필요하기 때문이다.
+
+        `border_segments` 가 좌표만 돌려주는데, 국경 색을 관계로 갈리게 하려면
+        (원본 `PlayerView.borderColor`) 누구와 누구 사이인지를 알아야 한다.
+        시그니처를 안 건드리고 따로 뽑는다 — 좌표만 필요한 자리가 이미 있다.
+
+        세로 변 `(X, Y)` 는 `(X-1, Y)` 와 `(X, Y)` 사이,
+        가로 변 `(X, Y)` 는 `(X, Y-1)` 과 `(X, Y)` 사이다(`border_segments` 규약)."""
+        w = self.gmap.width
+        owner = self.gmap.owner
+        vt = (np.stack([v[:, 1] * w + v[:, 0] - 1, v[:, 1] * w + v[:, 0]], axis=1)
+              if len(v) else np.empty((0, 2), int))
+        ht = (np.stack([(h[:, 1] - 1) * w + h[:, 0], h[:, 1] * w + h[:, 0]], axis=1)
+              if len(h) else np.empty((0, 2), int))
+        return vt, ht
+
     def label_anchors(self, players) -> list[tuple[int, float, float, float]]:
         """`(pid, 중심x, 중심y, 영토 폭)`. 폰트 크기는 **영토 덩어리의 실제 폭**에서
         뽑아야 한다 — 타일 비례로 잡으면 큰 나라 이름이 화면을 덮는다."""
