@@ -22,7 +22,6 @@ from . import palette as P
 
 _TERRAIN_LUT = np.array(
     [P.TERRAIN_COLORS[Terrain(i)] for i in range(len(Terrain))], dtype=np.float32)
-_PLAYER_LUT = np.array(P.PLAYER_COLORS, dtype=np.float32)
 
 
 def _texture(h: int, w: int, scale: int, seed: int) -> np.ndarray:
@@ -40,8 +39,12 @@ def _texture(h: int, w: int, scale: int, seed: int) -> np.ndarray:
 
 def render(gmap: GameMap, scale: int = 2, seed: int = 0,
            labels: dict[int, str] | None = None,
-           title: str | None = None) -> Image.Image:
-    """지도 한 장. `scale` 은 타일 한 변의 픽셀 수."""
+           title: str | None = None,
+           kinds: dict[int, str] | None = None) -> Image.Image:
+    """지도 한 장. `scale` 은 타일 한 변의 픽셀 수.
+
+    `kinds` 를 주면 **종류별 통**에서 색을 뽑는다(§5.95). 안 주면 전부 나라
+    색으로 그린다 — 이 렌더러는 지도 그림만 뽑는 용도라 종류를 모를 때가 있다."""
     h, w = gmap.height, gmap.width
     terrain = gmap.terrain.reshape(h, w)
     owner = gmap.owner.reshape(h, w)
@@ -50,9 +53,12 @@ def render(gmap: GameMap, scale: int = 2, seed: int = 0,
 
     owned = owner >= 0
     if owned.any():
-        idx = np.where(owned, owner, 0) % len(P.PLAYER_COLORS)
+        n = int(owner.max()) + 1
+        lut = np.array([P.player_color(pid, (kinds or {}).get(pid, "nation"))
+                        for pid in range(n)], dtype=np.float32)
+        idx = np.where(owned, owner, 0)
         b = P.OWNER_BLEND
-        base = np.where(owned[..., None], base * (1 - b) + _PLAYER_LUT[idx] * b, base)
+        base = np.where(owned[..., None], base * (1 - b) + lut[idx] * b, base)
 
     px = np.repeat(np.repeat(base, scale, axis=0), scale, axis=1)
     water = np.repeat(np.repeat(terrain == Terrain.OCEAN, scale, axis=0),

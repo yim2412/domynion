@@ -35,8 +35,8 @@ QLabel { color: #e8e8ec; }
 """
 
 
-def _swatch(pid: int) -> str:
-    r, g, b = P.player_color(pid)
+def _swatch(pid: int, kind: str = "nation") -> str:
+    r, g, b = P.player_color(pid, kind)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
@@ -90,7 +90,7 @@ class Scoreboard(QWidget):
             share = st.share(p.pid) * 100
             doomed = p.pid in st.clock.marked_at
             mark = " ☠" if doomed else ""
-            colour = _swatch(p.pid)
+            colour = _swatch(p.pid, p.kind)
             dim = "" if p.alive else "opacity: 0.4;"
             mine = " style=\"font-weight:bold\"" if p.pid == self.me else ""
             lbl.setText(

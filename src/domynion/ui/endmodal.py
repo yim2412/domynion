@@ -176,7 +176,7 @@ class EndModal(QWidget):
                 elif not st.players[pid].alive:
                     lbl.setStyleSheet("color: #71717c;")
                 if key == "player":
-                    r_, g_, b_ = P.player_color(pid)
+                    r_, g_, b_ = P.player_color(pid, st.players[pid].kind)
                     lbl.setStyleSheet(
                         lbl.styleSheet()
                         + f"color: rgb({r_},{g_},{b_});")

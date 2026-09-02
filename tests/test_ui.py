@@ -196,7 +196,36 @@ def test_tile_at_maps_screen_back_to_the_map():
 def test_palette_has_a_colour_for_every_terrain():
     for t in Terrain:
         assert t in P.TERRAIN_COLORS
-    assert len(P.PLAYER_COLORS) >= 8
+
+
+def test_every_nation_on_the_default_map_gets_its_own_colour():
+    """⚠ **이 테스트가 `len(PLAYER_COLORS) >= 8` 이었다**(§5.95). v0.1 이 4~6명일
+    때는 맞았는데, §5.51 에서 나라 72 + 봇 400 으로 올린 뒤에도 그대로 남아
+    **색 여덟 개를 통과시키고 있었다.** 통과는 증거가 아니다 — 문턱이 규모를
+    안 따라갔다.
+
+    막지 않았으면: 472명이 도는 지도에서 평균 59명이 같은 색이라, 맞닿은 두
+    나라가 한 덩어리로 보인다.
+
+    ⚠ **개수가 아니라 겹침을 잰다.** `len(...) >= 72` 로 두면 나라 통이 49개인
+    원본을 거짓으로 떨어뜨린다 — 원본도 모자라면 예비 통으로 넘어간다."""
+    nations = 72                      # world manifest 의 나라 수 (`ui/app.py`)
+    got = {P.player_color(pid, "nation") for pid in range(nations)}
+    assert len(got) == nations, f"{nations}명 중 색이 {len(got)}가지뿐이다"
+
+
+def test_the_three_kinds_draw_from_different_pools():
+    """원본은 색으로 종류를 나눈다 — 봇은 채도를 뺀 회색빛, 사람은 선명하다.
+    지도만 봐도 *누가 사람인지* 알 수 있어야 한다.
+
+    막지 않았으면: 셋을 한 통에서 뽑아도 색은 나오므로 눈에 안 띈다."""
+    got = {P.player_color(0, k) for k in ("nation", "bot", "human")}
+    assert len(got) == 3, f"종류가 달라도 같은 색이다: {got}"
+
+    def sat(c):
+        return max(c) - min(c)
+
+    assert sat(P.player_color(0, "bot")) < sat(P.player_color(0, "human")),         "봇이 사람보다 선명하다 — 통이 뒤바뀌었다"
 
 
 # --- 순환 · LOD · 카메라 ------------------------------------------------------
@@ -354,3 +383,59 @@ def test_units_are_drawn_without_crashing():
     img = w.grab()
     assert img.width() > 0
     app.processEvents()
+
+
+def test_the_overlay_colours_a_bot_differently_from_a_nation_on_the_same_id():
+    """⚠ **배선이다**(§5.95). `player_color` 가 종류를 봐도 프레임의 표가 안 보면
+    화면은 그대로다 — 표는 `owner + 1` 로만 찾으므로 종류가 안 들어간다.
+
+    막지 않았으면: 지도에서 봇과 나라가 같은 색으로 나와, 누가 사람인지도
+    누가 나라인지도 알 수 없다."""
+    st = state()
+    spot = (12, 12)
+    st.gmap.owner[st.gmap.ref(*spot)] = 1
+
+    as_nation = FrameBuilder(st.gmap, kinds={1: "nation"})
+    as_bot = FrameBuilder(st.gmap, kinds={1: "bot"})
+    a = tuple(as_nation.owner_rgba()[spot[1], spot[0]][:3])
+    b = tuple(as_bot.owner_rgba()[spot[1], spot[0]][:3])
+    assert a == P.player_color(1, "nation")
+    assert b == P.player_color(1, "bot")
+    assert a != b, "종류가 다른데 같은 색이다"
+
+
+def test_a_high_player_id_does_not_fall_off_the_colour_table():
+    """⚠ 예전 코드가 `len(PLAYER_COLORS) < 64` 일 때만 감쌌다 — **조건이
+    거꾸로**라, 색을 64개 넘게 늘리면 감싸기가 꺼져 pid 가 표를 넘는 순간
+    IndexError 였다(§5.95).
+
+    막지 않았으면: 색을 늘린 그 순간 원본 크기 판이 첫 프레임에서 죽는다."""
+    st = state()
+    spot = (12, 12)
+    st.gmap.owner[st.gmap.ref(*spot)] = 470       # 나라 72 + 봇 400 짜리 판
+    fb = FrameBuilder(st.gmap)
+    px = fb.owner_rgba()[spot[1], spot[0]]
+    assert px[3] > 0 and tuple(px[:3]) == P.player_color(470)
+
+
+def test_the_map_widget_hands_the_frame_builder_the_player_kinds():
+    """⚠ **배선의 마지막 한 칸**(§5.95). 팔레트도 맞고 프레임 표도 종류를 받는데,
+    지도 위젯이 그걸 안 넘기면 판 전체가 나라 색으로만 그려진다.
+
+    막지 않았으면: 위 두 테스트가 다 통과하면서도 실제 화면에서는 봇 400명이
+    나라 색을 쓴다. 변이가 살아남아서 알았다."""
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.ui.map_widget import MapWidget
+
+    # ⚠ **참조를 잡아 둔다.** 버리면 QApplication 이 바로 수거돼 위젯을 만드는
+    # 순간 프로세스가 조용히 죽는다 — 요약 줄도 안 나온다.
+    app = QApplication.instance() or QApplication([])
+    st = state()
+    st.players[1].kind = "bot"
+    w = MapWidget(st)
+    spot = (12, 12)
+    st.gmap.owner[st.gmap.ref(*spot)] = 1
+    px = w.frames.owner_rgba()[spot[1], spot[0]]
+    assert tuple(px[:3]) == P.player_color(1, "bot"), \
+        "지도가 봇을 나라 색으로 그린다"

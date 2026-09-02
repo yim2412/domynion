@@ -33,25 +33,32 @@ _TERRAIN_LUT = np.array(
     [P.TERRAIN_COLORS[Terrain(i)] for i in range(len(Terrain))], dtype=np.float32)
 
 
-def _owner_rgba_lut() -> np.ndarray:
-    """`owner + 1` 로 조회하는 표. 0번(중립)은 **완전 투명**이다."""
-    lut = np.zeros((len(P.PLAYER_COLORS) + 1, 4), dtype=np.uint8)
+def _owner_rgba_lut(n: int, kinds: dict[int, str] | None) -> np.ndarray:
+    """`owner + 1` 로 조회하는 표. 0번(중립)은 **완전 투명**이다.
+
+    ⚠ **pid 마다 한 칸씩 만든다**(§5.95). 예전에는 색 수만큼만 만들고 조회하는
+    쪽에서 `pid % 색수` 로 감쌌는데, 그러면 종류별로 통을 나눌 수가 없다 —
+    감싸기는 `player_color` 안으로 들어갔다."""
+    lut = np.zeros((n + 1, 4), dtype=np.uint8)
     alpha = int(round(P.OWNER_BLEND * 255))
-    for i, (r, g, b) in enumerate(P.PLAYER_COLORS):
-        lut[i + 1] = (r, g, b, alpha)
+    for pid in range(n):
+        r, g, b = P.player_color(pid, (kinds or {}).get(pid, "nation"))
+        lut[pid + 1] = (r, g, b, alpha)
     return lut
-
-
-_OWNER_LUT = _owner_rgba_lut()
 
 
 class FrameBuilder:
     """지형 바닥(RGB, 고정)과 소유자 층(RGBA, 매 프레임)을 따로 낸다."""
 
-    __slots__ = ("gmap", "_base", "_land", "_overlay", "_lod")
+    __slots__ = ("gmap", "_base", "_land", "_overlay", "_lod",
+                 "_kinds", "_owner_lut")
 
-    def __init__(self, gmap: GameMap, seed: int = 0):
+    def __init__(self, gmap: GameMap, seed: int = 0,
+                 kinds: dict[int, str] | None = None):
         self.gmap = gmap
+        # pid -> "nation"/"bot"/"human". 판 내내 안 바뀌므로 표를 한 번만 만든다.
+        self._kinds = kinds
+        self._owner_lut = _owner_rgba_lut(0, kinds)
         self._base = np.zeros((gmap.height, gmap.width, 3), dtype=np.uint8)
         self._land = np.zeros((gmap.height, gmap.width), dtype=bool)
         self._overlay: np.ndarray | None = None
@@ -114,12 +121,22 @@ class FrameBuilder:
         if stride > 1:
             owner = owner[::stride, ::stride]
         idx = owner + 1
-        if len(P.PLAYER_COLORS) < 64:            # pid 가 색 수를 넘으면 감싼다
-            over = idx > len(P.PLAYER_COLORS)
-            if over.any():
-                idx = np.where(over, (owner % len(P.PLAYER_COLORS)) + 1, idx)
-        self._overlay = np.ascontiguousarray(_OWNER_LUT[idx])
+        # ⚠ 예전에는 `len(PLAYER_COLORS) < 64` 일 때만 감쌌다. **조건이 거꾸로였다** —
+        # 색을 64개 넘게 늘리면 감싸기가 꺼지고, pid 가 표를 넘는 순간 IndexError 다.
+        # 이제 표가 pid 를 전부 덮으므로 감쌀 일 자체가 없다(§5.95).
+        self._ensure_lut(int(owner.max()) if owner.size else -1)
+        self._overlay = np.ascontiguousarray(self._owner_lut[idx])
         return self._overlay
+
+    def _ensure_lut(self, max_pid: int) -> None:
+        """표가 `max_pid` 를 덮게 키운다. 나라가 늘 수는 있어도 줄지는 않는다."""
+        if max_pid + 2 > len(self._owner_lut):
+            self._owner_lut = _owner_rgba_lut(max_pid + 1, self._kinds)
+
+    def set_kinds(self, kinds: dict[int, str]) -> None:
+        """pid -> 종류. **색이 종류로 갈리므로**(§5.95) 판이 시작될 때 넣는다."""
+        self._kinds = kinds
+        self._owner_lut = _owner_rgba_lut(len(self._owner_lut) - 1, kinds)
 
     # --- 국경·라벨 --------------------------------------------------------
 

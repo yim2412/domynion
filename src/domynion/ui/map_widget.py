@@ -70,7 +70,9 @@ class MapWidget(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.state = state
-        self.frames = FrameBuilder(state.gmap)
+        self.frames = FrameBuilder(
+            state.gmap,
+            kinds={pid: p.kind for pid, p in state.players.items()})
         # 사람 플레이어. **상대적 깃발**(동맹·표적·금수·나를 겨눈 핵)이 이걸
         # 기준으로 갈린다. 없으면 관전 모드처럼 절대 깃발만 뜬다(§5.68).
         self.me: int | None = None
@@ -333,7 +335,8 @@ class MapWidget(QWidget):
         gm = self.state.gmap
         owner = gm.owner.reshape(gm.height, gm.width)
         z, oy = self.zoom, self.offset.y()
-        c = QColor(*P.player_color(self.hovered_owner))
+        c = QColor(*P.player_color(
+            self.hovered_owner, self.state.players[self.hovered_owner].kind))
         p.setPen(QPen(QColor(min(255, c.red() + 70), min(255, c.green() + 70),
                              min(255, c.blue() + 70)), max(1.5, self.zoom / 2.5)))
         me = self.hovered_owner
