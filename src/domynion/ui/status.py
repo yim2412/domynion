@@ -40,6 +40,9 @@ class Status:
     traitor_remaining: int = 0
     in_clock: bool = False
     clock_draining: bool = False
+    # 실제로 칸이 썩고 있다 — **빨간 고정 해골**. `clock_draining`(병력 유출)과
+    # 다르다: 유출은 견디면 멈추지만 이건 이미 땅이 사라지는 중이다.
+    clock_decaying: bool = False
     clock_warn_progress: float = 0.0
     nuke_active: bool = False
     nuke_targets_me: bool = False
@@ -100,6 +103,9 @@ def player_status(st, me: int | None = None) -> dict[int, Status]:
             # **깜빡이지 않고 고정**한다(위험과 실제 유출을 눈으로 가른다).
             s.clock_draining = under >= warn
             s.clock_warn_progress = min(1.0, max(0.0, under / warn)) if warn else 0.0
+            # ⚠ 여기서 `clock.rotting(...)` 을 다시 부르지 않는다 — 원본이
+            # 그러지 말라고 주석까지 남긴 자리다(`doomsday.is_decaying`).
+            s.clock_decaying = st.clock.is_decaying(pid, tick)
         s.nuke_active = pid in nuke_active
         s.nuke_targets_me = pid in nuke_at_me
 
@@ -127,6 +133,9 @@ def player_status(st, me: int | None = None) -> dict[int, Status]:
 # 여럿이 붙으면 앞에서부터 잘린다. 나를 겨눈 핵이 맨 앞인 이유다.
 MARKERS: tuple[tuple[str, str], ...] = (
     ("nuke_targets_me", "☢"),
+    # ⚠ **썩는 중이 유출보다 앞이다.** 유출은 되돌릴 수 있지만 썩은 땅은 안
+    # 돌아온다. 자리가 셋뿐이라 순서가 곧 무엇을 버릴지다.
+    ("clock_decaying", "☠"),
     ("clock_draining", "💀"),
     ("nuke_active", "☣"),
     ("traitor", "🗡"),

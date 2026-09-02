@@ -33,6 +33,7 @@ from ..core.constants import Terrain
 from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
+from .overlays import attack_rings, nuke_telegraphs
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -231,6 +232,9 @@ class MapWidget(QWidget):
             self._draw_borders(p, x)
             self._draw_hover(p, x)
             self._draw_units(p, x)
+            # 예고 원은 유닛 **위**, 라벨 **아래**다 — 원이 이름을 덮으면 지도가
+            # 안 읽히고, 배 밑에 깔리면 표적이 안 보인다.
+            self._draw_telegraphs(p, x)
             self._draw_labels(p, x)
         self._draw_pings(p)
         if self.menu is not None:
@@ -378,6 +382,43 @@ class MapWidget(QWidget):
                 c.setAlpha(dim)
                 p.setPen(QPen(c))
                 p.drawText(int(x), int(y), text)
+
+    def _draw_telegraphs(self, p: QPainter, ox: float) -> None:
+        """핵 낙하 예고 원 + 내 수송선의 상륙 고리 (§5.92).
+
+        ⚠ **매 프레임 다시 뽑는다.** 깃발(`player_status`)과 달리 이건 1초만
+        늦어도 틀린 자리를 가리킨다 — 핵은 10 tick 에 100칸을 난다. 대신 훑는
+        것이 비행 중인 핵과 내 배뿐이라 나라 400개를 도는 깃발보다 훨씬 싸다."""
+        z, oy = self.zoom, self.offset.y()
+        st = self.state
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        for t in nuke_telegraphs(st, self.me):
+            cx, cy = ox + (t.x + 0.5) * z, oy + (t.y + 0.5) * z
+            r_out = t.outer * z
+            if (cx + r_out < 0 or cx - r_out > self.width()
+                    or cy + r_out < 0 or cy - r_out > self.height()):
+                continue
+            rgb = P.TELEGRAPH_COLORS[int(t.relation)]
+            c = QColor(*rgb)
+            # 안쪽(전멸)은 진하게, 바깥(감쇠)은 옅게. 원본도 안쪽을 채우고
+            # 바깥은 점선 고리로 둔다 — 두 반경이 뜻하는 바가 다르다.
+            c.setAlpha(90)
+            p.setPen(QPen(c, 1.0, Qt.PenStyle.DashLine))
+            p.drawEllipse(QPointF(cx, cy), r_out, r_out)
+            c.setAlpha(200)
+            p.setPen(QPen(c, 1.5))
+            p.drawEllipse(QPointF(cx, cy), t.inner * z, t.inner * z)
+
+        for ring in attack_rings(st, self.me):
+            cx, cy = ox + (ring.x + 0.5) * z, oy + (ring.y + 0.5) * z
+            if not (-30 < cx < self.width() + 30 and -30 < cy < self.height() + 30):
+                continue
+            c = QColor(*P.ATTACK_RING_COLOR)
+            c.setAlpha(180)
+            p.setPen(QPen(c, 1.5))
+            r = max(4.0, z * 3.0)
+            p.drawEllipse(QPointF(cx, cy), r, r)
 
     @staticmethod
     def _dot(p: QPainter, pos: tuple[float, float], r: float, rgb) -> None:

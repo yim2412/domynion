@@ -133,6 +133,8 @@ src/domynion/
     map_widget.py  지도 + 국경선 + 이름
     hud.py         순위표 · 병력바 · 공격 슬라이더 · 증가율
     status.py      이름 옆 상태 깃발 (`derive/PlayerStatus.ts`) — Qt 없는 순수 계산
+    overlays.py    핵 낙하 예고 원 · 상륙 고리 (`derive/NukeTelegraphs.ts` ·
+                   `AttackRings.ts`) — 같은 방침
     rates.py       병력 `+N/s` · 골드 `+N` (`ControlPanel.ts`) — 같은 방침
     main_window.py 조립 + 실시간 타이머
     app.py         진입점 (--shot 스크린샷 모드)

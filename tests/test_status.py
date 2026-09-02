@@ -104,6 +104,32 @@ def test_the_skull_only_stops_blinking_once_it_actually_drains():
     assert s3[1].clock_draining and s3[1].clock_warn_progress == pytest.approx(1.0)
 
 
+def test_the_red_skull_means_land_is_already_gone_not_that_troops_are_leaking():
+    """⚠ 해골이 둘이다(§5.92). 유출(💀)은 견디면 멈추지만 썩음(☠)은 **이미 땅이
+    사라지는 중**이라 되돌릴 수 없다 — 원본도 색을 갈라 놓는다.
+
+    막지 않았으면: 유출 깃발 하나로 뭉뚱그려도 해골은 뜨고, 사람은 아직 반격할
+    수 있는 상태와 이미 늦은 상태를 구분 못 한다."""
+    st = state()
+    warn = st.clock.cfg.warn_seconds
+    st.clock.marked_at[1] = (st.tick_count / C.TICK_HZ) - warn - 1
+
+    s = player_status(st)[1]
+    assert s.clock_draining and not s.clock_decaying, "아직 한 칸도 안 썩었다"
+
+    st.clock.mark_rotted(1, st.tick_count)
+    assert player_status(st)[1].clock_decaying
+
+
+def test_the_rotting_skull_outranks_the_draining_one_for_a_marker_slot():
+    """자리가 셋뿐이라 순서가 곧 무엇을 버릴지다.
+
+    막지 않았으면: 둘 다 켜졌을 때 💀 만 보이고 ☠ 가 잘린다."""
+    got = markers(Status(crown=True, alliance=True, embargo=True,
+                         clock_draining=True, clock_decaying=True))
+    assert got[0] == "☠" and "💀" in got
+
+
 # --- 핵 ----------------------------------------------------------------------
 
 def _nuke(st, owner: int, dst_owner: int) -> None:

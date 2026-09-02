@@ -19,6 +19,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+# 원본 `PlayerImpl.DECAY_CUE_GRACE_TICKS`. 클락 설정(`DOOMSDAY_CLOCK_DEFAULTS`)이
+# 아니라 화면 신호라 원본도 따로 두고 있다 — 여기 상단에 둔다.
+DECAY_CUE_GRACE_TICKS = 30
+
 # 파도 목표치 (basis point, 100 = 1%)
 LEVELS = (200, 400, 700, 1100, 1700, 2500, 3500)
 # 팀전은 같은 사다리를 높여 오른다 — 한쪽이 살아 있으면 그 편이 사는 구조라
@@ -102,6 +106,9 @@ class DoomsdayClock:
 
     cfg: DoomsdayDefaults = field(default_factory=DoomsdayDefaults)
     marked_at: dict[int, float] = field(default_factory=dict)   # pid -> 표시된 시각(초)
+    # pid -> **마지막으로 칸이 실제로 썩은 tick**(`PlayerImpl.rottedAtTick`).
+    # 표시가 풀리면 같이 지운다(원본 `unmarkDoomsdayClock` 이 −1 로 되돌린다).
+    rotted_at: dict[int, int] = field(default_factory=dict)
 
     def bar_tiles(self, elapsed: float, land_count: int,
                   team_game: bool = False) -> int:
@@ -137,6 +144,7 @@ class DoomsdayClock:
                 self.marked_at.setdefault(pid, elapsed)
             else:
                 self.marked_at.pop(pid, None)
+                self.rotted_at.pop(pid, None)
 
     def drain_fraction(self, pid: int, elapsed: float) -> float:
         """이번 초에 잃는 병력의 비율. 경고 시간 동안은 0 이다.
@@ -235,6 +243,28 @@ class DoomsdayClock:
             return False
         floor = self.troop_floor_fraction(pid, elapsed) * max_troops
         return troops <= floor
+
+    def mark_rotted(self, pid: int, tick: int) -> None:
+        """**이식 누락 아흔여섯**(§5.92). 칸이 **실제로 하나 썩은** 그 tick 을 찍는다 — 원본 `Player.markRotted`,
+        `DoomsdayClockExecution.consume` 이 칸을 놓아 줄 때마다 부른다."""
+        self.rotted_at[pid] = tick
+
+    def is_decaying(self, pid: int, tick: int) -> bool:
+        """지금 영토가 썩고 있는가 — 화면의 **빨간 고정 해골**.
+
+        ⚠ **`rotting()` 을 다시 계산하지 않는다.** 원본이 주석으로 이유를 못 박아
+        뒀다 — 병력 대 바닥 비교는 *knife-edge* 라(유출이 바닥에 정확히 닿고,
+        썩음이 상한을 줄이므로 바닥 자체가 움직인다) 화면에서 **깜빡인다.**
+        그래서 원본은 판정을 그리는 쪽에서 다시 하지 않고, 썩힌 쪽이 찍어 둔
+        시각을 본다. 우리도 같은 이유로 `_rot_step` 이 찍는다.
+
+        찍힌 뒤 `DECAY_CUE_GRACE_TICKS` 안이면 참이다 — 썩음은 **초에 한 번**만
+        도는데(`_rot_step`) 화면은 10Hz 라, 유예가 없으면 열 프레임 중 하나만
+        빨갛다."""
+        if pid not in self.marked_at:
+            return False
+        at = self.rotted_at.get(pid)
+        return at is not None and tick - at <= DECAY_CUE_GRACE_TICKS
 
     def is_dead(self, pid: int, elapsed: float) -> bool:
         """`rotDeathSeconds` 는 **마감 시각**이다 — 표시된 뒤 이만큼 지나면 무엇을

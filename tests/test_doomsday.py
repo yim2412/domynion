@@ -475,3 +475,67 @@ def test_the_engine_passes_fallout_adjusted_land_to_the_bar():
     st.clock.marked_at.clear()
     st.tick()
     assert 1 not in st.clock.marked_at,         "낙진을 뺀 분모를 엔진이 안 넘긴다 — 요구치가 그대로다"
+
+
+# --- 빨간 해골: "지금 썩는 중"은 다시 계산하지 않는다 (§5.92) ------------------
+
+def test_decaying_is_stamped_by_the_rot_not_re_derived_from_troops():
+    """⚠ **원본이 그러지 말라고 주석까지 남긴 자리다.** 병력 대 바닥 비교는
+    knife-edge 라(유출이 바닥에 정확히 닿고, 썩음이 상한을 줄여 바닥 자체가
+    움직인다) 화면에서 깜빡인다. 그래서 썩힌 쪽이 시각을 찍고 화면은 그걸 본다.
+
+    막지 않았으면: `rotting()` 을 화면에서 다시 부르면 **아직 한 칸도 안 썩은**
+    나라가 빨간 해골을 단다 — 바닥에 닿은 그 순간과 실제로 땅이 사라지는 것은
+    다르다. 여기서는 그 상태를 만들어 놓고 거짓임을 단언한다."""
+    clock = DoomsdayClock()
+    clock.marked_at[1] = 0.0
+    assert not clock.is_decaying(1, tick=100), "찍히기 전에는 아직 아니다"
+
+    clock.mark_rotted(1, 100)
+    assert clock.is_decaying(1, 100)
+
+
+def test_the_red_skull_holds_for_the_grace_window_then_goes_out():
+    """썩음은 **초에 한 번**만 도는데 화면은 10Hz 다. 유예가 없으면 열 프레임
+    중 하나만 빨갛다 — 원본 `DECAY_CUE_GRACE_TICKS` 가 그것 때문에 있다.
+
+    막지 않았으면: 유예를 0 으로 둬도 찍힌 그 tick 에는 참이라 위 테스트가 통과한다."""
+    from domynion.core.doomsday import DECAY_CUE_GRACE_TICKS as G
+    clock = DoomsdayClock()
+    clock.marked_at[1] = 0.0
+    clock.mark_rotted(1, 100)
+    assert G > 1, "유예가 1 이하면 이 테스트는 아무것도 안 잰다"
+    assert clock.is_decaying(1, 100 + G)
+    assert not clock.is_decaying(1, 100 + G + 1)
+
+
+def test_climbing_back_over_the_bar_clears_the_stamp_too():
+    """바 위로 돌아오면 표시가 풀린다 — 원본 `unmarkDoomsdayClock` 이
+    `rottedAtTick` 을 −1 로 되돌린다.
+
+    막지 않았으면: 회복한 나라가 유예 동안 빨간 해골을 단 채로 남는다."""
+    clock = DoomsdayClock(cfg=DoomsdayClock().cfg)
+    clock.cfg.enabled = True
+    clock.marked_at[1] = 0.0
+    clock.mark_rotted(1, 100)
+    # 1번이 바 위로 올라온다(요구 점유율이 0 인 구간이라 아무도 안 걸린다).
+    clock.update(elapsed=0.0, tiles_of={0: 50, 1: 50, 2: 50}, land_count=1000)
+    assert 1 not in clock.rotted_at
+    assert not clock.is_decaying(1, 101)
+
+
+def test_the_engine_stamps_the_moment_a_tile_actually_rots():
+    """⚠ **배선을 따로 잰다.** 위 셋은 `DoomsdayClock` 안에서만 돌아서, 엔진이
+    `mark_rotted` 를 한 번도 안 불러도 전부 통과한다.
+
+    막지 않았으면: 화면의 빨간 해골이 **영영 안 켜진다** — 규칙은 다 돌고
+    표시만 죽는, 이 프로젝트가 §5.62 에서 이름 붙인 그 형태다."""
+    st = doomed(40)
+    assert 1 not in st.clock.rotted_at, "재료 확인: 아직 한 칸도 안 썩었다"
+    for _ in range(int(300 / C.TICK_DT)):
+        st.tick()
+        if st.tiles(1) < 40:
+            break
+    assert st.tiles(1) < 40, "아직 안 썩었다"
+    assert st.clock.rotted_at.get(1) is not None, "썩었는데 아무도 안 찍었다"
+    assert st.clock.is_decaying(1, st.tick_count)

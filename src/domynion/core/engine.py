@@ -2488,6 +2488,10 @@ class GameState:
             self._counts[pid] = max(0, self._counts.get(pid, 0) - 1)
         if eaten:
             self._tile_changed[pid] = self.tick_count
+            # ⚠ **여기서 찍는다.** 화면이 "지금 썩는 중"을 다시 계산하면 병력 대
+            # 바닥이 knife-edge 라 깜빡인다 — 원본 `consume` 도 칸을 놓아 줄 때
+            # `markRotted()` 를 부른다(`doomsday.is_decaying`).
+            self.clock.mark_rotted(pid, self.tick_count)
         # ⚠ **썩은 칸은 낙진이다.** 원본 주석: *"Wasteland, not a prize"* —
         # 그냥 중립으로 두면 가장 큰 이웃이 공짜로 먹는다.
         if eaten:
