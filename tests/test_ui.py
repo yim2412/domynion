@@ -137,8 +137,43 @@ def test_label_anchors_skip_tiny_territories():
         st.gmap.owner[st.gmap.ref(x, 5)] = 0
     anchors = fb.label_anchors(st.alive)
     assert [a[0] for a in anchors] == [0]
-    pid, cx, cy, span = anchors[0]
-    assert span == 40, "라벨 크기는 영토의 **실제 폭**에서 나와야 한다"
+    pid, cx, cy, rw, rh = anchors[0]
+    # ⚠ **폭이 아니라 "이름이 앉을 사각형"이다**(§5.97). 예전에는 경계상자 폭
+    # (40)을 그대로 썼는데, 그 값은 영토가 아니라 **영토를 감싼 상자**의 크기라
+    # 초승달 모양에서는 실제로 쓸 수 있는 자리보다 훨씬 크게 나온다.
+    assert rw > 0 and rh > 0
+    assert rw <= 40, f"자리가 영토 상자보다 넓다: {rw}"
+
+
+def test_the_name_lands_inside_the_territory_not_at_its_centre_of_mass():
+    """⚠ **무게중심은 영토 밖에 떨어질 수 있다**(§5.97). 초승달 모양이나 해협
+    양쪽에 걸친 나라는 이름이 바다나 남의 땅 위에 뜬다. 원본은 그래서 가장 큰
+    내접 사각형을 찾아 거기에 놓는다.
+
+    막지 않았으면: 대부분의 나라는 볼록해서 무게중심도 안쪽에 떨어진다 —
+    **오목한 재료가 없으면 아무것도 안 재는 테스트**가 된다. 그래서 ㄷ 모양으로
+    만들고, 무게중심이 실제로 밖인지 먼저 단언한다."""
+    gm = GameMap.from_rows(["." * 60] * 30)
+    ps = {0: PlayerState(pid=0, name="P0", kind="nation", start=gm.ref(2, 2))}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 1}
+    st._posts = DefensePostIndex(gm.size)
+
+    # ㄷ 모양 — 가운데가 비어 무게중심이 그 구멍에 떨어진다.
+    for y in range(4, 24):
+        for x in (4, 5, 6, 7):
+            gm.owner[gm.ref(x, y)] = 0
+        for x in range(4, 24):
+            if y in (4, 5, 22, 23):
+                gm.owner[gm.ref(x, y)] = 0
+
+    ys, xs = np.nonzero(gm.owner.reshape(30, 60) == 0)
+    mx, my = xs.mean(), ys.mean()
+    assert gm.owner[gm.ref(int(round(mx)), int(round(my)))] != 0,         "재료 확인: 무게중심이 영토 안이면 이 테스트는 아무것도 안 잰다"
+
+    fb = FrameBuilder(gm)
+    (_, cx, cy, rw, rh), = fb.label_anchors(st.alive)
+    assert gm.owner[gm.ref(int(cx), int(cy))] == 0,         f"이름이 영토 밖({cx:.0f}, {cy:.0f})에 앉았다"
 
 
 def test_rebake_picks_up_terrain_changes():
@@ -439,3 +474,43 @@ def test_the_map_widget_hands_the_frame_builder_the_player_kinds():
     px = w.frames.owner_rgba()[spot[1], spot[0]]
     assert tuple(px[:3]) == P.player_color(1, "bot"), \
         "지도가 봇을 나라 색으로 그린다"
+
+
+def test_the_biggest_rectangle_wins_not_the_first_one_found():
+    """⚠ **재료가 필요하다.** 앞쪽에 작은 사각형, 뒤쪽에 큰 것을 두지 않으면
+    "첫 번째를 고른다"는 변이가 같은 답을 낸다 — 실제로 살아남았다.
+
+    막지 않았으면: 이름이 영토 안에는 앉지만 **가장 좁은 자리**에 앉아,
+    글자가 실제로 쓸 수 있는 것보다 훨씬 작아진다."""
+    from domynion.ui.frame import _largest_rectangle
+
+    grid = np.zeros((6, 10), dtype=bool)
+    grid[0:2, 0:2] = True                 # 먼저 나오는 작은 것 (2x2 = 4)
+    grid[3:6, 4:10] = True                # 나중에 나오는 큰 것 (3x6 = 18)
+    x, y, w, h = _largest_rectangle(grid)
+    assert (w, h) == (6, 3), f"큰 사각형을 못 찾았다: {(x, y, w, h)}"
+    assert (x, y) == (4, 3)
+
+
+def test_the_grid_gets_coarser_as_the_territory_grows():
+    """⚠ 원본의 스케일 사다리(<25→1 … 500 이상→32). 큰 나라를 1칸 격자로 뽑으면
+    비용이 폭발한다 — 그래서 성기게 뽑고, **자리 크기가 그 배수로 나온다.**
+
+    막지 않았으면: 항상 1칸 간격으로 뽑아도 이름은 영토 안에 앉으므로 눈에 안
+    띈다 — 실제로 그 변이가 살아남았다. 배수를 단언해야 잡힌다."""
+    from domynion.ui.frame import _name_scale
+
+    assert [_name_scale(v) for v in (0, 24, 25, 49, 50, 99, 100, 249, 250,
+                                     499, 500, 9999)] == \
+        [1, 1, 2, 2, 4, 4, 8, 8, 16, 16, 32, 32]
+
+    gm = GameMap.from_rows(["." * 700] * 700)
+    ps = {0: PlayerState(pid=0, name="P0", kind="nation", start=gm.ref(0, 0))}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 1}
+    st._posts = DefensePostIndex(gm.size)
+    gm.owner.reshape(700, 700)[50:650, 50:650] = 0      # 짧은 변 600 → 배율 32
+
+    (_, _, _, rw, rh), = FrameBuilder(gm).label_anchors(st.alive)
+    assert rw % 32 == 0 and rh % 32 == 0, \
+        f"성긴 격자를 안 썼다 — 자리가 32의 배수가 아니다 ({rw}, {rh})"

@@ -129,7 +129,7 @@ src/domynion/
     tribe.py       부족(봇) — 동맹을 다 받고 건물을 지운다
     simple_ai.py   v0.1 규칙 기반 AI (대조용으로 남겨 둔다)
   ui/
-    frame.py       타일 해상도 프레임 생성 (확대는 Qt 가 한다)
+    frame.py       타일 해상도 프레임 생성 · 국경 변 · 이름 자리(내접 사각형)
     map_widget.py  지도 + 국경선(관계·방어로 색이 갈린다) + 이름
     hud.py         순위표 · 병력바 · 공격 슬라이더 · 증가율 · 클락의 다음 파도
     status.py      이름 옆 상태 깃발 (`derive/PlayerStatus.ts`) — Qt 없는 순수 계산

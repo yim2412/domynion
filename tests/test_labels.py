@@ -22,6 +22,7 @@ from domynion.core.buildings import DefensePostIndex              # noqa: E402
 from domynion.core.engine import GameState                        # noqa: E402
 from domynion.core.gamemap import GameMap                         # noqa: E402
 from domynion.core.state import PlayerState                       # noqa: E402
+from domynion.ui.frame import FrameBuilder                        # noqa: E402
 from domynion.ui.map_widget import LABEL_MIN_PX, MapWidget        # noqa: E402
 
 
@@ -30,18 +31,31 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+# 나라 하나가 차지하는 줄 수. **1이면 안 된다** — §5.97 에서 이름을 "가장 큰
+# 내접 사각형"에 놓게 바꾼 뒤로, 높이 1짜리 띠는 폰트 크기가 1/3 타일이 되어
+# 어느 배율에서도 안 그려진다. 원본도 그렇게 자른다(`height / 3`).
+# 그때 이 파일의 테스트 넷이 한꺼번에 깨졌는데 **코드가 아니라 재료가 문제였다**
+# (함정 표 8번: 테스트 지도를 작게 만들면 규칙이 아니라 지도가 답을 낸다).
+#
+# ⚠ 10 으로도 모자랐다. 폰트가 `높이/3` 이라 배율 3배에서 10px 이 되는데
+# `LABEL_MIN_PX` 가 11 이다 — **문턱 바로 아래**라 전부 잘렸다. 20 이면
+# 배율 3배에서 20px, 0.05배에서 0.33px 으로 양쪽에 여유가 있다.
+BAND = 20
+
+
 def crowded(n: int) -> GameState:
-    """작은 나라를 잔뜩 만든다 — 각자 한 줄씩."""
-    gm = GameMap.from_rows(["." * 200] * (n + 2))
+    """작은 나라를 잔뜩 만든다 — 각자 `BAND` 줄씩."""
+    gm = GameMap.from_rows(["." * 200] * (n * BAND + 2))
     players = {}
     for pid in range(n):
-        for x in range(0, 200):
-            gm.owner[gm.ref(x, pid)] = pid
-        p = PlayerState(pid=pid, name=f"나라{pid}", start=gm.ref(0, pid))
+        for y in range(pid * BAND, pid * BAND + BAND):
+            for x in range(0, 200):
+                gm.owner[gm.ref(x, y)] = pid
+        p = PlayerState(pid=pid, name=f"나라{pid}", start=gm.ref(0, pid * BAND))
         p.kind = "bot"
         players[pid] = p
     st = GameState(gmap=gm, players=players, rng=random.Random(0))
-    st._counts = {pid: 200 for pid in players}
+    st._counts = {pid: 200 * BAND for pid in players}
     st._posts = DefensePostIndex(gm.size)
     return st
 
@@ -160,6 +174,77 @@ def _label_texts(w) -> list[str]:
         return real(*args)
 
     p.drawText = spy
+    w._draw_labels(p, w.offset.x())
+    p.end()
+    return seen
+
+
+def test_a_bay_inside_the_country_still_counts_as_room_for_the_name(qapp):
+    """⚠ **얕은 바다와 해안도 자리로 친다**(원본 `isShore || (isOcean &&
+    magnitude < 10)`). 만을 품은 나라는 자기 땅만으로 재면 자리가 띠 두께밖에
+    안 나와, 이름이 못 읽게 작아진다.
+
+    ⚠ **재료를 두 번 틀렸다.** 처음엔 "해안 나라의 이름이 바다 쪽으로 걸친다"로
+    잡았는데, 격자는 **경계상자 안**에서만 뽑히므로(원본도 그렇다) 영토 밖의
+    바다는 애초에 안 들어온다. 규칙이 실제로 일하는 곳은 **영토가 감싼 물**이다.
+
+    막지 않았으면: 육지만 있는 지도에서는 이 규칙이 무동작이라 변이가 살아남는다."""
+    rows = []
+    for y in range(30):
+        row = "".join("~" if (8 <= y <= 21 and 8 <= x <= 21) else "."
+                      for x in range(30))
+        rows.append(row)
+    gm = GameMap.from_rows(rows)
+    ps = {0: PlayerState(pid=0, name="만국", kind="nation", start=gm.ref(0, 0))}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._posts = DefensePostIndex(gm.size)
+
+    # 만을 두르는 육지 전부를 가진다 — 경계상자가 만을 품는다.
+    own = gm.owner.reshape(30, 30)
+    for y in range(30):
+        for x in range(30):
+            if not (8 <= y <= 21 and 8 <= x <= 21):
+                own[y, x] = 0
+    st._counts = {0: int((own == 0).sum())}
+
+    (_, _, _, rw, rh), = FrameBuilder(gm).label_anchors(st.alive)
+    # 만을 안 세면 자리는 바깥 띠(두께 8)에 갇힌다.
+    assert rw > 14 and rh > 14, f"만을 자리로 안 쳤다: {rw}x{rh}"
+
+
+def test_the_font_is_capped_by_the_height_of_the_spot_not_only_its_width(qapp):
+    """⚠ 원본 `calculateFontSize` 가 **폭 제약과 높이 제약 중 작은 쪽**을 쓴다.
+    폭만 보면 납작한 나라 위에서 글자가 위아래로 넘쳐 이웃을 덮는다.
+
+    막지 않았으면: 넓고 납작한 재료에서만 갈린다 — `crowded` 가 200x20 이라
+    폭 제약(약 44타일)이 높이 제약(약 6.7타일)보다 훨씬 크다."""
+    st = crowded(3)
+    w = widget(st, 3.0, qapp)
+    sizes = _font_sizes(w)
+    assert sizes, "이름이 하나도 안 그려졌다"
+    # 높이 제약 = BAND/3 타일. 폭 제약은 그보다 훨씬 크다.
+    assert max(sizes) <= BAND / 3 * w.zoom + 1, \
+        f"폰트가 자리 높이를 넘었다: {max(sizes)}px"
+
+
+def _font_sizes(w) -> list[int]:
+    from PyQt6.QtGui import QImage, QPainter
+    seen: list[int] = []
+    img = QImage(400, 300, QImage.Format.Format_ARGB32)
+    p = QPainter(img)
+    real_font, real_text = p.setFont, p.drawText
+    cur = {"px": 0}
+
+    def spy_font(f):
+        cur["px"] = f.pointSize() if f.pointSize() > 0 else f.pixelSize()
+        return real_font(f)
+
+    def spy_text(*args):
+        if args and isinstance(args[-1], str):
+            seen.append(cur["px"])
+        return real_text(*args)
+
+    p.setFont, p.drawText = spy_font, spy_text
     w._draw_labels(p, w.offset.x())
     p.end()
     return seen

@@ -189,11 +189,17 @@ class MapWidget(QWidget):
                                    QImage.Format.Format_RGBA8888)
         self._borders = self.frames.border_segments(self.visible_tiles())
         self._border_kind = self._classify_borders()
-        # 라벨은 전체 지도를 플레이어 수만큼 훑는다(원본 크기에서 12~14ms 실측).
+        # 라벨 계산은 원본 해상도 · 나라 400명에서 **148ms** 다(§5.97 실측,
+        # 2026-09-02). ⚠ 이 줄에 오래 "12~14ms" 라고 적혀 있었는데 그건
+        # §5.51 로 판을 키우기 **전** 값이었다 — 실제로는 1,248ms 였다.
         # 나라 중심은 1초에 한 번만 다시 잡아도 눈에 띄지 않는다.
         self._label_age -= 1
         if self._label_age <= 0 or not self._labels:
-            self._labels = self.frames.label_anchors(self.state.alive)
+            # ⚠ `fallout` 은 **없을 수 있다** — 헤드리스·테스트 경로가 안 만든다.
+            # 없다고 이름이 안 떠서는 안 되므로 그냥 빼고 잰다.
+            fo = self.state.fallout
+            self._labels = self.frames.label_anchors(
+                self.state.alive, fo.mask if fo is not None else None)
             self._label_age = 10
             # 깃발도 **라벨과 같은 주기**로 다시 잰다(§5.68). 매 프레임 재면
             # 나라 400개와 비행 중인 핵을 한 번씩 더 훑는데, 깃발이 최대 1초
@@ -356,7 +362,7 @@ class MapWidget(QWidget):
         if not anchors:
             return
         z, oy = self.zoom, self.offset.y()
-        for pid, cx, cy, span in anchors:
+        for pid, cx, cy, rw, rh in anchors:
             x = ox + cx * z
             if not (-300 < x < self.width() + 300):
                 continue                      # 순환 사본 중 화면 밖은 건너뛴다
@@ -373,9 +379,11 @@ class MapWidget(QWidget):
             said = self._emojis.get(pid)
             if said:
                 text = f"{text} {said}"
-            # 폰트는 **영토가 실제로 차지한 폭**에서 뽑는다. 타일 비례로 잡으면
-            # 큰 나라 이름이 화면을 덮고, 고정하면 작은 나라 위에서 넘친다.
-            size = int(min(48, span * z / max(len(text), 3) * 0.9))
+            # 폰트는 **이름이 실제로 앉을 사각형**에서 뽑는다(§5.97). 원본
+            # `calculateFontSize` 가 폭 제약과 높이 제약 중 작은 쪽을 쓴다 —
+            # 폭만 보면 납작한 나라 위에서 글자가 위아래로 넘친다.
+            font_tiles = min(rw / max(len(text), 3) * 2, rh / 3)
+            size = int(min(48, font_tiles * z))
             # ⚠ **작으면 하한으로 끌어올리지 말고 아예 안 그린다.**
             # 원본도 화면 크기가 `cullThreshold` 미만이면 버린다. 하한을 두면
             # 400개 부족 이름이 전부 9px 로 그려져 지도가 글자로 덮인다.

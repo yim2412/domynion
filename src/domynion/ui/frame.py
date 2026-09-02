@@ -25,9 +25,88 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..core import constants as C
 from ..core.constants import Terrain
 from ..core.gamemap import GameMap
 from . import palette as P
+
+# 이름이 걸쳐도 되는 "얕은 바다"의 문턱. 원본 `magnitude(tile) < 10`.
+NAME_SHALLOW_MAGNITUDE = 10
+# 경계상자의 짧은 변이 이 값을 넘을 때마다 격자를 성기게 뽑는다 — 원본의 사다리
+# 그대로다(<25 → 1, <50 → 2, <100 → 4, <250 → 8, <500 → 16, 그 위 32).
+NAME_SCALE_STEPS: tuple[tuple[int, int], ...] = (
+    (25, 1), (50, 2), (100, 4), (250, 8), (500, 16),
+)
+NAME_SCALE_MAX = 32
+
+
+def _name_scale(span: int) -> int:
+    for limit, scale in NAME_SCALE_STEPS:
+        if span < limit:
+            return scale
+    return NAME_SCALE_MAX
+
+
+# 이만큼도 안 되는 영토에는 이름을 안 쓴다 — 글자가 영토보다 커진다.
+NAME_MIN_TILES = 30
+
+
+def _bounding_boxes(owner: np.ndarray, w: int, h: int
+                    ) -> tuple[np.ndarray, np.ndarray]:
+    """나라별 `(x0, x1, y0, y1)` 과 칸 수를 **한 번에** 낸다.
+
+    ⚠ **예전에는 나라마다 `np.nonzero(owner == pid)` 를 돌렸다.** 원본 해상도
+    (2000x1000) · 나라 400명에서 **1,150ms** 다 — 1초에 한 번 도는 자리라
+    화면이 그만큼 멈춘다. 문서에는 *"12~14ms 실측"* 이라고 적혀 있었는데
+    그 측정은 나라가 몇 명일 때 것이었다(§5.97).
+
+    `np.minimum.at` 로 한 번에 접으면 **29ms** 다(40배). 값은 나라 400명에서
+    옛 방식과 전부 일치하는 것을 확인했다."""
+    idx = np.flatnonzero(owner >= 0)
+    if len(idx) == 0:
+        return np.empty((0, 4), np.int32), np.zeros(0, np.int32)
+    pid = owner[idx]
+    n = int(pid.max()) + 1
+    xs = (idx % w).astype(np.int32)
+    ys = (idx // w).astype(np.int32)
+    box = np.empty((n, 4), np.int32)
+    box[:, 0] = w
+    box[:, 1] = -1
+    box[:, 2] = h
+    box[:, 3] = -1
+    np.minimum.at(box[:, 0], pid, xs)
+    np.maximum.at(box[:, 1], pid, xs)
+    np.minimum.at(box[:, 2], pid, ys)
+    np.maximum.at(box[:, 3], pid, ys)
+    return box, np.bincount(pid, minlength=n)
+
+
+def _largest_rectangle(grid: np.ndarray) -> tuple[int, int, int, int]:
+    """참으로 채워진 가장 큰 축정렬 사각형 `(x, y, 폭, 높이)`.
+
+    행마다 히스토그램을 세우고 스택으로 최대 넓이를 찾는다 — 원본
+    `findLargestInscribedRectangle` + `largestRectangleInHistogram` 그대로다."""
+    rows, cols = grid.shape
+    heights = [0] * cols
+    best = (0, 0, 0, 0)
+    best_area = 0
+    for r in range(rows):
+        row = grid[r]
+        for c in range(cols):
+            heights[c] = heights[c] + 1 if row[c] else 0
+        stack: list[int] = []
+        for i in range(cols + 1):
+            cur = 0 if i == cols else heights[i]
+            while stack and cur < heights[stack[-1]]:
+                hgt = heights[stack.pop()]
+                left = stack[-1] + 1 if stack else 0
+                wid = i - left
+                if hgt * wid > best_area:
+                    best_area = hgt * wid
+                    best = (left, r - hgt + 1, wid, hgt)
+            stack.append(i)
+    return best
+
 
 _TERRAIN_LUT = np.array(
     [P.TERRAIN_COLORS[Terrain(i)] for i in range(len(Terrain))], dtype=np.float32)
@@ -51,7 +130,7 @@ class FrameBuilder:
     """지형 바닥(RGB, 고정)과 소유자 층(RGBA, 매 프레임)을 따로 낸다."""
 
     __slots__ = ("gmap", "_base", "_land", "_overlay", "_lod",
-                 "_kinds", "_owner_lut")
+                 "_kinds", "_owner_lut", "_name_bg")
 
     def __init__(self, gmap: GameMap, seed: int = 0,
                  kinds: dict[int, str] | None = None):
@@ -59,6 +138,7 @@ class FrameBuilder:
         # pid -> "nation"/"bot"/"human". 판 내내 안 바뀌므로 표를 한 번만 만든다.
         self._kinds = kinds
         self._owner_lut = _owner_rgba_lut(0, kinds)
+        self._name_bg: np.ndarray | None = None
         self._base = np.zeros((gmap.height, gmap.width, 3), dtype=np.uint8)
         self._land = np.zeros((gmap.height, gmap.width), dtype=bool)
         self._overlay: np.ndarray | None = None
@@ -82,6 +162,7 @@ class FrameBuilder:
                             max(2, w // P.TEXTURE_PERIOD + 2))).astype(np.float32)
         tex = _upscale_bilinear(small, h, w) * 2.0 - 1.0
         self._land = terrain != Terrain.OCEAN
+        self._name_bg = None          # 지형이 바뀌면 같이 버린다
         amp = np.where(self._land, P.TEXTURE_AMP, P.TEXTURE_AMP * 0.5)
         self._base = np.ascontiguousarray(
             np.clip(base * (1.0 + tex * amp)[..., None], 0, 255).astype(np.uint8))
@@ -196,19 +277,58 @@ class FrameBuilder:
               if len(h) else np.empty((0, 2), int))
         return vt, ht
 
-    def label_anchors(self, players) -> list[tuple[int, float, float, float]]:
-        """`(pid, 중심x, 중심y, 영토 폭)`. 폰트 크기는 **영토 덩어리의 실제 폭**에서
-        뽑아야 한다 — 타일 비례로 잡으면 큰 나라 이름이 화면을 덮는다."""
+    def label_anchors(self, players, fallout: np.ndarray | None = None
+                      ) -> list[tuple[int, float, float, float, float]]:
+        """`(pid, 중심x, 중심y, 자리폭, 자리높이)` — 원본 `NameBoxCalculator`.
+
+        ⚠ **이식 누락 백둘**(§5.97). 우리는 이름을 영토의 **무게중심**에 놓고
+        크기를 경계상자 폭에서 뽑았다. 무게중심은 **영토 밖에 떨어질 수 있다** —
+        초승달 모양이거나 해협 양쪽에 걸친 나라는 이름이 바다나 남의 땅 위에
+        뜬다. 원본은 그래서 **가장 큰 내접 사각형**을 찾아 거기에 놓는다.
+
+        ⚠ **해안과 얕은 바다도 자리로 친다**(`isShore || (isOcean && magnitude
+        < 10) || 내 땅 || 낙진`). 해안선을 낀 나라의 이름이 물 쪽으로 조금
+        걸치는 것을 허용해야 사각형이 쓸 만한 크기로 나온다. 이걸 빼면 길쭉한
+        해안 나라의 이름이 한 줄짜리 사각형에 갇혀 못 읽게 작아진다."""
         h, w = self.gmap.height, self.gmap.width
         owner = self.gmap.owner.reshape(h, w)
+        bg = self._name_background()
+        boxes, counts = _bounding_boxes(self.gmap.owner, w, h)
         out = []
         for p in players:
-            ys, xs = np.nonzero(owner == p.pid)
-            if len(xs) < 30:
+            if p.pid >= len(counts) or counts[p.pid] < NAME_MIN_TILES:
                 continue
-            out.append((p.pid, float(xs.mean()), float(ys.mean()),
-                        float(xs.max() - xs.min() + 1)))
+            x0, x1, y0, y1 = (int(v) for v in boxes[p.pid])
+            scale = _name_scale(min(x1 - x0, y1 - y0))
+            sx0, sy0 = x0 // scale, y0 // scale
+            sx1, sy1 = x1 // scale, y1 // scale
+            gx = np.clip(np.arange(sx0, sx1 + 1) * scale, 0, w - 1)
+            gy = np.clip(np.arange(sy0, sy1 + 1) * scale, 0, h - 1)
+            grid = bg[np.ix_(gy, gx)] | (owner[np.ix_(gy, gx)] == p.pid)
+            if fallout is not None:
+                grid |= fallout.reshape(h, w)[np.ix_(gy, gx)]
+            rx, ry, rw, rh = _largest_rectangle(grid)
+            if rw == 0 or rh == 0:
+                continue
+            # ⚠ **원본과 한 곳이 다르다.** 원본은 격자 좌표에 `scale` 을 곱한 뒤
+            # `boundingBox.min` 을 그대로 더한다 — 격자 원점은 `min // scale *
+            # scale` 이라 최대 `scale - 1` 만큼 어긋난다. 이름을 영토 **안**에
+            # 놓는 것이 이 계산의 전부라, 그 어긋남을 물려받지 않는다.
+            cx = (rx + rw / 2) * scale + sx0 * scale
+            cy = (ry + rh / 2) * scale + sy0 * scale
+            out.append((p.pid, float(cx), float(cy),
+                        float(rw * scale), float(rh * scale)))
         return out
+
+    def _name_background(self) -> np.ndarray:
+        """이름이 걸쳐도 되는 바탕 — 해안 + 얕은 바다. **지형이므로 한 번만 잰다.**"""
+        if self._name_bg is None:
+            raw = self.gmap.raw.reshape(self.gmap.height, self.gmap.width)
+            shore = (raw & C.SHORELINE_BIT) != 0
+            shallow = ((raw & C.OCEAN_BIT) != 0) & ((raw & C.MAGNITUDE_MASK)
+                                                    < NAME_SHALLOW_MAGNITUDE)
+            self._name_bg = shore | shallow
+        return self._name_bg
 
 
 def _upscale_bilinear(small: np.ndarray, h: int, w: int) -> np.ndarray:
