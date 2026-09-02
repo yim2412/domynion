@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from . import constants as C
 from .relations import Relation
 
+# 전체에 대고 한 말의 "받는 이". 원본 `AllPlayers` 자리다 — 실제 pid 와 겹치지
+# 않아야 하므로 음수를 쓴다(중립 땅의 -1 과도 겹치지 않게 -2).
+ALL_PLAYERS = -2
+
 # 사람이 고를 수 있는 판(`emojiTable`). 12행 × 5열 그대로 옮긴다 —
 # 줄 수가 바뀌면 UI 격자도 같이 바뀌므로 여기가 유일한 출처다.
 EMOJI_TABLE: tuple[tuple[str, ...], ...] = (
@@ -117,6 +121,9 @@ class Emojis:
 
     sent_at: dict[tuple[int, int], int] = field(default_factory=dict)
     ai_spoke_at: dict[tuple[int, int], int] = field(default_factory=dict)
+    # 보낸 말 자체를 잠깐 들고 있는다 — `PlayerImpl.outgoingEmojis_` (§5.96).
+    # `(보낸 이, 받는 이, 글자, 보낸 tick)`. 받는 이가 `ALL_PLAYERS` 면 전체다.
+    outgoing: list[tuple[int, int, str, int]] = field(default_factory=list)
 
     def can_send(self, sender: int, to: int, tick: int) -> bool:
         if sender == to:
@@ -124,8 +131,51 @@ class Emojis:
         last = self.sent_at.get((sender, to))
         return last is None or tick - last >= C.EMOJI_COOLDOWN_TICKS
 
-    def record(self, sender: int, to: int, tick: int) -> None:
+    def record(self, sender: int, to: int, tick: int,
+               emoji: str | None = None) -> None:
+        """쿨다운을 찍고, 글자를 주면 **화면에 띄울 목록에도** 넣는다.
+
+        ⚠ 글자를 선택 인자로 둔 것은 이유가 있다. 답장도 `record` 를 부르는데
+        그건 *받는 쪽이 보낸 말*이라 보낸 이가 뒤집힌다 — 호출부가 직접 넘기게
+        두는 편이 뒤집힌 채로 들어가는 것보다 낫다."""
         self.sent_at[(sender, to)] = tick
+        if emoji is not None:
+            self.outgoing.append((sender, to, emoji, tick))
+
+    def visible_to(self, viewer: int | None, tick: int) -> dict[int, str]:
+        """`보낸 이 -> 글자`. 지도의 이름 옆에 띄울 것들 (§5.96).
+
+        ⚠ **나에게 온 말과 전체에 대고 한 말만 보인다.** 원본 `PlayerIcons` 가
+        `recipientID === AllPlayers || recipientID === myPlayer.smallID()` 로
+        거른다 — 남들끼리 주고받는 말까지 뜨면 400나라 판이 이모지로 덮인다.
+
+        ⚠ **한 나라당 가장 최근 것 하나**다. 원본도 `createdAt` 내림차순으로
+        정렬한 뒤 `find` 로 첫 것만 쓴다.
+
+        보는 사람이 없으면(헤드리스·관전) 전체에 대고 한 말만 남는다.
+
+        ⚠ **읽기만 한다.** 수명이 지난 것을 여기서 버리면 화면이 core 상태를
+        고치는 셈이라, 그리기를 건너뛴 프레임에서 목록이 안 줄어든다. 버리는
+        일은 엔진이 매 tick 한다(`expire`)."""
+        cut = tick - C.EMOJI_MESSAGE_DURATION_TICKS
+        out: dict[int, tuple[str, int]] = {}
+        for sender, to, emoji, at in self.outgoing:
+            if at <= cut:
+                continue
+            if to != ALL_PLAYERS and to != viewer:
+                continue
+            prev = out.get(sender)
+            if prev is None or at >= prev[1]:
+                out[sender] = (emoji, at)
+        return {pid: e for pid, (e, _) in out.items()}
+
+    def expire(self, tick: int) -> None:
+        """수명이 지난 말을 버린다. **안 버리면 판 내내 쌓인다** — 400나라가
+        30초에 한 번씩 말하면 한 시간에 수만 개다."""
+        if not self.outgoing:
+            return
+        cut = tick - C.EMOJI_MESSAGE_DURATION_TICKS
+        self.outgoing = [m for m in self.outgoing if m[3] > cut]
 
     def ai_may_speak(self, sender: int, to: int, tick: int) -> bool:
         """AI 가 먼저 말을 걸어도 되는가. **되면 그 자리에서 시간을 찍는다.**

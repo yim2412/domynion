@@ -211,6 +211,10 @@ REL_EMOJI_PEACEFUL = 15.0          # 🕊️🏳️❤️🥰👏
 
 EMOJI_COOLDOWN_TICKS = 5 * 10      # emojiMessageCooldown() — 같은 상대에게 5초
 EMOJI_AI_INTERVAL_TICKS = 300      # shouldSendEmoji — AI 가 먼저 거는 말은 30초에 한 번
+# `emojiMessageDuration()` — 보낸 이모지가 **지도에 떠 있는** 시간(§5.96).
+# 쿨다운(5초)과 우연히 같은 값이지만 **다른 것**이다: 쿨다운은 다시 보낼 수 있게
+# 되는 때고, 이건 화면에서 사라지는 때다. 원본도 둘을 따로 둔다.
+EMOJI_MESSAGE_DURATION_TICKS = 5 * 10
 
 # 골드 기부 한 덩어리 크기(`getGoldChunkSize`). 덩어리당 관계 +5.
 GOLD_CHUNK_SIZE: dict[str, float] = {

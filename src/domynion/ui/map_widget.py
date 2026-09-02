@@ -89,6 +89,7 @@ class MapWidget(QWidget):
         self._crop_y0 = 0                 # 오버레이가 담고 있는 첫 줄(타일 좌표)
         self._borders: tuple[np.ndarray, np.ndarray] | None = None
         self._border_kind: tuple[np.ndarray, np.ndarray] | None = None
+        self._emojis: dict[int, str] = {}
         # 라벨 위치는 **게임 tick 마다만** 바뀐다. paint 마다(그것도 순환 사본마다)
         # 다시 계산하면 200만 칸을 플레이어 수만큼 훑는다 — 실측으로 그게 병목이었다.
         self._labels: list[tuple[int, float, float, float]] = []
@@ -199,6 +200,9 @@ class MapWidget(QWidget):
             # 늦게 바뀌는 것은 눈에 안 띈다. 라벨 자리와 같이 움직이는 것이
             # 오히려 자연스럽다.
             self._status = player_status(self.state, self.me)
+            # 이모지도 같은 주기다 — 수명이 5초(50 tick)라 1초 늦어도 된다.
+            self._emojis = self.state.emojis.visible_to(
+                self.me, self.state.tick_count)
         self.update()
 
     # --- 그리기 -----------------------------------------------------------
@@ -363,6 +367,12 @@ class MapWidget(QWidget):
                 mk = markers(flags)
                 if mk:
                     text = f"{mk} {text}"
+            # ⚠ **깃발 뒤에 따로 붙인다**(§5.96). 깃발은 자리가 셋뿐인데
+            # (`MAX_MARKERS`) 이모지는 잠깐 뜨는 말이라, 같은 자리를 놓고
+            # 다투면 지속되는 상태 표시가 밀려난다.
+            said = self._emojis.get(pid)
+            if said:
+                text = f"{text} {said}"
             # 폰트는 **영토가 실제로 차지한 폭**에서 뽑는다. 타일 비례로 잡으면
             # 큰 나라 이름이 화면을 덮고, 고정하면 작은 나라 위에서 넘친다.
             size = int(min(48, span * z / max(len(text), 3) * 0.9))

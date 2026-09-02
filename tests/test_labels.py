@@ -101,3 +101,65 @@ def test_the_hovered_country_is_named_even_when_tiny(qapp):
 def test_the_cut_is_a_readable_size(qapp):
     """컷이 너무 낮으면 읽지도 못할 글자를 그리는 것과 같다."""
     assert LABEL_MIN_PX >= 9
+
+
+def test_what_someone_said_to_me_rides_along_with_their_name(qapp):
+    """⚠ **배선이다**(§5.96). `visible_to` 가 맞아도 라벨이 안 붙이면 화면은
+    그대로다 — 소식창 한 줄이 흘러가고 끝난다.
+
+    막지 않았으면: AI 가 던진 🖕 하나가 관계를 −100 움직이는데, 지도에서는
+    누가 그랬는지 알 수 없다."""
+    st = crowded(6)
+    st.players[0].kind = "human"
+    st.players[1].kind = "nation"
+    w = widget(st, 4.0, qapp)
+    w.me = 0
+
+    st.emojis.outgoing.append((1, 0, "🖕", st.tick_count))
+    # ⚠ 라벨·깃발·이모지는 **1초에 한 번**만 다시 잰다(`_label_age`). 그냥
+    # `refresh()` 를 또 부르면 주기가 안 돌아 옛 값이 남는다.
+    w._label_age = 0
+    w.refresh()
+    texts = _label_texts(w)
+    assert any("🖕" in t for t in texts), f"상대가 한 말이 지도에 안 뜬다: {texts}"
+    assert not any("🖕" in t and "나라0" in t for t in texts),         "받은 사람 이름 옆에 붙었다 — **말한 쪽**에 붙어야 한다"
+
+
+def test_the_flags_keep_their_slots_when_someone_talks(qapp):
+    """⚠ 깃발은 자리가 셋뿐이다(`MAX_MARKERS`). 이모지가 그 자리를 놓고 다투면
+    **지속되는 상태 표시가 잠깐 뜨는 말에 밀려난다.**
+
+    막지 않았으면: 왕관을 쓴 나라가 말을 거는 순간 왕관이 사라진다."""
+    st = crowded(6)
+    st.players[0].kind = "human"
+    w = widget(st, 4.0, qapp)
+    w.me = 0
+    w._label_age = 0
+    w.refresh()
+    with_crown = [t for t in _label_texts(w) if "👑" in t]
+    assert with_crown, "재료 확인: 왕관이 안 떴다"
+
+    crowned = st.players[max(st.players, key=lambda p: st.tiles(p))].pid
+    st.emojis.outgoing.append((crowned, 0, "🖕", st.tick_count))
+    w._label_age = 0
+    w.refresh()
+    assert any("👑" in t and "🖕" in t for t in _label_texts(w)), \
+        "말을 거는 순간 깃발이 밀려났다"
+
+
+def _label_texts(w) -> list[str]:
+    from PyQt6.QtGui import QImage, QPainter
+    seen: list[str] = []
+    img = QImage(400, 300, QImage.Format.Format_ARGB32)
+    p = QPainter(img)
+    real = p.drawText
+
+    def spy(*args):
+        if args and isinstance(args[-1], str):
+            seen.append(args[-1])
+        return real(*args)
+
+    p.drawText = spy
+    w._draw_labels(p, w.offset.x())
+    p.end()
+    return seen

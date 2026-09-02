@@ -40,7 +40,7 @@ from .nukes import (Fallout, Nuke, NUKE_MAGNITUDES, SAM_TARGETABLE_TYPES,
 from .rail import RailNetwork, Train, train_gold, train_spawn_rate
 from .spawn import pick_spawn, place_at, spawn_tiles
 from . import emoji as emoji_mod
-from .emoji import Emojis
+from .emoji import ALL_PLAYERS, Emojis
 from .emoji import relation_delta as emoji_relation_delta
 from .emoji import reply_to as emoji_reply_to
 from .relations import Relation, gold_donation_relation, troop_donation_min
@@ -1746,7 +1746,8 @@ class GameState:
             return False
         if not self.emojis.can_send(pid, to, self.tick_count):
             return False
-        self.emojis.record(pid, to, self.tick_count)
+        # 글자까지 넘긴다 — 소식창은 흘러가고 **지도는 남는다**(§5.96).
+        self.emojis.record(pid, to, self.tick_count, emoji)
         self.emit(EventKind.CHAT, who=to, other=pid, text=emoji)
 
         # 받는 쪽이 AI 일 때만 관계가 움직이고 답이 온다. 사람끼리는 그냥 말이다.
@@ -1757,7 +1758,8 @@ class GameState:
             self.relate(to, pid, delta)
         reply = emoji_reply_to(emoji, self.rng, self.relation_of(pid, to))
         if reply is not None and self.emojis.can_send(to, pid, self.tick_count):
-            self.emojis.record(to, pid, self.tick_count)
+            # ⚠ **보낸 이가 뒤집힌다** — 답장은 받는 쪽이 보낸 말이다.
+            self.emojis.record(to, pid, self.tick_count, reply)
             self.emit(EventKind.CHAT, who=pid, other=to, text=reply)
         return True
 
@@ -1786,8 +1788,9 @@ class GameState:
             return False
         if not self.emojis.can_send(pid, to, self.tick_count):
             return False
-        self.emojis.record(pid, to, self.tick_count)
-        self.emit(EventKind.CHAT, who=to, other=pid, text=self.rng.choice(pool))
+        text = self.rng.choice(pool)
+        self.emojis.record(pid, to, self.tick_count, text)
+        self.emit(EventKind.CHAT, who=to, other=pid, text=text)
         return True
 
     def ai_broadcast(self, pid: int, pool: tuple[str, ...]) -> bool:
@@ -1805,6 +1808,9 @@ class GameState:
         if me.kind == "bot":
             return False
         text = self.rng.choice(pool)
+        # ⚠ **한 번만 담는다.** 소식은 사람마다 하나씩 띄우지만 지도 표시는
+        # *한 나라가 한 말*이라, 받는 사람 수만큼 쌓으면 중복이 된다(§5.96).
+        self.emojis.outgoing.append((pid, ALL_PLAYERS, text, self.tick_count))
         sent = False
         for q in self.alive:
             if q.kind != "human" or q.pid == pid:
@@ -2143,6 +2149,9 @@ class GameState:
         self._expire_alliance_requests()
         self._expire_embargoes()
         self._expire_targets()
+        # 지도에 떠 있는 말의 수명(§5.96). **안 버리면 판 내내 쌓인다** —
+        # 400나라가 30초에 한 번씩 말하면 한 시간에 수만 개다.
+        self.emojis.expire(self.tick_count)
         self._apply_embargo_relations()
         self._grow()
         self._advance_construction()

@@ -261,3 +261,101 @@ def test_the_message_reaches_the_person_it_was_sent_to():
     st.send_emoji(0, 1, "👋")
     got = st.log.recent(who=1, count=5)
     assert got and got[0].text == "👋"
+
+
+# --- 지도에 뜨는 말 (§5.96) ----------------------------------------------------
+
+def test_a_sent_emoji_shows_on_the_map_for_five_seconds_then_goes():
+    """⚠ **소식창은 흘러가고 지도는 남는다.** 우리는 `CHAT` 이벤트만 냈다 —
+    AI 가 던진 🖕 하나가 관계를 −100 움직이는데 화면에서는 아무 일도 안 일어났다.
+
+    막지 않았으면: 규칙은 다 도는데 사람은 누가 무슨 말을 했는지 모른다."""
+    st = state()
+    assert st.send_emoji(0, 1, "👋")
+    assert st.emojis.visible_to(1, st.tick_count) == {0: "👋"}
+
+    # ⚠ **경계는 `tick - 보낸시각 < 수명`** 이다(원본 `outgoingEmojis` 의 `<`).
+    # 딱 `수명` 째에는 이미 사라진다 — 처음에 `<=` 로 알고 테스트를 틀리게 썼다.
+    t0 = st.tick_count
+    assert st.emojis.visible_to(1, t0 + C.EMOJI_MESSAGE_DURATION_TICKS - 1) == {0: "👋"}
+    assert st.emojis.visible_to(1, t0 + C.EMOJI_MESSAGE_DURATION_TICKS) == {},         "수명이 지났는데 남아 있다"
+
+
+def test_i_do_not_see_what_other_people_say_to_each_other():
+    """⚠ 원본이 `recipientID === AllPlayers || === myPlayer` 로 거른다.
+
+    막지 않았으면: 400나라가 주고받는 말이 전부 떠서 지도가 이모지로 덮인다."""
+    st = state({0: "human", 1: "nation", 2: "nation"})
+    assert st.send_emoji(1, 2, "👋")
+    assert st.emojis.visible_to(0, st.tick_count) == {}, "남의 말이 보인다"
+    assert st.emojis.visible_to(2, st.tick_count) == {1: "👋"}
+
+
+def test_a_broadcast_is_visible_to_everyone_and_stored_once():
+    """전체에 대고 한 말(`sendEmoji(AllPlayers, ...)`)은 누구에게나 보인다.
+
+    ⚠ **한 번만 담는다.** 소식은 사람마다 하나씩 내지만 지도 표시는 *한 나라가
+    한 말*이라, 받는 사람 수만큼 쌓으면 중복이 된다.
+
+    막지 않았으면: 사람이 둘 이상인 판에서 같은 말이 여러 번 담긴다."""
+    st = state({0: "human", 1: "nation", 2: "human"})
+    before = len(st.emojis.outgoing)
+    assert st.ai_broadcast(1, ("😰",))
+    assert len(st.emojis.outgoing) - before == 1, "받는 사람 수만큼 쌓였다"
+    assert st.emojis.visible_to(0, st.tick_count) == {1: "😰"}
+    assert st.emojis.visible_to(2, st.tick_count) == {1: "😰"}
+
+
+def test_a_reply_is_credited_to_whoever_actually_said_it():
+    """⚠ 답장은 **받는 쪽이 보낸 말**이라 보낸 이가 뒤집힌다.
+
+    막지 않았으면: 내가 보낸 자리에 상대의 답이 붙어, 내가 두 번 말한 것처럼
+    보인다 — 그리고 **정작 상대의 말은 화면에 안 뜬다.**
+
+    ⚠ 모욕(`INSULT`)을 쓴다. 그 갈래만 관계와 무관하게 **항상** 답이 나온다
+    (`reply_to`) — 확률에 기대면 답이 안 나온 판에서 아무것도 안 재게 된다."""
+    st = state()
+    assert st.send_emoji(0, 1, emoji.INSULT)
+
+    said = st.emojis.visible_to(0, st.tick_count)
+    assert set(said) == {1}, f"답을 보낸 이가 틀렸다: {said}"
+    assert said[1] in emoji.GOT_INSULTED
+
+    # 내가 보낸 말은 **상대 화면**에 있다. 두 방향이 섞이지 않아야 한다.
+    assert st.emojis.visible_to(1, st.tick_count)[0] == emoji.INSULT
+
+
+def test_nothing_is_visible_to_a_spectator_except_broadcasts():
+    """관전·헤드리스 경로. 원본도 `myPlayer` 가 없으면 개인 메시지를 못 고른다."""
+    st = state({0: "human", 1: "nation"})
+    assert st.send_emoji(1, 0, "👋")
+    assert st.emojis.visible_to(None, st.tick_count) == {}
+
+
+def test_the_engine_throws_away_expired_messages():
+    """⚠ **배선이다.** 조회는 읽기만 하므로, 엔진이 안 버리면 목록이 판 내내
+    쌓인다 — 400나라가 30초에 한 번씩 말하면 한 시간에 수만 개다.
+
+    막지 않았으면: 화면은 멀쩡한데 메모리만 는다 — 테스트가 잡을 신호가 없다."""
+    st = state()
+    st.send_emoji(0, 1, "👋")
+    assert st.emojis.outgoing
+    st.tick_count += C.EMOJI_MESSAGE_DURATION_TICKS + 1
+    st.tick()
+    assert st.emojis.outgoing == [], "수명이 지난 말을 아무도 안 버린다"
+
+
+def test_only_the_latest_thing_someone_said_is_shown():
+    """⚠ 원본도 `createdAt` 내림차순으로 정렬한 뒤 `find` 로 **첫 것만** 쓴다.
+    한 나라가 5초 안에 두 번 말하면 뒤엣말이 이긴다.
+
+    막지 않았으면: 가장 오래된 것을 골라도 이모지는 뜨므로 눈에 안 띈다 —
+    실제로 그 변이가 살아남았다. 재료로 **같은 나라의 말 둘**이 필요하다."""
+    st = state()
+    st.emojis.outgoing.append((1, 0, "👋", st.tick_count))
+    st.emojis.outgoing.append((1, 0, "🖕", st.tick_count + 1))
+    assert st.emojis.visible_to(0, st.tick_count + 1) == {1: "🖕"}
+
+    # 목록에 담긴 순서가 아니라 **시각**으로 고른다.
+    st.emojis.outgoing.reverse()
+    assert st.emojis.visible_to(0, st.tick_count + 1) == {1: "🖕"}
