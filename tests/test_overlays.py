@@ -483,24 +483,69 @@ def test_the_largest_cluster_survives_even_when_it_is_tiny():
     assert len(atk.clustered_positions(st.gmap)) == 1
 
 
-def test_diagonal_tiles_stay_one_front():
-    """대각으로만 이어진 칸을 다른 전선으로 세면 한 덩어리가 부서진다."""
-    gm = GameMap.from_rows(["." * 20] * 20)
+def _two_player_state(gm) -> GameState:
     players = {}
     for pid in (0, 1):
         players[pid] = PlayerState(pid=pid, name=f"P{pid}", start=gm.ref(0, 0))
         players[pid].kind = "nation"
         players[pid].troops = 300_000.0
-    # 계단 모양 전선 — 4방향으로는 끊겨 보이고 8방향으로는 하나다.
-    for i in range(8):
-        gm.owner[gm.ref(i, i)] = 0
-        gm.owner[gm.ref(i + 1, i)] = 1
     st = GameState(gmap=gm, players=players, rng=random.Random(0))
-    st._counts = {0: 8, 1: 8}
+    st._counts = {0: 999, 1: 999}
     st._posts = DefensePostIndex(gm.size)
     st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    return st
+
+
+def test_diagonal_tiles_stay_one_front():
+    """대각으로만 이어진 칸을 다른 전선으로 세면 한 덩어리가 부서진다.
+
+    ⚠ **개수로는 못 잰다.** 계단이 40조각으로 부서져도 전부 30 미만이라 "가장
+    큰 하나"만 남아 개수가 똑같이 1이 된다. 그래서 **어느 칸이 대표인지**를
+    본다 — 한 덩어리면 대표는 계단 **한가운데**이고, 부서지면 끄트머리다.
+    이 테스트가 대표 칸 규칙(무게중심에 가장 가까운 칸)도 같이 잡는다."""
+    gm = GameMap.from_rows(["." * 60] * 60)
+    for i in range(40):
+        gm.owner[gm.ref(i, i)] = 0
+        gm.owner[gm.ref(i + 1, i)] = 1
+    st = _two_player_state(gm)
     atk = _launch(st, 0, 1)
-    assert len(atk.clustered_positions(gm)) == 1
+    border = {t for _, t in atk.heap}
+    assert len(border) == 40
+    spots = atk.clustered_positions(gm)
+    assert len(spots) == 1
+    # 무게중심은 (20.5, 19.5) 근처 — 대표는 그 옆 칸이어야 한다.
+    x, y = spots[0] % gm.width, spots[0] // gm.width
+    assert 17 <= y <= 22, f"대표가 계단 한가운데가 아니다: {(x, y)}"
+
+
+def test_two_small_fronts_keep_the_bigger_one():
+    """⚠ 둘 다 30 미만이면 **큰 쪽 하나는 남는다** — 아니면 숫자가 통째로 사라진다.
+
+    `clusters` 가 하나뿐이면 이른 반환에 걸려 이 규칙을 안 지나간다. 그래서
+    조각이 **둘 이상이면서 둘 다 작은** 판을 따로 만든다."""
+    gm = GameMap.from_rows(["." * 20] * 60)
+    for y in list(range(0, 12)) + list(range(40, 47)):      # 12칸 · 7칸
+        gm.owner[gm.ref(9, y)] = 0
+        gm.owner[gm.ref(10, y)] = 1
+    st = _two_player_state(gm)
+    atk = _launch(st, 0, 1)
+    assert len({t for _, t in atk.heap}) == 19
+    spots = atk.clustered_positions(gm)
+    assert len(spots) == 1
+    assert spots[0] // gm.width < 12          # 큰 쪽(12칸)이 남는다
+
+
+def test_at_most_two_numbers_even_with_three_fronts():
+    """상한 2 — 잘게 부서진 국경에서 숫자가 지도를 덮지 않게."""
+    gm = GameMap.from_rows(["." * 20] * 160)
+    for y0 in (0, 50, 100):
+        for y in range(y0, y0 + 35):
+            gm.owner[gm.ref(9, y)] = 0
+            gm.owner[gm.ref(10, y)] = 1
+    st = _two_player_state(gm)
+    atk = _launch(st, 0, 1)
+    assert len({t for _, t in atk.heap}) == 105
+    assert len(atk.clustered_positions(gm)) == C.ATTACK_CLUSTER_MAX
 
 
 def test_a_boat_attack_with_no_border_yet_uses_the_landing_tile():
