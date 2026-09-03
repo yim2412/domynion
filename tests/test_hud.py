@@ -251,3 +251,78 @@ def test_the_clock_line_stays_short_when_the_clock_is_off(qapp):
     sb = Scoreboard(st)
     sb.refresh()
     assert "기준선" not in sb.clock_label.text()
+
+
+# --- 전투 패널: 봇의 공격은 목록에 안 띄운다 (§5.100 후보 하나) ----------------
+#
+# 원본 `AttacksDisplay` 가 `t !== PlayerType.Bot` 으로 자른다. 우리 패널은
+# **여섯 줄뿐인데 판에 봇이 400** 이라, 봇 줄이 자리를 채우면 사람이 반응해야
+# 하는 나라의 공격이 목록 밖으로 밀린다.
+
+def _panel_state():
+    from domynion.core.attack import Attack
+    gm = GameMap.from_rows(["." * 40] * 10)
+    players = {}
+    for pid, kind in ((0, "human"), (1, "nation"), (2, "bot")):
+        # ⚠ `kind` 는 **생성자에 넘긴다.** 만든 뒤에 대입하면 `is_bot` 이
+        # 갱신되지 않아(생성자에서 계산된다) 봇이 봇으로 안 보인다.
+        p = PlayerState(pid=pid, name=f"P{pid}", start=gm.ref(pid * 10, 0),
+                        kind=kind)
+        p.troops = 50_000.0
+        players[pid] = p
+    for y in range(10):
+        for x in range(0, 10):
+            gm.owner[gm.ref(x, y)] = 0
+        for x in range(10, 20):
+            gm.owner[gm.ref(x, y)] = 1
+        for x in range(20, 30):
+            gm.owner[gm.ref(x, y)] = 2
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 100, 1: 100, 2: 100}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    # ⚠ 봇과 나라가 **둘 다** 내 국경에 닿아야 한다. 봇으로 한 열을 통째로
+    # 덮으면 나라가 내 땅에서 끊겨 공격 자체가 안 뜬다(그러면 필터가 아니라
+    # 지도를 재게 된다 — 재료가 규칙을 가리는 그 자리다).
+    for y in range(0, 5):
+        gm.owner[gm.ref(10, y)] = 2          # 위쪽 절반은 봇이 내 옆에
+    for y in range(5, 10):
+        gm.owner[gm.ref(10, y)] = 1          # 아래쪽 절반은 나라가 내 옆에
+    a_bot = Attack.launch(gm, 2, 0, 5_000.0, random.Random(0))
+    a_nation = Attack.launch(gm, 1, 0, 7_000.0, random.Random(0))
+    assert a_bot is not None and a_nation is not None
+    st.attacks += [a_bot, a_nation]
+    return st
+
+
+def _rows_text(panel):
+    return [lbl.text() for lbl, _ in panel._rows if lbl.text()]
+
+
+def test_bot_attacks_do_not_take_up_the_panel(qapp):
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    rows = _rows_text(panel)
+    assert len(rows) == 1
+    assert "P1" in rows[0]                      # 나라의 공격만 남는다
+    assert "P2" not in rows[0]                  # 봇은 없다
+
+
+def test_a_nation_attack_is_never_dropped(qapp):
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 봇이 여섯 줄을 채운다."""
+    from domynion.core.attack import Attack
+    st = _panel_state()
+    gm = st.gmap
+    for extra in range(6):                      # 봇 공격을 여섯 개 더
+        a = Attack.launch(gm, 2, 0, 100.0 + extra, random.Random(extra))
+        assert a is not None
+        st.attacks.append(a)
+    from domynion.ui.eventlog import AttacksPanel
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    rows = _rows_text(panel)
+    assert len(rows) == 1 and "P1" in rows[0]
+    # 필터가 없으면 봇 일곱 줄이 여섯 자리를 전부 채워 P1 이 사라진다.
+    assert sum(1 for a in st.attacks if a.attacker == 2) == 7

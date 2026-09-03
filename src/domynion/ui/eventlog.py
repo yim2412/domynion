@@ -189,6 +189,14 @@ class AttacksPanel(QWidget):
                               lost))
             elif a.target == self.me:
                 foe = st.players.get(a.attacker)
+                # ⚠ **봇의 공격은 안 띄운다**(원본 `AttacksDisplay` 가
+                # `t !== PlayerType.Bot` 으로 자른다). 이 패널은 여섯 줄뿐인데
+                # 판에 봇이 400이라, 봇 줄이 자리를 채우면 **사람이 반응해야 하는
+                # 나라의 공격이 목록 밖으로 밀린다.** 봇은 늘 국경을 긁고 있어서
+                # 알림 가치가 낮고, 그 사실은 지도의 전선 숫자(§5.99)가 이미
+                # 보여 준다.
+                if foe is not None and foe.is_bot:
+                    continue
                 lines.append(("←", foe.name if foe else "?",
                               a.troops, "#e08a7a", None, 0.0))
         for b in st.boats:
