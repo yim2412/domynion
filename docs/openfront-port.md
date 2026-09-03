@@ -4647,8 +4647,23 @@ MIRV 비용 · 스폰 면역 · 관계도 · 이모지 · 배신자 거절 · �
 전부). 우리가 §5.98 에서 만든 `shares_border_with` 는 그것과 무관하게
 `canAttack` 안에서 쓰인다 — **원본의 죽은 자리를 따라가지 말 것.**
 
-> **다음 훑을 곳**: `client/components/` 중 판 밖(계정·로비)이라 넘겼던 것들 ·
-> `client/hud/layers/` **재방문**(§5.98 이 `RadialMenuElements` 를 지나갔다).
+##### `client/hud/layers/` 재방문 — **후보 셋을 찾아 놓고 손대지 않았다**
+
+§5.100 이 그 기록이다. `AttacksDisplay` 하나만 대조했는데 셋이 나왔다:
+**들어오는 공격에서 봇 빼기**(우리 패널이 6줄뿐이라 진짜 나라가 밀린다) ·
+**맞받아치기 버튼**(`min(공격 병력, 비율×내 병력)`) · **나에게 오는 남의 배가
+목록에 안 남는다**(우리는 이벤트 한 줄로 흘려보낸다).
+
+> **다음 세션은 여기서 시작한다.** 셋 다 규칙이 작고(엔진 함수 하나씩)
+> 테스트가 쉬운 자리다. 다만 **§5.99 의 변이와 전체 스위트를 먼저 돌린 뒤**
+> 손대는 것이 맞다 — 검증 안 된 코드를 더 쌓으면 무엇이 깨졌는지 못 가른다.
+
+> **그 뒤 훑을 곳**: `PlayerPanel`(1,069) · `EventsDisplay`(694) ·
+> `PlayerInfoOverlay`(654) · `BuildMenu`(508) · `SendResourceModal`(572) ·
+> `UnitDisplay`(306) · `HeadsUpMessage`(258) · `AlertFrame`(261) ·
+> `SpawnTimer`(189) · `client/components/` 중 판 밖(계정·로비)이라 넘긴 것들.
+> ⚠ `GraphicsSettingsModal`(1,821) · `PerformanceOverlay`(1,320) ·
+> `SettingsModal`(620) 은 **설정·계측이라 규칙이 없다 — 열지 말 것.**
 
 ##### 기준선 — 8배 모순을 재기 시작했다 (2026-09-03)
 
@@ -6558,6 +6573,63 @@ defaultDonationAmount(sender: Player): number { return Math.floor(sender.troops(
 > **`--ticks 22000` 이면 충분하다.** 그리고 `--progress` 없이 돌리지 말 것 —
 > 이 도구는 세 판이 다 끝나야 표를 내므로, 그전에는 얼마나 남았는지 알 방법이
 > 없다. 그것 때문에 같은 날 **4시간을 값 없이 날렸다.**
+
+### 5.100 전투 패널 대조 — **후보 셋** (발견 기록, 손 안 댔다)
+
+`client/hud/layers/AttacksDisplay.ts`(467줄)를 우리 `ui/eventlog.py` 의 전투
+패널과 나란히 놓았다. 퇴각 버튼·상륙 부대 줄·물러나는 중 표시는 이미 있다.
+다른 것이 셋이고 **셋 다 구현하지 않았다** — 사용자가 게임 중이라 무거운
+검증(변이·스위트)을 못 돌리는 상태에서 코드를 더 쌓지 않기로 했다.
+
+#### 후보 하나 — **들어오는 공격에서 봇을 뺀다**
+
+```ts
+this.incomingAttacks = myPlayer.incomingAttacks().filter((a) => {
+  const t = (this.game.playerBySmallID(a.attackerID) as PlayerView).type();
+  return t !== PlayerType.Bot;                       // ← 봇은 목록에 안 띄운다
+});
+```
+
+우리는 `a.target == self.me` 면 전부 띄운다. **봇 400이 도는 판에서 우리 패널은
+6줄뿐이라**(`for _ in range(6)`) 봇 공격이 자리를 채우면 진짜 나라의 공격이
+목록 밖으로 밀린다. 사람이 반응해야 하는 것은 나라 쪽인데 그게 안 보인다.
+§5.95(색이 여덟 개였다)와 같은 종류다 — **판 규모가 커지면서 조용히 깨진 자리.**
+
+#### 후보 둘 — **맞받아치기 버튼이 없다**
+
+```ts
+const counterTroops = Math.min(attack.troops, this.uiState.attackRatio * myPlayer.troops());
+this.eventBus.emit(new SendAttackIntentEvent(attacker.id(), counterTroops));
+```
+
+들어오는 공격 줄에서 한 번에 반격한다. 병력은 **들어온 공격 크기로 한 번 깎는다** —
+비율만 쓰면 작은 공격에 전군을 던지게 된다. 우리 들어오는 줄에는 버튼이 없다
+(퇴각 버튼은 내 공격에만 붙인다고 그 자리에 적어 뒀는데, 원본은 그 자리에
+**다른** 버튼을 둔 것이다).
+
+#### 후보 셋 — **나에게 오는 남의 배가 목록에 안 남는다**
+
+원본은 `NAVAL_INVASION_INBOUND` 이벤트로 배 ID 를 모아 두고, 그 배가 살아 있는
+동안 패널에 줄을 유지한다(`incomingBoats`). 우리는 같은 이벤트를 **이벤트 로그
+한 줄**로만 흘려보낸다 — 뜨고 사라지므로 *"지금 몇 척이 나에게 오고 있나"* 를
+볼 수 없다. 이벤트(순간)와 패널(지속 상태)은 다른 물건이다.
+
+#### 확인했고 **없는** 것
+
+- **비율 슬라이더의 1%→10% 붙임**: 이미 있다(`hud.py :: nudge_ratio`, 원본
+  주석까지 같다).
+- **`ControlPanel` 의 병력/노동자 막대**: 계산이 우리 것과 같다.
+- **`client/utilities/` · `core/worker/`**: 없다(§ 재개 지점의 표).
+- ⚠ **`sharedBorder` 는 원본에서 죽은 코드다** — `playerActions` 가 넘기는데
+  클라이언트 어디서도 안 읽는다. 따라가지 말 것.
+
+#### 아직 안 읽은 것 (다음 세션)
+
+`PlayerPanel`(1,069) · `EventsDisplay`(694) · `PlayerInfoOverlay`(654) ·
+`BuildMenu`(508) · `SendResourceModal`(572) · `UnitDisplay`(306) ·
+`HeadsUpMessage`(258) · `AlertFrame`(261) · `SpawnTimer`(189).
+`GraphicsSettingsModal`(1,821) · `PerformanceOverlay`(1,320) ·
+`SettingsModal`(620) 은 **설정·계측이라 규칙이 없다** — 열지 말 것.
 
 ### 5.99 이식 누락 백넷 — 진행 중인 공격의 **병력이 화면에 없었다**
 
