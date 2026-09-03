@@ -317,6 +317,11 @@ ATTACK_MIN_TROOPS = 1.0                      # 이보다 적으면 부대가 소
 # 내 국경에 닿지 않는 먼 대륙의 중립을 눌러도 공격이 켜지면 안 된다.
 NEUTRAL_ATTACK_REACH = 200
 CONQUER_PLAYER_TILES = 100                   # 수비자가 이 미만이면 통째로 흡수
+# 전선 숫자를 어디에 띄울지 — `AttackImpl.clusterBorderTiles(30, 2)`.
+# 조각이 이보다 작으면 버린다(가장 큰 하나는 예외). 둘까지만 띄운다 —
+# 잘게 부서진 국경에서 숫자가 지도를 덮지 않게.
+ATTACK_CLUSTER_MIN_SIZE = 30
+ATTACK_CLUSTER_MAX = 2
 
 # 외교 (P3) — Config.ts :: allianceDuration() / traitor*()
 #

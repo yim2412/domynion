@@ -33,7 +33,8 @@ from ..core.constants import Terrain
 from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
-from .overlays import attack_rings, border_relation, nuke_telegraphs
+from .overlays import (attack_labels, attack_rings, border_relation,
+                       nuke_telegraphs)
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -502,6 +503,35 @@ class MapWidget(QWidget):
             p.setPen(QPen(c, 1.5))
             r = max(4.0, z * 3.0)
             p.drawEllipse(QPointF(cx, cy), r, r)
+
+        self._draw_attack_troops(p, ox)
+
+    def _draw_attack_troops(self, p: QPainter, ox: float) -> None:
+        """진행 중인 공격의 병력을 **전선 위**에 띄운다(§5.99).
+
+        ⚠ 이게 없으면 공격이 얼마나 큰지 화면 어디에도 안 나온다 — 색칠이
+        번지는 것만 보인다. 원본은 이걸 위해 전선을 덩어리로 묶는 함수를
+        따로 두고 있다(`Attack.clustered_positions`)."""
+        z, oy = self.zoom, self.offset.y()
+        size = int(min(28, max(P.ATTACK_LABEL_MIN_PX, z * 6)))
+        if size < P.ATTACK_LABEL_MIN_PX:
+            return
+        font = ui_font(size)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        for lab in attack_labels(self.state, self.me):
+            cx, cy = ox + (lab.x + 0.5) * z, oy + (lab.y + 0.5) * z
+            if not (-60 < cx < self.width() + 60 and -60 < cy < self.height() + 60):
+                continue
+            text = f"{lab.troops:,.0f}"
+            px = cx - fm.horizontalAdvance(text) / 2
+            py = cy - fm.height() / 2
+            p.setPen(QPen(QColor(*P.LABEL_SHADOW)))
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                p.drawText(int(px + dx), int(py + dy), text)
+            p.setPen(QPen(QColor(*(P.ATTACK_LABEL_IN if lab.incoming
+                                   else P.ATTACK_LABEL_OUT))))
+            p.drawText(int(px), int(py), text)
 
     @staticmethod
     def _dot(p: QPainter, pos: tuple[float, float], r: float, rgb) -> None:

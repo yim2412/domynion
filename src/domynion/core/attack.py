@@ -127,6 +127,24 @@ def tiles_per_tick(attack_troops: float, defender: PlayerState | None,
             * border_size * C.BUDGET_VS_PLAYER_BORDER_MULT)
 
 
+def _neighbors8(gmap: GameMap, t: TileRef) -> list[TileRef]:
+    """8방향 — 원본 `forEachNeighborWithDiag`. **전선을 묶을 때만 쓴다.**
+
+    진격은 4방향인데 묶기는 8방향이다. 대각으로만 이어진 두 칸을 다른 전선으로
+    세면 한 덩어리가 여러 조각으로 부서져 숫자가 여기저기 뜬다."""
+    w, h = gmap.width, gmap.height
+    x, y = t % w, t // w
+    out = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < w and 0 <= ny < h:
+                out.append(ny * w + nx)
+    return out
+
+
 @dataclass
 class Attack:
     """진행 중인 공격 하나. `target` 은 타일이 아니라 **소유자**다 (None = 중립)."""
@@ -184,6 +202,60 @@ class Attack:
                     * (1.0 - owned_by_me * C.PRIORITY_NEIGHBOR_WEIGHT + mag / 2.0)
                     + tick)
         heapq.heappush(self.heap, (priority, tile))
+
+    def clustered_positions(self, gmap: GameMap,
+                            min_size: int = C.ATTACK_CLUSTER_MIN_SIZE,
+                            max_clusters: int = C.ATTACK_CLUSTER_MAX
+                            ) -> list[TileRef]:
+        """전선을 **덩어리로 묶어** 대표 칸을 돌려준다 — 원본
+        `AttackImpl.clusteredPositions`.
+
+        진행 중인 공격의 병력을 화면에 띄우려면 *어디에* 띄울지가 필요하다.
+        국경 전체에 숫자를 뿌릴 수는 없고, 하나만 띄우자니 **섬이나 좁은 길목을
+        낀 전선은 자연히 여러 조각으로 갈라진다** — 그때 한 자리만 쓰면 숫자가
+        엉뚱한 전선 위에 앉는다.
+
+        - 국경 칸을 **대각선을 포함한 8방향** BFS 로 갈라 조각을 만든다.
+        - 조각마다 무게중심에 **가장 가까운 실제 국경 칸**을 대표로 쓴다.
+          무게중심 자체는 국경 위가 아닐 수 있다(초승달 모양 전선).
+        - 큰 것부터 정렬해 `min_size` 미만은 버리고 `max_clusters` 개까지.
+          ⚠ **가장 큰 하나는 미만이어도 남긴다** — 아니면 시작 직후의 작은
+          전선에서 숫자가 통째로 사라진다.
+
+        국경이 비었으면(아직 한 칸도 안 붙었으면) 배가 내린 칸을 쓴다."""
+        if not self.heap:
+            return [] if self.source_tile is None else [self.source_tile]
+
+        border = {t for _, t in self.heap}
+        w = gmap.width
+        visited: set[TileRef] = set()
+        clusters: list[tuple[TileRef, int]] = []
+        for start in border:
+            if start in visited:
+                continue
+            visited.add(start)
+            queue = [start]
+            qi = sum_x = sum_y = 0
+            while qi < len(queue):
+                t = queue[qi]
+                qi += 1
+                sum_x += t % w
+                sum_y += t // w
+                for n in _neighbors8(gmap, t):
+                    if n in border and n not in visited:
+                        visited.add(n)
+                        queue.append(n)
+            cx, cy = sum_x / len(queue), sum_y / len(queue)
+            best = min(queue, key=lambda t: (t % w - cx) ** 2 + (t // w - cy) ** 2)
+            clusters.append((best, len(queue)))
+
+        clusters.sort(key=lambda c: -c[1])
+        if len(clusters) == 1:
+            return [clusters[0][0]]
+        big = [c for c in clusters if c[1] >= min_size]
+        if not big:
+            return [clusters[0][0]]
+        return [t for t, _ in big[:max_clusters]]
 
     @property
     def border_size(self) -> int:

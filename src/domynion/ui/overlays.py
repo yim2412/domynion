@@ -113,6 +113,43 @@ def attack_rings(st, me: int | None = None) -> list[AttackRing]:
     return out
 
 
+@dataclass(frozen=True)
+class AttackLabel:
+    """진행 중인 공격 하나의 **전선 위 병력 숫자**."""
+
+    x: int
+    y: int
+    troops: float
+    incoming: bool          # 나를 향해 오는 공격인가 (색이 갈린다)
+
+
+def attack_labels(st, me: int | None = None) -> list[AttackLabel]:
+    """원본 `AttackingTroopsController` + `GameRunner.attackClusteredPositions`.
+
+    ⚠ **내가 낀 공격만**이다(`outgoingAttacks + incomingAttacks`). 472명이 도는
+    판에서 전부 그리면 지도가 숫자로 덮인다 — `attack_rings` 가 남의 배를
+    안 그리는 것과 같은 이유다.
+
+    자리는 `Attack.clustered_positions` 가 정한다. 전선이 섬이나 좁은 길목에서
+    갈라지면 대표 칸이 둘이 되고 숫자도 둘 뜬다 — **한 자리만 쓰면 숫자가
+    엉뚱한 전선 위에 앉는다**는 것이 원본이 그 함수를 둔 이유다.
+
+    ⚠ 퇴각 중인 공격도 그린다. 부대는 아직 거기 있고, 오히려 **얼마가 물러나는
+    중인지**가 사람이 알고 싶은 값이다(`attack_rings` 의 배와 다르다 — 배는
+    표적을 가리키는 고리라 되돌아가는 배의 표적이 남으면 거짓말이 된다)."""
+    if me is None:
+        return []
+    w = st.gmap.width
+    out: list[AttackLabel] = []
+    for atk in st.attacks:
+        incoming = atk.target == me
+        if not incoming and atk.attacker != me:
+            continue
+        for t in atk.clustered_positions(st.gmap):
+            out.append(AttackLabel(t % w, t // w, atk.troops, incoming))
+    return out
+
+
 # --- 국경 색 — 원본 `PlayerView.borderColor` / `borderRelationFlags` ----------
 
 

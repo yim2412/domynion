@@ -22,8 +22,9 @@ from domynion.core.nukes import NUKE_MAGNITUDES, Nuke
 from domynion.core.state import PlayerState
 from domynion.core.units import UnitType
 from domynion.ui import palette as P
-from domynion.ui.overlays import (BorderRelation, Relation, attack_rings,
-                                  border_relation, nuke_telegraphs)
+from domynion.ui.overlays import (BorderRelation, Relation, attack_labels,
+                                  attack_rings, border_relation,
+                                  nuke_telegraphs)
 
 
 def state(n: int = 3) -> GameState:
@@ -370,3 +371,144 @@ def test_a_defended_border_alternates_and_an_undefended_one_does_not(qapp):
     # 통과한다 — 실제로 그 변이가 살아남아서 알았다.
     assert light != P.BORDER_COLOR_NEUTRAL and dark != P.BORDER_COLOR_NEUTRAL
     assert {light, dark} <= after, f"체커보드가 안 나온다: {after}"
+
+
+# --- 전선 위 병력 숫자 (백넷) -------------------------------------------------
+#
+# 원본 `AttackingTroopsController` + `AttackImpl.clusteredPositions`.
+# 이게 없으면 **공격이 얼마나 큰지 화면 어디에도 안 나온다** — 색칠이 번지는
+# 것만 보인다. 자리를 정하는 것이 규칙이라 여기서 함께 잰다.
+
+def _launch(st, attacker: int, target: int | None):
+    atk = st.launch_attack(attacker, target)
+    assert atk is not None
+    return atk
+
+
+def test_only_attacks_i_am_part_of_get_a_number():
+    """472명이 도는 판에서 전부 그리면 지도가 숫자로 덮인다."""
+    st = state()
+    _launch(st, 1, 2)                       # 남의 싸움
+    assert attack_labels(st, me=0) == []
+    _launch(st, 0, 1)
+    assert len(attack_labels(st, me=0)) >= 1
+
+
+def test_incoming_and_outgoing_are_told_apart():
+    """색이 방향을 말한다 — 숫자만 있으면 내 부대인지 적 부대인지 모른다."""
+    st = state()
+    _launch(st, 0, 1)
+    _launch(st, 2, 1)                       # 나(1)를 향해 오는 공격
+    labs = attack_labels(st, me=1)
+    assert {l.incoming for l in labs} == {True}
+    assert all(l.incoming for l in attack_labels(st, me=1))
+    assert not any(l.incoming for l in attack_labels(st, me=0))
+
+
+def test_the_number_is_the_troops_actually_in_the_attack():
+    st = state()
+    atk = _launch(st, 0, 1)
+    lab = attack_labels(st, me=0)[0]
+    assert lab.troops == atk.troops
+
+
+def test_the_spot_is_on_the_front_line():
+    """무게중심이 아니라 **실제 국경 칸**이어야 한다 — 초승달 전선에서 갈린다."""
+    st = state()
+    atk = _launch(st, 0, 1)
+    w = st.gmap.width
+    border = {t for _, t in atk.heap}
+    for lab in attack_labels(st, me=0):
+        assert lab.y * w + lab.x in border
+
+
+def test_a_split_front_gets_two_numbers():
+    """섬·길목에서 전선이 갈리면 자리도 갈린다. 하나만 쓰면 엉뚱한 곳에 앉는다."""
+    gm = GameMap.from_rows(["." * 20] * 80)
+    players = {}
+    for pid in (0, 1):
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", start=gm.ref(0, 0))
+        players[pid].kind = "nation"
+        players[pid].troops = 300_000.0
+    # 위·아래로 멀리 떨어진 두 전선. 사이는 아무도 없는 땅이라 국경이 안 이어진다.
+    # ⚠ **각 35칸으로 둔다** — 30 미만이면 둘 다 작은 조각이라 큰 것 하나만
+    # 남는 것이 정상이고, 그러면 "갈린다"가 아니라 "버린다"를 재게 된다.
+    # (여기서 한 번 헛짚었다. 재료가 규칙을 가린 열여섯째 사례다.)
+    for y in list(range(0, 35)) + list(range(45, 80)):
+        for x in range(0, 10):
+            gm.owner[gm.ref(x, y)] = 0
+        for x in range(10, 20):
+            gm.owner[gm.ref(x, y)] = 1
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 700, 1: 700}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    atk = _launch(st, 0, 1)
+    assert len({t for _, t in atk.heap}) == 70           # 35 + 35
+    spots = atk.clustered_positions(gm)
+    assert len(spots) == 2
+    ys = sorted(t // gm.width for t in spots)
+    assert ys[0] < 35 and ys[1] >= 45
+
+
+def test_a_small_second_cluster_is_dropped():
+    """`minSize`(30) 미만은 버린다 — 잘게 부서진 국경에서 숫자가 지도를 덮는다."""
+    gm = GameMap.from_rows(["." * 20] * 80)
+    players = {}
+    for pid in (0, 1):
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", start=gm.ref(0, 0))
+        players[pid].kind = "nation"
+        players[pid].troops = 300_000.0
+    for y in range(0, 40):                    # 큰 전선 40칸
+        gm.owner[gm.ref(9, y)] = 0
+        gm.owner[gm.ref(10, y)] = 1
+    for y in range(70, 75):                   # 작은 전선 5칸
+        gm.owner[gm.ref(9, y)] = 0
+        gm.owner[gm.ref(10, y)] = 1
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 45, 1: 45}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    atk = _launch(st, 0, 1)
+    spots = atk.clustered_positions(gm)
+    assert len(spots) == 1
+    assert spots[0] // gm.width < 40
+
+
+def test_the_largest_cluster_survives_even_when_it_is_tiny():
+    """⚠ 작다고 전부 버리면 **시작 직후 숫자가 통째로 사라진다.**"""
+    st = state()
+    atk = _launch(st, 0, 1)
+    assert len({t for _, t in atk.heap}) < C.ATTACK_CLUSTER_MIN_SIZE
+    assert len(atk.clustered_positions(st.gmap)) == 1
+
+
+def test_diagonal_tiles_stay_one_front():
+    """대각으로만 이어진 칸을 다른 전선으로 세면 한 덩어리가 부서진다."""
+    gm = GameMap.from_rows(["." * 20] * 20)
+    players = {}
+    for pid in (0, 1):
+        players[pid] = PlayerState(pid=pid, name=f"P{pid}", start=gm.ref(0, 0))
+        players[pid].kind = "nation"
+        players[pid].troops = 300_000.0
+    # 계단 모양 전선 — 4방향으로는 끊겨 보이고 8방향으로는 하나다.
+    for i in range(8):
+        gm.owner[gm.ref(i, i)] = 0
+        gm.owner[gm.ref(i + 1, i)] = 1
+    st = GameState(gmap=gm, players=players, rng=random.Random(0))
+    st._counts = {0: 8, 1: 8}
+    st._posts = DefensePostIndex(gm.size)
+    st.tick_count = C.SPAWN_IMMUNITY_TICKS
+    atk = _launch(st, 0, 1)
+    assert len(atk.clustered_positions(gm)) == 1
+
+
+def test_a_boat_attack_with_no_border_yet_uses_the_landing_tile():
+    """국경이 아직 없으면(배가 막 내렸으면) 내린 칸에 띄운다."""
+    st = state()
+    atk = _launch(st, 0, 1)
+    atk.heap.clear()
+    atk.source_tile = st.gmap.ref(30, 1)
+    assert atk.clustered_positions(st.gmap) == [st.gmap.ref(30, 1)]
+    atk.source_tile = None
+    assert atk.clustered_positions(st.gmap) == []

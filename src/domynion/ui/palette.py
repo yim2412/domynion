@@ -233,6 +233,12 @@ TELEGRAPH_COLORS: tuple[RGB, RGB, RGB] = (
 )
 # 내 수송선의 상륙 표적 고리.
 ATTACK_RING_COLOR: RGB = (255, 255, 255)
+# 전선 위 병력 숫자. 원본 `AttackingTroopsController` 의 두 색 그대로 —
+# 나가는 공격은 Aquarius(#3fa9f5), 들어오는 공격은 red-400(#f87171).
+# **색이 방향을 말한다** — 숫자만 있으면 내 부대인지 적 부대인지 알 수 없다.
+ATTACK_LABEL_OUT: RGB = (0x3f, 0xa9, 0xf5)
+ATTACK_LABEL_IN: RGB = (0xf8, 0x71, 0x71)
+ATTACK_LABEL_MIN_PX = 9        # 이보다 작아지면 안 그린다(라벨과 같은 규칙)
 
 TEXTURE_AMP = 0.16      # 지형 질감의 세기. 크면 타일 경계가 도로 보인다
 TEXTURE_PERIOD = 24     # 타일 몇 개마다 한 주기인가. **1 이면 체크무늬가 된다**
