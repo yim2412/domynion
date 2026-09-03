@@ -83,22 +83,23 @@ def root_items(st: GameState, me: int, tile: TileRef,
     target = None if owner < 0 else owner
     mine = st.players[me]
     is_mine = target == me
-    friendly = target is not None and st.diplomacy.is_friendly(me, target)
 
     return [
+        # ⚠ **서브메뉴에 타일 조건을 걸지 않는다.** 원본에서 `canAttack(tile)` 이
+        # 잠그는 것은 중앙 버튼(치기) 하나이고, 핵은 `nukeSpawn` 이라는 **다른
+        # 규칙**을 쓴다(`centerButtonElement` vs `BuildableAttacks`). 여기는 핵과
+        # 전함 부르기까지 담고 있어서, 국경을 안 맞댔다고 잠그면 **국경 밖으로는
+        # 핵도 못 쏜다.** 그래서 상대 조건(`canAttackPlayer`)만 여기서 보고,
+        # 타일 조건은 아래 "치기" 항목이 본다.
         Item("공격", submenu=lambda: attack_items(st, me, tile, notify),
              enabled=not is_mine and st.can_attack(me, target),
-             hint=("내 땅이다" if is_mine else
-                   "동맹이다 — 먼저 파기해야 한다" if friendly else
-                   "아직 스폰 면역 중이다" if target is not None
-                   and st.is_immune(target) else
-                   f"보낼 병력 {mine.attack_troops():,.0f}"),
+             hint=_attack_hint(st, me, tile, target),
              colour=COL_ATTACK),
         Item("건설", submenu=lambda: build_items(st, me, tile, notify),
              enabled=True, hint=f"골드 {_gold(mine.gold)}", colour=COL_BUILD),
         Item("상륙", action=lambda: _boat(st, me, tile, notify),
-             enabled=not is_mine and st.can_attack(me, target) and gm.passable(tile),
-             hint=f"배로 병력 {mine.troops * C.BOAT_ATTACK_RATIO:,.0f} 을 보낸다",
+             enabled=st.can_send_boat(me, tile),
+             hint=_boat_hint(st, me, tile, target),
              colour=COL_BOAT),
         Item("외교", submenu=lambda: diplomacy_items(st, me, target, notify),
              enabled=target is not None and target != me,
@@ -106,6 +107,64 @@ def root_items(st: GameState, me: int, tile: TileRef,
                   "내 땅이다" if is_mine else f"P{target} 와의 관계",
              colour=COL_DIPLO),
     ]
+
+
+# --- 왜 안 되는지 -----------------------------------------------------------
+#
+# ⚠ **갈래마다 문구가 따로 있어야 한다.** `can_attack_tile` 은 참/거짓 하나만
+# 돌려주는데, 막힌 이유가 다섯이다(내 땅 · 동맹 · 면역 · 바다 · 국경을 안 맞댐).
+# 이유를 안 붙이면 회색 항목만 남아 "왜 안 되지"에 답하지 못한다 — 이 파일
+# 머리말이 항목을 지우지 않고 회색으로 남기는 이유가 그것이다.
+
+def _why_not_attackable(st: GameState, me: int, tile: TileRef,
+                        target: int | None) -> str | None:
+    """공격이 막힌 이유. 막히지 않았으면 None."""
+    gm = st.gmap
+    if target == me:
+        return "내 땅이다"
+    if target is not None and st.diplomacy.is_friendly(me, target):
+        return "동맹이다 — 먼저 파기해야 한다"
+    if target is not None and st.is_immune(target):
+        return "아직 스폰 면역 중이다"
+    if not gm.passable(tile):
+        return "바다이거나 넘을 수 없는 땅이다"
+    if target is not None:
+        if not st.shares_border_with(me, target):
+            return "국경을 맞대지 않았다 — 배로 상륙해야 한다"
+    elif not st.neutral_reaches_me(me, tile):
+        return "내 땅에서 이어지지 않은 중립이다 — 배로 상륙해야 한다"
+    return None
+
+
+def _attack_hint(st: GameState, me: int, tile: TileRef,
+                 target: int | None) -> str:
+    why = _why_not_attackable(st, me, tile, target)
+    if why is not None:
+        return why
+    return f"보낼 병력 {st.players[me].attack_troops():,.0f}"
+
+
+def _boat_hint(st: GameState, me: int, tile: TileRef,
+               target: int | None) -> str:
+    """상륙은 국경을 안 봐도 되지만 **배·해안**이 필요하다(`canBuildTransportShip`)."""
+    gm = st.gmap
+    mine = st.players[me]
+    if target == me:
+        return "내 땅이다"
+    if target is not None and st.diplomacy.is_friendly(me, target):
+        return "동맹이다 — 먼저 파기해야 한다"
+    if target is not None and st.is_immune(target):
+        return "아직 스폰 면역 중이다"
+    if not gm.passable(tile):
+        return "바다이거나 넘을 수 없는 땅이다"
+    afloat = sum(1 for b in st.boats if b.owner == me)
+    if afloat >= C.BOAT_MAX_NUMBER:
+        return f"배가 다 나가 있다 ({afloat}/{C.BOAT_MAX_NUMBER}척)"
+    if not st.can_send_boat(me, tile):
+        # 상한도 아니고 상대도 아니면 남는 것은 지리다 — 상륙 지점이 없거나
+        # 내 해안에서 물길로 닿지 않는다.
+        return "물길로 닿는 해안이 없다"
+    return f"배로 병력 {mine.troops * C.BOAT_ATTACK_RATIO:,.0f} 을 보낸다"
 
 
 # --- 공격 -------------------------------------------------------------------
@@ -117,7 +176,8 @@ def attack_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
     mine = st.players[me]
     items = [
         Item(f"{who} 치기", action=lambda: _attack(st, me, target, notify),
-             hint=f"보낼 병력 {mine.attack_troops():,.0f}", colour=COL_ATTACK),
+             enabled=st.can_attack_tile(me, tile),
+             hint=_attack_hint(st, me, tile, target), colour=COL_ATTACK),
     ]
     # ⚠ **루트가 아니라 여기다.** 루트는 원본의 넷(공격·건설·상륙·외교)으로
     # 고정이고, 원본은 전함을 라디얼이 아니라 **직접 선택해 클릭**한다

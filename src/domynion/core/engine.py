@@ -230,6 +230,96 @@ class GameState:
             return not self.is_immune(target)
         return True
 
+    def shares_border_with(self, pid: int, other: int | None) -> bool:
+        """`PlayerImpl.sharesBorderWith` — 내 땅 중 하나가 other 의 칸에 닿는가.
+
+        `other is None` 이면 중립(TerraNullius)이다. `Attack.launch` 가 붙을 칸을
+        찾는 것과 같은 조건이지만 **통행 가능 여부는 보지 않는다** — 원본이
+        그렇다(국경을 맞댄 것과 그 칸으로 진격할 수 있는 것은 다른 이야기다)."""
+        gm = self.gmap
+        want = -1 if other is None else other
+        for t in gm.owned_refs(pid).tolist():
+            for n in gm.neighbors(t):
+                if gm.owner[n] == want:
+                    return True
+        return False
+
+    def neutral_reaches_me(self, pid: int, tile: TileRef) -> bool:
+        """클릭한 중립 칸에서 **이어진 무주지 덩어리**가 내 땅에 닿는가.
+
+        `canAttack` 의 else 분기다. 무주지·육지·통행가능 칸만 따라가고 클릭한
+        칸에서 맨해튼 `NEUTRAL_ATTACK_REACH` 안으로 제한한다 — 그 안에서 내 칸에
+        인접한 무주지를 하나라도 만나면 참이다."""
+        gm = self.gmap
+        if int(gm.owner[tile]) >= 0 or not gm.passable(tile):
+            return False
+        x0, y0 = gm.xy(tile)
+        seen = {tile}
+        stack = [tile]
+        while stack:
+            t = stack.pop()
+            for n in gm.neighbors(t):
+                if gm.owner[n] == pid:
+                    return True
+                if n in seen or int(gm.owner[n]) >= 0 or not gm.passable(n):
+                    continue
+                x, y = gm.xy(n)
+                if abs(x - x0) + abs(y - y0) > C.NEUTRAL_ATTACK_REACH:
+                    continue
+                seen.add(n)
+                stack.append(n)
+        return False
+
+    def can_attack_tile(self, pid: int, tile: TileRef) -> bool:
+        """`PlayerImpl.canAttack(tile)` — **칸을 눌러 공격할 수 있는가.**
+
+        `can_attack`(= `canAttackPlayer`) 은 상대만 본다. 원본은 그 위에 칸 조건
+        셋을 더 얹는데 우리는 그걸 안 옮겨서, **바다 칸이나 국경을 안 맞댄 나라를
+        눌러도 메뉴의 "공격"이 켜져** 있었다. 규칙은 이미 맞았다 —
+        `Attack.launch` 가 붙을 칸이 없으면 `None` 을 돌려주고 병력도 안 깎는다.
+        틀린 것은 **화면이 할 수 있다고 말한 것**이다."""
+        gm = self.gmap
+        owner = int(gm.owner[tile])
+        if owner == pid:
+            return False
+        target = None if owner < 0 else owner
+        if target is not None and not self.can_attack(pid, target):
+            return False
+        # ⚠ **이 줄을 지우는 변이는 살아남는다 — 무동작이라 정상이다.** 중립
+        # 갈래는 `neutral_reaches_me` 가 같은 검사를 다시 하고, 소유된 칸은 항상
+        # 통행 가능하다(정복이 `Attack.step` 을 거치는데 그게 통행 가능한 칸만
+        # 민다). 원본의 순서를 그대로 두는 것이지 새로 막는 것이 아니다.
+        if not gm.passable(tile):       # isLand && !isImpassable 과 같은 조건
+            return False
+        if target is not None:
+            return self.shares_border_with(pid, target)
+        return self.neutral_reaches_me(pid, tile)
+
+    def can_send_boat(self, pid: int, dst: TileRef) -> bool:
+        """`canBuildTransportShip` — **상륙은 공격과 다른 규칙이다.**
+
+        배는 국경을 맞댈 필요가 없다(그게 배의 존재 이유다). 대신 배 상한 ·
+        상륙 지점 · 물길로 닿는 내 해안이 필요하다. `send_boat` 의 앞부분과 같은
+        검사를 **부작용 없이** 본다 — 여기서 `send_boat` 를 부르면 병력이 깎인다."""
+        p = self.players.get(pid)
+        if p is None or not p.alive or self.over:
+            return False
+        if sum(1 for b in self.boats if b.owner == pid) >= C.BOAT_MAX_NUMBER:
+            return False
+        gm = self.gmap
+        if not gm.passable(dst) or int(gm.owner[dst]) == pid:
+            return False
+        o = int(gm.owner[dst])
+        if not self.can_attack(pid, None if o < 0 else o):
+            return False
+        moved = landing_tile(gm, pid, dst)
+        if moved is None:
+            return False
+        # ⚠ 이것도 무동작이다 — `landing_tile` 이 이미 **내 해안이 물길로 닿는
+        # 바다 성분**을 요구하므로, 여기까지 왔으면 내 해안이 반드시 있다.
+        # `canBuildTransportShip` 의 마지막 줄을 형태까지 맞춰 두는 자리다.
+        return best_spawn(gm, pid, moved) is not None
+
     def launch_attack(self, pid: int, target: int | None) -> Attack | None:
         p = self.players.get(pid)
         if p is None or not p.alive or self.over:

@@ -326,3 +326,133 @@ def test_cooldown_shows_up_as_a_reason():
     assert v is not None
     item = _delete_row(build_items(st, 0, st.gmap.ref(25, 25), noop))
     assert not item.enabled and "초에 하나씩만" in item.hint
+
+
+# --- 공격 가능 판정이 타일을 본다 (백셋) --------------------------------------
+#
+# `can_attack`(= `canAttackPlayer`) 는 **상대만** 본다. 원본 `canAttack(tile)` 은
+# 그 위에 셋을 더 얹는다: 바다·통행불가 · 남의 땅이면 국경 · 중립이면 이어진
+# 무주지가 내 땅에 닿아야. 규칙(`Attack.launch`)은 이미 맞았고 **화면만** 틀렸다 —
+# 바다 칸을 눌러도 "치기"가 켜져 있고 힌트는 "보낼 병력 N" 이라고 말했다.
+
+def _sea_map() -> GameState:
+    """왼쪽 대륙(내 땅) · 바다 · 오른쪽 대륙(P1). **국경을 안 맞댄 배치다.**
+
+    ⚠ 폭을 40으로 두는 이유가 있다 — `state()` 가 시작 칸을 (5,5)·(35,5)에
+    박는다. 좁은 지도를 쓰면 그 칸이 **바다 위나 지도 밖**에 떨어지고(`ref` 가
+    조용히 감긴다) 재려던 것과 다른 것을 재게 된다.
+    양쪽 대륙을 바다에 닿게 둬야 "국경이 없다"를 재지 "해안이 없다"를 안 잰다."""
+    st = state(["." * 15 + "~" * 10 + "." * 15] * 10)
+    gm = st.gmap
+    for y in range(10):
+        for x in range(15):
+            gm.owner[gm.ref(x, y)] = 0
+        for x in range(25, 40):
+            gm.owner[gm.ref(x, y)] = 1
+    # 양쪽 대륙에 **내륙 중립**을 한 칸씩 남긴다. 대륙 가장자리를 비우면 그쪽이
+    # 바다에 못 닿아 배가 아예 안 뜬다 — 재려는 것은 국경이지 해안이 아니다.
+    gm.owner[gm.ref(7, 9)] = -1             # 내 대륙의 중립
+    gm.owner[gm.ref(32, 9)] = -1            # 건너편 대륙의 중립
+    st._counts = {0: 149, 1: 149}
+    return st
+
+
+def test_cannot_attack_the_sea_and_it_says_why():
+    """⚠ 이게 백셋의 본체다. 바다에는 국경도 확장도 없다."""
+    st = _sea_map()
+    sea = st.gmap.ref(20, 5)
+    assert not st.can_attack_tile(0, sea)
+    hit = by_label(attack_items(st, 0, sea, noop), "중립 치기")
+    assert not hit.enabled
+    assert "바다" in hit.hint
+
+
+def test_cannot_attack_impassable_land():
+    st = state(["....#....."] * 10)
+    st.gmap.owner[st.gmap.ref(0, 0)] = 0
+    assert not st.can_attack_tile(0, st.gmap.ref(4, 5))
+
+
+def test_cannot_attack_a_player_across_the_water():
+    """국경을 안 맞대면 못 친다 — 배로 가야 한다. 그 문구까지 확인한다."""
+    st = _sea_map()
+    far = st.gmap.ref(35, 5)
+    assert not st.can_attack_tile(0, far)
+    hit = by_label(attack_items(st, 0, far, noop), "P1 치기")
+    assert not hit.enabled
+    assert "국경" in hit.hint and "상륙" in hit.hint
+
+
+def test_can_attack_a_player_we_share_a_border_with():
+    st = state()
+    gm = st.gmap
+    for y in range(5, 8):
+        gm.owner[gm.ref(10, y)] = 0
+        gm.owner[gm.ref(11, y)] = 1
+    st._counts = {0: 4, 1: 4}
+    assert st.shares_border_with(0, 1)
+    assert st.can_attack_tile(0, gm.ref(11, 6))
+    hit = by_label(attack_items(st, 0, gm.ref(11, 6), noop), "P1 치기")
+    assert hit.enabled and "보낼 병력" in hit.hint
+
+
+def test_neutral_must_be_connected_to_my_land():
+    """중립은 국경이 아니라 **이어진 덩어리**로 판정한다 — 그게 확장의 규칙이다."""
+    st = _sea_map()
+    gm = st.gmap
+    mine_side = gm.ref(7, 9)            # 내 땅 옆의 중립 (같은 대륙)
+    other_side = gm.ref(32, 9)          # 바다 건너 중립
+    assert st.can_attack_tile(0, mine_side)
+    assert not st.can_attack_tile(0, other_side)
+    hit = by_label(attack_items(st, 0, other_side, noop), "중립 치기")
+    assert not hit.enabled and "이어지지 않은" in hit.hint
+
+
+def test_neutral_beyond_the_reach_is_out_even_when_connected():
+    """`manhattanDistFN(tile, 200)` — 이어져 있어도 200칸 밖은 안 본다."""
+    st = state(["." * 260] * 8)
+    st.gmap.owner[st.gmap.ref(0, 1)] = 0
+    st._counts = {0: 1, 1: 0}
+    assert st.can_attack_tile(0, st.gmap.ref(150, 1))
+    assert not st.can_attack_tile(0, st.gmap.ref(259, 1))
+
+
+def test_the_rule_matches_what_launch_actually_does():
+    """⚠ **화면과 규칙이 같은 답을 해야 한다.** 어긋난 것이 이 누락의 정체였다.
+
+    ⚠ 중립 칸은 여기서 못 잰다 — `launch_attack` 은 **소유자**를 받으므로, 판
+    어딘가에 붙을 중립이 하나라도 있으면 성공한다. 화면이 칸 단위인데 규칙이
+    소유자 단위라는 것, 그 간극 자체가 이 누락이 생긴 이유다."""
+    st = _sea_map()
+    far = st.gmap.ref(35, 5)
+    assert not st.can_attack_tile(0, far)
+    assert st.launch_attack(0, 1) is None
+
+
+# --- 상륙은 다른 규칙이다 (`canBuildTransportShip`) ---------------------------
+
+def test_boat_can_reach_across_the_water_even_without_a_border():
+    """배는 국경을 맞댈 필요가 없다 — **그게 배의 존재 이유다.**"""
+    st = _sea_map()
+    far = st.gmap.ref(35, 5)
+    assert not st.can_attack_tile(0, far)      # 육상으로는 못 친다
+    assert st.can_send_boat(0, far)            # 배로는 간다
+    boat = by_label(root_items(st, 0, far, noop), "상륙")
+    assert boat.enabled and "배로 병력" in boat.hint
+
+
+def test_boat_says_when_every_ship_is_out():
+    """조용한 실패 중 가장 헷갈리는 자리다 — 3척이 다 나가 있으면 클릭이 사라진다."""
+    st = _sea_map()
+    far = st.gmap.ref(35, 5)
+    for _ in range(C.BOAT_MAX_NUMBER):
+        assert st.send_boat(0, far) is not None
+    boat = by_label(root_items(st, 0, far, noop), "상륙")
+    assert not boat.enabled
+    assert f"{C.BOAT_MAX_NUMBER}척" in boat.hint
+
+
+def test_boat_refuses_the_open_sea():
+    st = _sea_map()
+    boat = by_label(root_items(st, 0, st.gmap.ref(20, 5), noop), "상륙")
+    assert not boat.enabled and "바다" in boat.hint

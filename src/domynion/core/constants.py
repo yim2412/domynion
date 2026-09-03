@@ -312,6 +312,10 @@ BUDGET_VS_NEUTRAL_BORDER_MULT = 2.0
 BUDGET_BORDER_NOISE_MAX = 6                  # borderSize() + rand(0, 5)
 
 ATTACK_MIN_TROOPS = 1.0                      # 이보다 적으면 부대가 소멸(퇴각 없음)
+# 중립 땅을 칠 수 있는지 볼 때, 클릭한 칸에서 **이어진 무주지 덩어리**를 이만큼
+# 안까지만 따라간다(`PlayerImpl.canAttack` 의 `manhattanDistFN(tile, 200)`).
+# 내 국경에 닿지 않는 먼 대륙의 중립을 눌러도 공격이 켜지면 안 된다.
+NEUTRAL_ATTACK_REACH = 200
 CONQUER_PLAYER_TILES = 100                   # 수비자가 이 미만이면 통째로 흡수
 
 # 외교 (P3) — Config.ts :: allianceDuration() / traitor*()
