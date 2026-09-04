@@ -5,8 +5,8 @@
 원본의 공식과 상수를 그대로 옮기는 것이 1단계다(개념 재현이 아니다). 유닛 16종 ·
 골드 · 동맹/배신자 · 보트 · 핵/MIRV 까지 옮긴 뒤에 증강을 설계한다.
 
-- **이식 계획과 원본 공식: [`docs/openfront-port.md`](docs/openfront-port.md)** ← 여기부터
-- v0.1 자체 설계(폐기된 방향): [`docs/design.md`](docs/design.md)
+- **이식 계획과 원본 공식 · 재개 지점: [`docs/openfront-port.md`](docs/openfront-port.md)** ← 여기부터
+- **증강 계층의 설계**(원본에 없는 우리 층): [`docs/design.md`](docs/design.md)
 
 자원은 병력 하나. 영토가 병력을 낳고 병력이 영토를 넓힌다. 타일을 클릭하면 그 칸이
 아니라 **그 칸의 소유자 전체**로 공격 부대가 번지고, 병력이 떨어지는 지점에서 멈춘다.
@@ -17,12 +17,13 @@
 
 **플레이할 수 있다.** 실제 openfront 지도 위에서 영토 확장 · 골드 · 건물 ·
 동맹/배신 · 상륙 · 무역 · 전함 · 철도 · 핵/낙진 · 둠스데이 클락 · 원본 봇이
-함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 856개.
+함께 돌고, PyQt6 UI 로 직접 조작한다. 테스트 **1,219개**.
 
 | | |
 |---|---|
-| ✅ | 규칙 이식(P1~P6) · 원본 봇 · 원본 스폰 · **UI** |
-| ⬜ | **증강형 테크트리**(원본에 없는 우리 층) |
+| ✅ | 규칙 이식(P1~P6) · 원본 봇 · 원본 스폰 · **UI** · 이식 누락 **123개** 메움 |
+| ✅ | **증강형 테크트리** — 카드 10종 · 드래프트 창 · 보유 표시. 켜면 생존판 영토가 **2.9배**(A/B 24판) |
+| ⏳ | Overtime(교착 방지)을 켰다 — 기준선을 다시 재는 중 |
 
 **원본과 같은지는 실행해서 대조한다** — `tools/oracle.mts` 가 원본 TypeScript 를
 직접 실행해 기준값을 뽑고, `tests/test_fidelity.py` 가 우리 값과 맞춰 본다.
@@ -58,9 +59,12 @@ python -m domynion.ui.app --shot shot.png --at 600 --map world
 python -m domynion.cli.play --games 40 --map world --jobs 8
 python -m domynion.cli.play --games 20 --map world --clock normal --difficulty hard
 
-# 기준선을 뜬다 (핵 발사·MIRV·생존·골드). ⚠ --clock 을 안 주면 900초에 잘린다
-python tools/balance.py --seeds 1 2 3 4 --jobs 4
-python tools/balance.py --seeds 1 2 3 --jobs 3 --clock normal --ticks 20000
+# 기준선을 뜬다 (핵 발사·MIRV·생존·골드). ⚠ --ticks 를 명시한다 (기본 9,000 은
+# 더 이상 기준선이 아니다). --jobs 를 생략하면 CPU·RAM 을 재서 여유 10% 를 남긴다
+python tools/balance.py --seeds 1 2 3 --ticks 45000
+
+# 증강 켜고/끄고 A/B — 생존율과 짝 판정을 낸다
+python tools/augment_ab.py --seeds 11 22 33 --focus troops
 
 # 골드가 어디로 가는지 센다 · 판을 프로파일한다
 python tools/gold_flow.py --ticks 9000 --size map
@@ -95,8 +99,13 @@ python tools/mutate.py --spec <변이명세.json> --timeout 180
 커서를 얹으면 그 나라의 병력과 **상대/내가 보낼 병력 비**가 뜬다 — 원본 공식이
 `within(수비병력/공격병력, 0.6, 2)` 라 그 값이 판단의 전부다.
 
-`--clock` 을 주면 **원본의 종료 규칙**(둠스데이 클락)으로 돈다 — 시간 제한도 지배
-승리도 없이 마지막 생존자가 남을 때까지 간다.
+`--clock` 을 주면 둠스데이 클락이 **더해진다.** ⚠ 예전에 여기 *"시간 제한도 지배
+승리도 없이"* 라고 적혀 있었는데 **틀렸다**(§5.61) — 원본은 둘 다 돌고, 클락은
+교착을 푸는 장치이지 승리 판정을 대신하는 것이 아니다.
+
+판을 끝내는 것은 **정복 · 지배 · Overtime** 셋이다. Overtime 이 켜져 있어
+**30분부터 지배 문턱(80%)이 분당 2%p 내려가 70분에 0** 이 된다 — 안 끝나는 판이
+없다. 170분 하드 리밋은 그래서 **도달 불가**다(§5.118).
 
 지도는 `world` `asia` `europe` `africa` 넷 × 세 해상도 — 출처와 라이선스는
 [`resources/maps/ATTRIBUTION.md`](resources/maps/ATTRIBUTION.md).
@@ -121,11 +130,16 @@ src/domynion/
     emoji.py       이모지와 관계 변화량
     doomsday.py    둠스데이 클락 (원본의 종료 규칙)
     events.py      소식·경보 로그
-    augments.py    증강 카드 (P7 — 아직 미사용)
+    rot.py         점진적 썩음
+    enclave.py     둘러싸인 영토 흡수
+    augments.py    증강 카드 · 레벨 · 계수 합산(Modifiers) · 드래프트
     engine.py      tick 루프, 건설·업그레이드·철거, 탈락·승리 판정
   ai/
     nation.py      Nation 봇 — 공격 · 외교 · 상륙 · 핵 (`NationExecution`)
     structures.py  Nation 봇의 건설·업그레이드 (`NationStructureBehavior`)
+    nukes.py       핵 판단 · mirv.py  MIRV 판단
+    placement.py   자리 고르기 값 함수 · alliance.py  동맹 판단·연장
+    chatter.py     AI 가 먼저 거는 말
     tribe.py       부족(봇) — 동맹을 다 받고 건물을 지운다
     simple_ai.py   v0.1 규칙 기반 AI (대조용으로 남겨 둔다)
   ui/
@@ -137,12 +151,22 @@ src/domynion/
                    (`derive/NukeTelegraphs.ts` · `AttackRings.ts` ·
                    `PlayerView.borderColor` · `DoomsdayClockPanel`) — 같은 방침
     rates.py       병력 `+N/s` · 골드 `+N` (`ControlPanel.ts`) — 같은 방침
+    augment_dialog.py 증강 드래프트 창 + **보유 증강 스트립**(다음 정지까지 남은 시간)
+    radial.py      방사형 메뉴 · actions.py  클릭 → 명령
+    eventlog.py    소식·전투·경보 패널 · endmodal.py  결과 화면
+    emojitable.py  이모지 고르기
     main_window.py 조립 + 실시간 타이머
     app.py         진입점 (--shot 스크린샷 모드)
     render.py      PIL 렌더러 (창 없이 그림 파일을 뽑는 용도)
     palette.py     색
   cli/
     play.py        헤드리스 시뮬레이션 (밸런스 측정)
+    shot.py        스크린샷 모드
+tools/
+    balance.py     기준선 · augment_ab.py  증강 A/B
+    gold_flow.py   골드 흐름 · profile_game.py  프로파일
+    mutate.py      변이 하네스 · verify_port.py  이식 대조 · oracle.mts  값 대조
+    _budget.py     병렬 작업이 CPU·RAM 여유 10% 를 남기게 한다
 ```
 
 계층 규칙: `core` 는 아무것도 import 하지 않는다. UI 와 AI 는 `core` 위에 나란히
@@ -155,5 +179,5 @@ src/domynion/
 
   병력을 떼어 국경에 붙이면 부대가 번지며 타일을 사들이고, 떨어지면 멈춘다.
   한 칸 비용은 지형과 방어측이 병력을 얼마나 채워 뒀는가로 정해진다.
-  증강은 그 수치에 곱해지는 계수일 뿐, 새 규칙을 만들지 않는다(항해술만 예외).
+  증강은 그 수치에 곱해지는 계수일 뿐, 새 규칙을 만들지 않는다 — **예외는 없다.**
 ```

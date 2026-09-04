@@ -78,9 +78,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--difficulty", default="medium")
     ap.add_argument("--clock", choices=["slow", "normal", "fast", "veryfast"],
                     default=None,
-                    help="⚠ 주면 **원본의 종료 규칙**으로 돈다(둠스데이 클락). "
-                         "안 주면 우리가 넣은 안전장치가 900초(9,000 tick)에 "
-                         "판을 자른다 — 원본에 없는 조건이다")
+                    help="⚠ 주면 둠스데이 클락이 **더해진다**(지배 판정을 "
+                         "대신하지 않는다 — §5.61). `MATCH_SECONDS` 를 900초로 "
+                         "적어 뒀던 옛 문구는 틀렸다: 실제 170분이고, Overtime "
+                         "때문에 도달 불가다(§5.118)")
     ap.add_argument("--every", type=int, default=1_000,
                     help="이 간격으로 골드 곡선을 찍는다")
     a = ap.parse_args(argv)

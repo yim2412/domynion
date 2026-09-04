@@ -1,13 +1,19 @@
 """§5.48 기준선을 **재현 가능하게** 다시 재는 도구.
 
-    python tools/balance.py --seeds 1 2 3 4 --jobs 4
+    python tools/balance.py --seeds 1 2 3 --ticks 45000
 
 §5.48 의 표(핵 발사 · 생존 · 골드 최고/중앙 · 벽시계)는 그때그때 만든 스크립트로
 뽑았고 남지 않았다. 규칙을 건드릴 때마다 같은 표를 다시 떠야 하므로 도구로 굳힌다.
 
-기본값이 곧 그 기준선이다 — `map`(2000×1000) · 나라 72 + 봇 400 · medium ·
-9,000 tick. **판당 20분**이라 seed 는 병렬로 돌린다(§5.48: 병렬 3판이 단독 대비
-1.2배). 한 판으로는 아무것도 판정하지 않는다(§5.46).
+지도와 인원은 기본값이 곧 기준선이다 — `map`(2000×1000) · 나라 72 + 봇 400 ·
+medium. ⚠ **`--ticks` 기본값(9,000)은 더 이상 기준선이 아니다.** §5.111 에서
+판이 그보다 훨씬 길다는 것이 드러나 22,000 → 25,000 으로 올렸고, Overtime 을
+켠 뒤(§5.118)는 판이 **최대 70분**(42,000 tick)에서 끝난다. 기준선을 뜰 때는
+`--ticks` 를 **명시한다.**
+
+seed 는 병렬로 돌린다(§5.48: 병렬 3판이 단독 대비 1.2배). 몇 개를 띄울지는
+`_budget.py` 가 CPU·RAM 을 **재서** 정한다(여유 10% 를 남긴다).
+한 판으로는 아무것도 판정하지 않는다(§5.46).
 """
 
 from __future__ import annotations
@@ -60,9 +66,15 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
     #           대기(스왑·경합)다.
     load = time.perf_counter() - t0
     t_loop = time.perf_counter()
-    # ⚠ `clock` 을 주면 **원본의 종료 규칙**으로 돈다. 안 주면 우리가 넣은
-    # 안전장치(`MATCH_SECONDS` = 900초 = 9,000 tick)가 판을 자른다 — 원본에
-    # 없는 조건이므로, 그 길이를 "판의 길이"로 착각하면 안 된다(§5.55).
+    # ⚠ **이 주석은 2026-09-04 까지 틀려 있었다.** *"`MATCH_SECONDS` = 900초"*
+    # 라고 적혀 있었는데 §5.61 에서 **10,200초(170분, 원본 하드 리밋)** 로 고쳐
+    # 놓고 이 문구를 안 따라 고쳤다. 도구 도움말에도 같은 말이 박혀 있었다.
+    #
+    # 지금 판을 자르는 것은 셋이다: **지배**(Overtime 이 켜져 있어 30분부터
+    # 문턱이 내려가고 **70분에 0**) · 정복 · `--ticks` 상한. `MATCH_SECONDS`
+    # 170분은 Overtime 때문에 **도달 불가**다(§5.118).
+    # `clock` 을 주면 여기에 둠스데이 클락이 **더해진다** — 지배 판정을 대신하는
+    # 것이 아니다(§5.61).
     if clock:
         st.clock.cfg.enabled = True
         st.clock.cfg.speed = clock
@@ -116,9 +128,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--difficulty", default="medium")
     ap.add_argument("--clock", choices=["slow", "normal", "fast", "veryfast"],
                     default=None,
-                    help="⚠ 주면 **원본의 종료 규칙**으로 돈다(둠스데이 클락). "
-                         "안 주면 우리가 넣은 안전장치가 900초(9,000 tick)에 "
-                         "판을 자른다 — 원본에 없는 조건이다")
+                    help="⚠ 주면 둠스데이 클락이 **더해진다**(지배 판정을 "
+                         "대신하지 않는다). 판을 끝내는 것은 지배·정복·--ticks "
+                         "상한이고, Overtime 이 켜져 있어 지배 문턱이 30분부터 "
+                         "내려가 70분에 0 이 된다")
     ap.add_argument("--ticks", type=int, default=TICKS)
     ap.add_argument("--nations", type=int, default=NATIONS)
     ap.add_argument("--bots", type=int, default=BOTS)
