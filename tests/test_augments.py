@@ -392,3 +392,40 @@ def test_the_replaced_cards_are_gone():
     assert "naval_range" not in FIELDS and "cost_woodland_pct" not in FIELDS
     assert "seafaring" not in AUGMENTS_BY_KEY and "rangers" not in AUGMENTS_BY_KEY
     assert len(AUGMENTS) == 10
+
+
+def test_the_draft_never_touches_the_game_rng():
+    """⚠ **A/B 가 성립하려면 이게 참이어야 한다.** 카드를 뽑을 때마다
+    `rng.sample` 이 판의 난수를 한 번 더 쓰면 그 뒤 모든 무작위가 어긋나
+    같은 seed 여도 **완전히 다른 판**이 된다.
+
+    2026-09-04 실측: 그 상태로 A/B 를 돌렸더니 증강을 켠 쪽 영토가
+    46,594 → 20,983 으로 **줄었다.** 증강이 나쁜 것이 아니라 다른 판이었다."""
+    st = state()
+    _run(st, C.AUGMENT_FIRST_TICK)
+    assert st.augment_offer
+    before = st.rng.getstate()
+    st.choose_augment(st.augment_offer[0].key)
+    _run(st, 3)
+    # 드래프트를 열고 고르는 사이 판 rng 가 안 움직였는지 — tick 이 다른 일로
+    # rng 를 쓰므로, **드래프트 경로만** 따로 본다.
+    st2 = state()
+    _run(st2, C.AUGMENT_FIRST_TICK)
+    mark = st2.rng.getstate()
+    st2._augment_tick()                 # 이미 열려 있다 — 아무것도 안 뽑는다
+    st2.choose_augment(st2.augment_offer[0].key)
+    st2.augment_next_tick = st2.tick_count
+    st2._augment_tick()                 # 여기서 새로 뽑는다
+    assert st2.augment_offer, "재료가 뽑기를 안 만든다"
+    assert st2.rng.getstate() == mark, "드래프트가 판 rng 를 썼다"
+
+
+def test_the_draft_rng_exists_whether_augments_are_on_or_off():
+    """⚠ **켜든 끄든 같은 횟수만큼 판 rng 를 소비해야 한다.** 조건부로 만들면
+    그 한 번이 A/B 를 어긋나게 한다 — 고치려던 버그를 그 자리에 다시 만든다."""
+    import random as _r
+    from domynion.core.engine import GameState as GS
+    a = GS.new(4, _r.Random(5), map_name="world", human=0, size="map16x", bots=4)
+    b = GS.new(4, _r.Random(5), map_name="world", human=-1, size="map16x", bots=4)
+    assert a._aug_rng is not None and b._aug_rng is not None
+    assert a.rng.getstate() == b.rng.getstate(), "판 rng 소비가 다르다"

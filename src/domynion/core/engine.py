@@ -122,6 +122,13 @@ class GameState:
     augment_opened_at: int = -1
     augment_next_tick: int = -1        # 다음 정지가 열릴 tick. -1 이면 안 연다
     augments_taken: int = 0            # 이 판에서 몇 번 골랐나(측정용)
+    # ⚠ **드래프트는 판의 `rng` 를 쓰지 않는다.** 카드를 뽑을 때마다
+    # `rng.sample` 이 판의 난수를 한 번 더 소비하면 그 뒤 **모든 무작위가
+    # 어긋나** 같은 seed 여도 완전히 다른 판이 된다 — 증강 A/B 가 "증강의
+    # 효과"가 아니라 "다른 판"을 재게 된다(2026-09-04 실측: 켠 쪽 영토가
+    # 46,594 → 20,983 으로 *줄었다*).
+    # 판 생성 때 **켜든 끄든 똑같이** 만들어야 그 한 번의 소비도 같아진다.
+    _aug_rng: object | None = None
     # 사람이 잡은 pid. **None 이면 헤드리스**다 — 드래프트도 스폰 페이즈도 안 연다.
     # `new()` 가 채운다. 전에는 생성 인자로만 받고 상태에 안 남겨서, 판이 만들어진
     # 뒤에는 "사람이 누구인가"를 물을 방법이 없었다(UI 가 따로 들고 있었다).
@@ -208,6 +215,9 @@ class GameState:
         st.fallout = Fallout(gmap.size)
         # 사람이 없으면(헤드리스) 고를 사람도 없다 — 그냥 시작한다.
         st.spawn_phase = human in players
+        # ⚠ **켜든 끄든 만든다.** 여기서만 판 rng 를 한 번 소비하므로,
+        # 조건부로 만들면 그 한 번이 A/B 를 어긋나게 한다.
+        st._aug_rng = random.Random(rng.getrandbits(64))
         if human in players:
             st.human = human
             st.augment_next_tick = C.AUGMENT_FIRST_TICK
@@ -1808,6 +1818,16 @@ class GameState:
 
     # --- 증강 드래프트 ------------------------------------------------------
 
+    @property
+    def aug_rng(self):
+        """드래프트 전용 난수. **판의 `rng` 와 분리돼 있다**(위 주석 참조).
+
+        `GameState()` 를 직접 만든 테스트는 `_aug_rng` 가 없을 수 있어 그때
+        만들어 준다 — 그 경우는 A/B 대상이 아니다."""
+        if self._aug_rng is None:
+            self._aug_rng = random.Random(0)
+        return self._aug_rng
+
     def _augment_tick(self) -> bool:
         """드래프트를 열고·닫는다. **판을 멈춰야 하면 True.**
 
@@ -1822,7 +1842,8 @@ class GameState:
         if self.augment_offer:
             if (self.tick_count - self.augment_opened_at
                     >= C.AUGMENT_PICK_LIMIT_TICKS):
-                self.choose_augment(self.rng.choice(self.augment_offer).key)
+                self.choose_augment(
+                    self.aug_rng.choice(self.augment_offer).key)
                 return False            # 이 tick 부터 바로 판이 돈다
             return True                 # 아직 고르는 중 — 판을 멈춘다
         if self.augment_next_tick < 0 or self.tick_count < self.augment_next_tick:
@@ -1831,7 +1852,7 @@ class GameState:
         if p is None or not p.alive:
             self.augment_next_tick = -1     # 죽었으면 더는 안 연다
             return False
-        offer = augment_offer(self.rng, p.augments)
+        offer = augment_offer(self.aug_rng, p.augments)
         if not offer:
             self.augment_next_tick = -1     # 열 장을 다 Lv3 로 올렸다
             return False
