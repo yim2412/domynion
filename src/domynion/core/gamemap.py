@@ -185,9 +185,6 @@ class GameMap:
 
     # --- 지형 -------------------------------------------------------------
 
-    def is_land(self, t: TileRef) -> bool:
-        return bool(self.raw[t] & C.LAND_BIT)
-
     def magnitude(self, t: TileRef) -> int:
         return int(self.raw[t] & C.MAGNITUDE_MASK)
 

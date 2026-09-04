@@ -136,6 +136,9 @@ class FrameBuilder:
                  kinds: dict[int, str] | None = None):
         self.gmap = gmap
         # pid -> "nation"/"bot"/"human". 판 내내 안 바뀌므로 표를 한 번만 만든다.
+        # ⚠ **생성자로만 받는다.** `set_kinds` 를 따로 뒀다가 지웠다(2026-09-04) —
+        # 주석이 *"판이 시작될 때 넣는다"* 고 적어 뒀는데 정작 그 자리는
+        # `MapWidget` 이 **생성자로** 넘기고 있어 호출부가 0 이었다.
         self._kinds = kinds
         self._owner_lut = _owner_rgba_lut(0, kinds)
         self._name_bg: np.ndarray | None = None
@@ -213,11 +216,6 @@ class FrameBuilder:
         """표가 `max_pid` 를 덮게 키운다. 나라가 늘 수는 있어도 줄지는 않는다."""
         if max_pid + 2 > len(self._owner_lut):
             self._owner_lut = _owner_rgba_lut(max_pid + 1, self._kinds)
-
-    def set_kinds(self, kinds: dict[int, str]) -> None:
-        """pid -> 종류. **색이 종류로 갈리므로**(§5.95) 판이 시작될 때 넣는다."""
-        self._kinds = kinds
-        self._owner_lut = _owner_rgba_lut(len(self._owner_lut) - 1, kinds)
 
     # --- 국경·라벨 --------------------------------------------------------
 

@@ -75,9 +75,6 @@ class Relations:
         rows.sort(key=lambda r: r[1])
         return [(pid, relation_from_value(v)) for pid, v in rows]
 
-    def forget(self, other: int) -> None:
-        self._v.pop(other, None)
-
 
 def gold_donation_relation(gold: float, tick: int, difficulty: str) -> float:
     """`DonateGoldExecution.calculateRelationUpdate`.
