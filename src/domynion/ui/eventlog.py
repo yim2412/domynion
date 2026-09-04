@@ -119,7 +119,8 @@ class EventList(QWidget):
 
     def refresh(self) -> None:
         st = self.state
-        events = st.log.recent(who=self.me, count=len(self._rows))
+        # ⚠ `recent` 가 아니라 `feed` 다 — 만료·티어가 거기 있다(§5.104).
+        events = st.log.feed(self.me, st.tick_count, count=len(self._rows))
         for lbl, e in zip(self._rows, events):
             secs = int((st.tick_count - e.tick) * 0.1)
             colour = CATEGORY_COLOUR[e.category]

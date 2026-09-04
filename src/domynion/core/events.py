@@ -105,6 +105,30 @@ URGENT = frozenset({
 })
 
 
+# 원본 `EventsDisplay` 의 `TIER_1_TYPES` 열셋 그대로. **덜 중요한 것이 중요한
+# 것을 밀어내지 못하게** 하는 장치다 — 티어 2 는 마지막 넷만 남고, 티어 1 은
+# 상한(`FEED_MAX`) 안에서 전부 남는다. §5.101(봇 공격이 전투 패널 자리를
+# 차지했다)과 **같은 형태의 규칙**이다: 판 규모가 커지면 자리 다툼이 생긴다.
+TIER_1 = frozenset({
+    EventKind.NUKE_INBOUND, EventKind.HYDROGEN_BOMB_INBOUND,
+    EventKind.MIRV_INBOUND, EventKind.NUKE_DETONATED,
+    EventKind.NAVAL_INVASION_INBOUND, EventKind.ATTACK_REQUEST,
+    EventKind.ALLIANCE_ACCEPTED, EventKind.ALLIANCE_REJECTED,
+    EventKind.ALLIANCE_BROKEN, EventKind.RENEW_ALLIANCE,
+    EventKind.CONQUERED_PLAYER, EventKind.CHAT,
+    EventKind.DONATION_RECEIVED,
+    # ⚠ **원본에 없다.** 원본은 둠스데이를 별도 UI 로 띄우므로 이벤트 종류가
+    # 아예 없다(`DOOMSDAY_MARKED` 주석 참조). 놓치면 판이 끝나는 것이라
+    # 티어 1 에 둔다 — `URGENT` 과 같은 판단이다.
+    EventKind.DOOMSDAY_MARKED,
+})
+
+# 소식창 규칙 셋. **한 곳에만 둔다** — 원본도 `EventsDisplay` 한 파일 안에 있다.
+FEED_EXPIRY_TICKS = 80      # 8초. 지난 것은 사라진다
+FEED_MAX = 30               # 만료 뒤에도 이만큼까지만 들고 있는다
+FEED_TIER2_KEEP = 4         # 덜 중요한 것은 마지막 넷
+
+
 @dataclass(frozen=True)
 class Event:
     kind: EventKind
@@ -152,6 +176,26 @@ class EventLog:
             if len(out) >= count:
                 break
         return out
+
+    def feed(self, who: int, tick: int, count: int = FEED_MAX) -> list[Event]:
+        """소식창에 띄울 것 — **최신이 앞**이다.
+
+        `recent` 와 다른 점이 셋이고 셋 다 원본 `EventsDisplay` 의 규칙이다:
+
+        1. **8초(`FEED_EXPIRY_TICKS`)가 지나면 사라진다.** `recent` 는 최근 N개를
+           무조건 띄우므로, 판이 조용하면 몇 분 전 소식이 그대로 남아 있었다.
+        2. **덜 중요한 것은 마지막 넷까지만**(`FEED_TIER2_KEEP`). 무역선·유닛
+           파괴가 판당 수천 건인데, 그것이 동맹 파기·정복·핵 접근을 밀어냈다.
+        3. 순서는 원본대로 **만료 → 30 상한 → 티어 나누기** 다. 티어를 먼저
+           나누면 티어 2 가 상한을 다 먹고 나서 넷으로 잘려 결과가 달라진다.
+        """
+        fresh = [e for e in self.items
+                 if e.who in (None, who)
+                 and tick - e.tick < FEED_EXPIRY_TICKS][-FEED_MAX:]
+        t1 = [e for e in fresh if e.kind in TIER_1]
+        t2 = [e for e in fresh if e.kind not in TIER_1][-FEED_TIER2_KEEP:]
+        out = sorted(t1 + t2, key=lambda e: e.tick)
+        return list(reversed(out))[:count]
 
     def urgent_for(self, who: int, since_tick: int) -> list[Event]:
         return [e for e in self.items
