@@ -427,3 +427,53 @@ def test_a_retreating_attacker_gets_no_button(qapp):
     lbl, btn = _panel_button(panel, "P1")
     assert lbl is not None                      # 줄은 그대로 뜬다
     assert not btn.isVisibleTo(panel)           # 버튼만 없다
+
+
+# --- 배신 페널티 타이머 (§5.104) ----------------------------------------------
+#
+# 원본 `EventsDisplay.renderBetrayalDebuffTimer`. 우리 깃발(🗡)은 *지금
+# 배신자다* 만 말한다 — 방어가 절반인 동안 **언제까지인지**를 모르면 반격
+# 시점을 못 잡는다. `traitor_remaining` 은 이미 있었고 **읽는 곳이 0** 이었다.
+
+def test_the_betrayal_penalty_shows_how_long_it_lasts(qapp):
+    from domynion.ui.eventlog import EventList
+    st = _panel_state()
+    feed = EventList(st, me=0)
+    feed.refresh()
+    assert not feed.debuff.isVisibleTo(feed)        # 배신자가 아니다
+    st.diplomacy.traitor_since[0] = st.tick_count
+    feed.refresh()
+    assert feed.debuff.isVisibleTo(feed)
+    assert "방어가 절반" in feed.debuff.text()
+    secs = C.TRAITOR_DURATION_TICKS * C.TICK_DT
+    assert f"{secs:.0f}초" in feed.debuff.text()
+
+
+def test_the_penalty_counts_down_and_then_goes_away(qapp):
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 남은 시간이 안 줄면
+    깃발과 다를 게 없다(그냥 "배신자다"). 끝나고도 남으면 거짓말이다."""
+    from domynion.ui.eventlog import EventList
+    st = _panel_state()
+    st.diplomacy.traitor_since[0] = st.tick_count
+    feed = EventList(st, me=0)
+    feed.refresh()
+    first = feed.debuff.text()
+    st.tick_count += C.TRAITOR_DURATION_TICKS // 2
+    feed.refresh()
+    assert feed.debuff.text() != first             # 줄어든다
+    st.tick_count += C.TRAITOR_DURATION_TICKS
+    feed.refresh()
+    assert not feed.debuff.isVisibleTo(feed)
+
+
+def test_the_panel_stays_up_for_the_penalty_even_with_no_news(qapp):
+    """디버프만 있고 소식이 없어도 패널이 떠 있어야 한다 — 사라지면 페널티가
+    언제 끝나는지가 다시 화면에서 없어진다."""
+    from domynion.ui.eventlog import EventList
+    st = _panel_state()
+    feed = EventList(st, me=0)
+    feed.refresh()
+    assert not feed.isVisible()                    # 소식도 디버프도 없다
+    st.diplomacy.traitor_since[0] = st.tick_count
+    feed.refresh()
+    assert feed.isVisible()

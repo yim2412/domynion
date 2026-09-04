@@ -111,6 +111,14 @@ class EventList(QWidget):
         self.title = QLabel("소식")
         self.title.setStyleSheet("font-weight: bold; opacity: .8;")
         box.addWidget(self.title)
+        # **내 배신 디버프가 언제 끝나는가**(원본 `renderBetrayalDebuffTimer`).
+        # 깃발(🗡)은 *지금 배신자다* 만 말한다 — 방어가 절반인 동안 **언제까지인지**
+        # 를 모르면 반격 시점을 못 잡는다. `traitor_remaining` 은 이미 있었는데
+        # **읽는 곳이 0** 이었다.
+        self.debuff = QLabel("")
+        self.debuff.setStyleSheet("color: #e0c060;")
+        self.debuff.hide()
+        box.addWidget(self.debuff)
         self._rows = []
         for _ in range(rows):
             lbl = QLabel("")
@@ -123,6 +131,11 @@ class EventList(QWidget):
         # 요격·격침된 위협의 경고는 그 자리에서 지운다(`unitGone`) — **`feed` 에
         # 넣지 않는 이유**는 `EventLog` 가 판을 안 보기 때문이다(core 는 이벤트를
         # 쌓기만 한다). 자리를 넉넉히 받아 거른 뒤 줄 수만큼 자른다.
+        left = st.diplomacy.traitor_remaining(self.me, st.tick_count)
+        self.debuff.setVisible(left > 0)
+        if left > 0:
+            self.debuff.setText(f"🗡 배신 페널티 {left * C.TICK_DT:.0f}초 남음 "
+                                f"— 방어가 절반이다")
         rows = len(self._rows)
         events = [e for e in st.log.feed(self.me, st.tick_count)
                   if st.threat_still_inbound(e)][:rows]
@@ -134,7 +147,9 @@ class EventList(QWidget):
                         f'<span style="opacity:.45">{secs}초 전</span>')
         for lbl in self._rows[len(events):]:
             lbl.setText("")
-        self.setVisible(bool(events))
+        # ⚠ 디버프만 있고 소식이 없어도 패널은 떠 있어야 한다 — 그 줄이
+        # 사라지면 페널티가 언제 끝나는지가 다시 화면에서 없어진다.
+        self.setVisible(bool(events) or left > 0)
 
 
 class AttacksPanel(QWidget):
