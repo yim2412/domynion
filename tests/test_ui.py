@@ -634,3 +634,111 @@ def test_a_building_type_with_none_of_it_is_left_out():
     assert "▲1" in text                          # 사일로는 있다
     assert "◉" not in text and "⚓" not in text   # 도시·항구는 없다
     win.close()
+
+
+# --- 증강 드래프트 창 (§ 3단계) ------------------------------------------------
+
+def _augment_window():
+    import random as _r
+
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.core import constants as C
+    from domynion.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    st = state()
+    st.players[0].kind = "human"
+    st.human = 0
+    st.augment_next_tick = C.AUGMENT_FIRST_TICK
+    win = MainWindow(st, human=0, rng=_r.Random(0))
+    win.timer.stop()
+    win.resize(900, 600)
+    win.show()
+    return app, st, win
+
+
+def test_the_draft_dialog_opens_when_the_engine_opens_one():
+    from domynion.core import constants as C
+    _app, st, win = _augment_window()
+    win._tick()
+    assert not win.augments.isVisible()
+    st.tick_count = C.AUGMENT_FIRST_TICK - 1
+    win._tick()                                  # 이 tick 에 열린다
+    assert st.augment_offer, "엔진이 드래프트를 안 열었다"
+    assert win.augments.isVisible()
+    assert len([b for b in win.augments._cards if b.isVisible()]) == len(
+        st.augment_offer)
+    win.close()
+
+
+def test_clicking_a_card_takes_it_and_closes_the_dialog():
+    from domynion.core import constants as C
+    _app, st, win = _augment_window()
+    st.tick_count = C.AUGMENT_FIRST_TICK - 1
+    win._tick()
+    key = st.augment_offer[0].key
+    win.augments._cards[0].click()
+    assert st.players[0].augments.get(key) == 1
+    win._tick()
+    assert not win.augments.isVisible()
+    win.close()
+
+
+def test_the_card_shows_the_next_level_when_i_already_have_it():
+    """⚠ **"또 고르는 게 손해인가"가 드래프트의 핵심 판단이다.** 지금 레벨만
+    보이면 화면에서 그걸 알 수 없다."""
+    from domynion.core import constants as C
+    from domynion.core.augments import AUGMENTS_BY_KEY
+    _app, st, win = _augment_window()
+    st.players[0].augments["fertile"] = 1
+    st.augment_offer = [AUGMENTS_BY_KEY["fertile"]]
+    st.augment_opened_at = st.tick_count
+    win.augments.refresh()
+    text = win.augments._cards[0].text()
+    assert "Lv1" in text and "Lv2" in text
+    win.close()
+
+
+def test_the_time_bar_runs_down_because_the_wait_is_capped():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 사람은 "고를 때까지
+    기다려 준다"고 믿고 있다가 엉뚱한 카드를 받는다(10초 뒤 무작위)."""
+    from domynion.core import constants as C
+    from domynion.core.augments import AUGMENTS_BY_KEY
+    _app, st, win = _augment_window()
+    st.augment_offer = [AUGMENTS_BY_KEY["fertile"]]
+    st.augment_opened_at = st.tick_count
+    win.augments.refresh()
+    assert win.augments.bar.ratio == 1.0
+    st.tick_count += C.AUGMENT_PICK_LIMIT_TICKS // 2
+    win.augments.refresh()
+    assert 0.0 < win.augments.bar.ratio < 1.0
+    win.close()
+
+
+def test_the_end_modal_wins_the_stack_when_both_would_show():
+    """둘 다 `raise_()` 하므로 **나중에 그린 쪽이 위**다. 판이 끝난 tick 에
+    보여야 하는 것은 결과다."""
+    import inspect
+
+    from domynion.ui import main_window as mw
+    src = inspect.getsource(mw.MainWindow._tick)
+    assert src.index("self.augments.refresh()") < src.index("self.end.check()")
+
+
+def test_unused_card_slots_are_hidden_when_fewer_than_three_remain():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 열 장을 거의 다 Lv3 로
+    올린 뒤에는 후보가 한둘뿐인데, 남는 칸에 **직전 드래프트의 카드가 그대로
+    남아** 누를 수 있다. 그 카드는 이번 후보가 아니라 눌러도 아무 일이 없다."""
+    from domynion.core.augments import AUGMENTS_BY_KEY
+    _app, st, win = _augment_window()
+    st.augment_offer = [AUGMENTS_BY_KEY["fertile"], AUGMENTS_BY_KEY["elite"],
+                        AUGMENTS_BY_KEY["ramparts"]]
+    st.augment_opened_at = st.tick_count
+    win.augments.refresh()
+    assert all(b.isVisible() for b in win.augments._cards)
+    st.augment_offer = [AUGMENTS_BY_KEY["fertile"]]     # 하나만 남았다
+    win.augments.refresh()
+    shown = [b for b in win.augments._cards if b.isVisible()]
+    assert len(shown) == 1, "안 쓰는 칸이 남아 있다"
+    win.close()
