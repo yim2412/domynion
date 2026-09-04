@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .units import UnitType
+
 
 class EventKind(Enum):
     ATTACK_FAILED = "공격 실패"
@@ -122,6 +124,16 @@ TIER_1 = frozenset({
     # 티어 1 에 둔다 — `URGENT` 과 같은 판단이다.
     EventKind.DOOMSDAY_MARKED,
 })
+
+# *날아오는 중* 경고와 그 유닛 종류. 원본 `EventsDisplay` 가 `unitGone` 으로
+# 지우는 넷 중 셋이다(상륙은 유닛 종류가 아니라 배 목록에서 본다).
+# ⚠ **여기서 만든다** — `GameState.threat_still_inbound` 가 유일한 사용처지만,
+# 종류와 이벤트의 짝은 이벤트 쪽 지식이다.
+INBOUND_NUKE = {
+    EventKind.NUKE_INBOUND: UnitType.ATOM_BOMB,
+    EventKind.HYDROGEN_BOMB_INBOUND: UnitType.HYDROGEN_BOMB,
+    EventKind.MIRV_INBOUND: UnitType.MIRV,
+}
 
 # 소식창 규칙 셋. **한 곳에만 둔다** — 원본도 `EventsDisplay` 한 파일 안에 있다.
 FEED_EXPIRY_TICKS = 80      # 8초. 지난 것은 사라진다

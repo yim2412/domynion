@@ -90,3 +90,72 @@ def test_the_doomsday_warning_is_tier_one_even_though_the_original_has_no_such_e
     log = _log(warn, *[_ev(EventKind.TRADE_SHIP_CAPTURED, 2 + i)
                        for i in range(20)])
     assert warn in log.feed(0, tick=22)
+
+
+# --- 사라진 위협의 경고는 지운다 (`unitGone`, §5.104) --------------------------
+
+def _threat_state():
+    import random
+    from domynion.core.buildings import DefensePostIndex
+    from domynion.core.engine import GameState
+    from domynion.core.gamemap import GameMap
+    from domynion.core.state import PlayerState
+    gm = GameMap.from_rows(["." * 40] * 10)
+    ps = {p: PlayerState(pid=p, name=f"P{p}", start=gm.ref(p * 10, 0),
+                         kind="nation") for p in (0, 1)}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 1, 1: 1}
+    st._posts = DefensePostIndex(gm.size)
+    return st
+
+
+def test_an_intercepted_nuke_stops_being_announced():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 요격된 핵이 8초 동안 계속
+    "핵 접근"으로 떠 있다. 대피할 곳도 없는 위협에 사람이 반응한다."""
+    from domynion.core.nukes import Nuke
+    from domynion.core.units import UnitType
+    st = _threat_state()
+    dst = st.gmap.ref(5, 5)
+    warn = Event(kind=EventKind.NUKE_INBOUND, tick=0, who=0, other=1, tile=dst)
+    st.log.add(warn)
+    n = Nuke(owner=1, utype=UnitType.ATOM_BOMB, src=st.gmap.ref(30, 5), dst=dst)
+    st.nukes.append(n)
+    assert st.threat_still_inbound(warn)        # 날아오는 중이다
+    st.nukes.remove(n)                          # SAM 이 잡았다
+    assert not st.threat_still_inbound(warn)
+    # 로그에는 그대로 남는다 — 거르는 것은 화면이지 기록이 아니다.
+    assert warn in st.log.feed(0, tick=1)
+
+
+def test_a_different_nuke_type_does_not_keep_the_warning_alive():
+    """수폭 경고를 원자탄이 살려 두면 안 된다 — 대피 판단이 달라진다."""
+    from domynion.core.nukes import Nuke
+    from domynion.core.units import UnitType
+    st = _threat_state()
+    dst = st.gmap.ref(5, 5)
+    warn = Event(kind=EventKind.HYDROGEN_BOMB_INBOUND, tick=0, who=0,
+                 other=1, tile=dst)
+    st.nukes.append(Nuke(owner=1, utype=UnitType.ATOM_BOMB,
+                         src=st.gmap.ref(30, 5), dst=dst))
+    assert not st.threat_still_inbound(warn)
+
+
+def test_a_sunk_transport_stops_being_announced():
+    from domynion.core.naval import TransportShip
+    st = _threat_state()
+    dst = st.gmap.ref(5, 5)
+    warn = Event(kind=EventKind.NAVAL_INVASION_INBOUND, tick=0, who=0,
+                 other=1, tile=dst)
+    b = TransportShip(owner=1, target=0, troops=100.0, path=[dst], dst=dst)
+    st.boats.append(b)
+    assert st.threat_still_inbound(warn)
+    b.active = False                            # 격침됐다
+    assert not st.threat_still_inbound(warn)
+
+
+def test_ordinary_events_are_never_filtered_out():
+    """이 함수는 **거르는 자리**이지 무엇을 띄울지 정하는 자리가 아니다."""
+    st = _threat_state()
+    for kind in (EventKind.CONQUERED_PLAYER, EventKind.ALLIANCE_BROKEN,
+                 EventKind.NUKE_DETONATED, EventKind.CHAT):
+        assert st.threat_still_inbound(_ev(kind, 0))

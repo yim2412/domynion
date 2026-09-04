@@ -120,7 +120,12 @@ class EventList(QWidget):
     def refresh(self) -> None:
         st = self.state
         # ⚠ `recent` 가 아니라 `feed` 다 — 만료·티어가 거기 있다(§5.104).
-        events = st.log.feed(self.me, st.tick_count, count=len(self._rows))
+        # 요격·격침된 위협의 경고는 그 자리에서 지운다(`unitGone`) — **`feed` 에
+        # 넣지 않는 이유**는 `EventLog` 가 판을 안 보기 때문이다(core 는 이벤트를
+        # 쌓기만 한다). 자리를 넉넉히 받아 거른 뒤 줄 수만큼 자른다.
+        rows = len(self._rows)
+        events = [e for e in st.log.feed(self.me, st.tick_count)
+                  if st.threat_still_inbound(e)][:rows]
         for lbl, e in zip(self._rows, events):
             secs = int((st.tick_count - e.tick) * 0.1)
             colour = CATEGORY_COLOUR[e.category]

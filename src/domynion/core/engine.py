@@ -25,7 +25,7 @@ from .buildings import (DefensePostIndex, all_structure_tiles, euclid_sq,
                         find_spot, structure_tiles)
 from .diplomacy import Diplomacy
 from .doomsday import DoomsdayClock
-from .events import Event, EventKind, EventLog
+from .events import INBOUND_NUKE, Event, EventKind, EventLog
 from .gamemap import DEFAULT_SIZE, GameMap, TileRef
 from .naval import (TradeShip, TransportShip, Warship, best_spawn, shell_damage,
                     _touching_components, landing_tile, manhattan,
@@ -357,6 +357,30 @@ class GameState:
             if self.diplomacy.is_friendly(pid, target):
                 self.relate(pid, target, C.REL_ATTACKED_ALLY)
         return atk
+
+    def threat_still_inbound(self, e) -> bool:
+        """*날아오는 중* 경고가 아직 유효한가 — 원본 `EventsDisplay` 의 `unitGone`.
+
+        원본은 경고 이벤트에 `unitView` 를 매달아 두고 **그 유닛이 죽으면 줄을
+        지운다.** SAM 에 요격되거나 이미 터진 핵, 격침된 상륙선을 계속 경고하면
+        사람이 없는 위협에 반응한다 — 대피할 곳도 없는데 화면만 빨갛다.
+
+        ⚠ **우리는 유닛 참조를 매달지 않는다.** 원본이 그러는 것은 클라이언트가
+        판 상태를 직접 못 보기 때문이고, 우리는 `nukes`·`boats` 를 그냥 읽는다
+        (§5.100 후보 셋에서 배 목록에 같은 판단을 이미 적어 뒀다). 경고에 이미
+        붙어 있는 `tile`(목적지)과 `other`(쏜 사람)로 맞춰 본다.
+
+        경고가 아닌 이벤트는 늘 True — 이 함수는 *걸러내는* 자리이지 무엇을
+        띄울지 정하는 자리가 아니다.
+        """
+        if e.kind is EventKind.NAVAL_INVASION_INBOUND:
+            return any(b.active and b.owner == e.other and b.dst == e.tile
+                       for b in self.boats)
+        want = INBOUND_NUKE.get(e.kind)
+        if want is None:
+            return True                     # 경고가 아니다 — 거를 것이 없다
+        return any(n.utype is want and n.owner == e.other and n.dst == e.tile
+                   for n in self.nukes)
 
     def launch_attack_troops(self, pid: int, target: int | None,
                              troops: float) -> Attack | None:
