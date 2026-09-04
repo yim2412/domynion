@@ -12,8 +12,9 @@ import random
 import pytest
 
 from domynion.core import constants as C
-from domynion.core.augments import (AUGMENTS, AUGMENTS_BY_KEY, Modifiers,
-                                    describe, level_mult, offer, value_at)
+from domynion.core.augments import (AUGMENTS, AUGMENTS_BY_KEY, FIELDS,
+                                    Modifiers, describe, level_mult,
+                                    offer, value_at)
 from domynion.core.buildings import DefensePostIndex
 from domynion.core.engine import GameState
 from domynion.core.gamemap import GameMap
@@ -55,14 +56,75 @@ def test_levels_multiply_the_base_value():
     assert value_at(a, 99) == value_at(a, C.AUGMENT_MAX_LEVEL)
 
 
-def test_same_axis_cards_add_not_multiply():
-    """⚠ **더한다.** 곱하면 카드가 쌓일수록 체감이 급격해져 후반이 독주가 된다."""
-    m = Modifiers.from_augments({"fertile": 1})
-    two = Modifiers.from_augments({"fertile": 2})
-    assert two.get("troops_cap_pct") > m.get("troops_cap_pct")
-    # 두 장이 같은 축이면 합이다 — 0.18 + 0.18×1.7 이지 곱이 아니다.
-    assert two.get("troops_cap_pct") == pytest.approx(
-        value_at(AUGMENTS_BY_KEY["fertile"], 2))
+def test_levels_use_the_level_multiplier_not_a_sum():
+    """⚠ **이 테스트는 2026-09-04 까지 이름과 다른 것을 재고 있었다.**
+
+    이름이 `same_axis_cards_add_not_multiply` 였는데 재료는 `{"fertile": 2}` —
+    **한 장의 레벨 2**지 두 장이 아니다. 주석은 *"0.18 + 0.18×1.7"* 이라고
+    적어 뒀는데 그 값(0.486)은 실제(**0.306** = `0.18 × 1.7`)와 다르다.
+    단언이 `value_at` 을 쓰고 있어서 **틀린 주석과 함께 통과하고 있었다.**
+
+    레벨은 **합이 아니라 배율**이다. 그 사실을 이름대로 잰다."""
+    one = Modifiers.from_augments({"fertile": 1}).get("troops_cap_pct")
+    two = Modifiers.from_augments({"fertile": 2}).get("troops_cap_pct")
+    base = AUGMENTS_BY_KEY["fertile"].per_level
+    assert two > one
+    assert two == pytest.approx(base * C.AUGMENT_LEVEL_MULT[1])
+    # 막지 않았으면 무엇이 일어났을 것인가 — 레벨을 **더하는** 구현이면 여기가
+    # 0.486 이 된다. 두 값이 다르다는 것을 먼저 단언해야 이 테스트가 의미를 갖는다.
+    assert two != pytest.approx(base + base * C.AUGMENT_LEVEL_MULT[1])
+
+
+def test_two_different_cards_on_one_axis_would_add():
+    """*"같은 축에 여러 카드가 실리면 더한다"* — `augments.py` 와 `design.md` 가
+    둘 다 앞자리에 적어 둔 원칙이다.
+
+    ⚠ **그런데 지금 그런 조합이 하나도 없다**(아래 테스트). 카드 10장이 축
+    10개에 정확히 하나씩이라 **이 규칙은 한 번도 발동한 적이 없다.** 규칙이
+    잠들어 있다고 지우지는 않되, **작동은 하는지** 합성 재료로 확인한다."""
+    a, b = 0.18, 0.22
+    m = Modifiers({"troops_cap_pct": a + b})
+    assert m.get("troops_cap_pct") == pytest.approx(a + b)
+    # 곱이면 1.18 × 1.22 − 1 = 0.4396 이다. 합(0.40)과 구별되는지 본다.
+    assert m.mult("troops_cap_pct") != pytest.approx((1 + a) * (1 + b))
+
+
+def test_from_augments_actually_adds_when_two_cards_share_an_axis(monkeypatch):
+    """⚠ **위 테스트는 `from_augments` 를 안 탄다.** `Modifiers({...})` 를 손으로
+    만들면 합산 코드가 한 줄도 안 돈다.
+
+    변이 하네스가 이걸 정확히 짚었다 — *"같은 축을 더하지 않고 **덮어쓴다**"* 변이가
+    **살아남았다.** 카드가 축마다 하나뿐이라 `values.get(field, 0.0)` 이 늘 0.0 이고
+    `0.0 + x == x` 라 **두 구현의 동작이 같다.** 테스트 구멍이 아니라 **재료가 그
+    경로를 못 만드는 것**이다(§5.109 · §5.117 과 같은 자리).
+
+    → 같은 축에 실린 카드 **둘**을 합성해서 실제 경로를 태운다."""
+    from domynion.core import augments as A
+    extra = A.Augment("second_cap", "합성 카드", "상한 +10%",
+                      "troops_cap_pct", 0.10)
+    monkeypatch.setitem(A.AUGMENTS_BY_KEY, extra.key, extra)
+    m = Modifiers.from_augments({"fertile": 1, extra.key: 1})
+    base = AUGMENTS_BY_KEY["fertile"].per_level
+    assert m.get("troops_cap_pct") == pytest.approx(base + extra.per_level)
+    # 덮어쓰기 구현이면 둘 중 하나만 남는다 — 그 값과 구별되는지 단언한다.
+    assert m.get("troops_cap_pct") != pytest.approx(base)
+    assert m.get("troops_cap_pct") != pytest.approx(extra.per_level)
+
+
+def test_every_axis_has_exactly_one_card_so_the_add_rule_is_dormant():
+    """⚠ **§5.117 과 같은 모양이다** — 문서가 앞자리에 적어 둔 규칙이 실제로는
+    **한 번도 안 돈다.** 여기서 그 사실을 못 박아, 열한 번째 카드를 같은 축에
+    얹는 순간 이 테스트가 깨지면서 *"이제 합산 규칙이 깨어난다"* 를 알린다.
+
+    깨졌다면 고칠 것은 이 테스트가 아니라 **`docs/design.md` §3 의 할인 중첩
+    계산**이다 — 그 절은 *"할인 카드가 축마다 하나뿐"* 을 전제로 쓰여 있다."""
+    from collections import Counter
+    per_axis = Counter(a.field for a in AUGMENTS)
+    assert set(per_axis) == set(FIELDS), "축과 카드가 1:1 이 아니다"
+    assert all(n == 1 for n in per_axis.values()), (
+        f"한 축에 카드가 둘 이상이다: "
+        f"{[f for f, n in per_axis.items() if n > 1]} — "
+        f"`design.md` §3 의 할인 중첩 계산을 다시 재야 한다")
 
 
 def test_a_discount_stack_can_never_make_conquest_free():
