@@ -477,3 +477,157 @@ def test_the_panel_stays_up_for_the_penalty_even_with_no_news(qapp):
     st.diplomacy.traitor_since[0] = st.tick_count
     feed.refresh()
     assert feed.isVisible()
+
+
+# --- 경고 테두리 — **덜 띄우는 것이 규칙이다** (§5.109) ------------------------
+#
+# 원본 `AlertFrame`. 우리 `URGENT` 다섯 종에 육상 공격이 없어 **나라의 큰
+# 공격이 아무 경고도 없이** 들어왔다. 넷을 걸러야 경고가 의미를 유지한다:
+# 봇 · 쿨다운 15초 · 반격 15초 · 내 병력의 1/5 미만.
+
+def _land_attack(st, attacker=1, troops=20_000.0):
+    from domynion.core.attack import Attack
+    a = Attack.launch(st.gmap, attacker, 0, troops, random.Random(0))
+    assert a is not None
+    st.attacks.append(a)
+    return a
+
+
+def _banner(st):
+    from domynion.ui.eventlog import AlertBanner
+    return AlertBanner(st, me=0)
+
+
+def test_a_big_land_attack_from_a_nation_raises_the_alert(qapp):
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    _land_attack(st)
+    b = _banner(st)
+    b.refresh()
+    assert "P1" in b.text() and b.isVisible()
+
+
+def test_a_bot_attack_never_raises_the_alert(qapp):
+    """⚠ **막지 않았으면** — 봇 400이 국경을 긁는 판에서 화면이 계속 번쩍인다."""
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    _land_attack(st, attacker=2)                # P2 는 봇
+    b = _banner(st)
+    b.refresh()
+    assert not b.isVisible()
+
+
+def test_a_small_attack_never_raises_the_alert(qapp):
+    """내 병력의 1/5 미만. 국경 긁기에 매번 놀랄 필요가 없다."""
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    _land_attack(st, troops=50_000 / C.ALERT_MIN_TROOPS_DIVISOR - 1)
+    b = _banner(st)
+    b.refresh()
+    assert not b.isVisible()
+    # 문턱 바로 위는 뜬다 — 경계가 실제로 그 값인지 잰다.
+    st.attacks.clear()
+    _land_attack(st, troops=50_000 / C.ALERT_MIN_TROOPS_DIVISOR + 1)
+    b2 = _banner(st)
+    b2.refresh()
+    assert b2.isVisible()
+
+
+def test_an_attack_from_someone_i_just_hit_is_retaliation_not_a_surprise(qapp):
+    """내가 15초 안에 친 상대의 공격은 **놀랄 일이 아니다.**"""
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    mine = _land_attack(st, attacker=0)         # 내가 P1 을 친다
+    mine.target = 1
+    b = _banner(st)
+    b.refresh()                                 # 여기서 내 공격이 기록된다
+    _land_attack(st, attacker=1)
+    b.refresh()
+    assert not b.isVisible()
+    # 창이 지나면 같은 공격도 경고가 된다.
+    st.attacks.clear()
+    st.tick_count += C.ALERT_RETALIATION_WINDOW_TICKS + 1
+    b2 = _banner(st)
+    b2.refresh()
+    _land_attack(st, attacker=1)
+    b2.refresh()
+    assert b2.isVisible()
+
+
+def test_a_second_attack_inside_the_cooldown_is_swallowed(qapp):
+    """15초 안에 두 번 번쩍이지 않는다."""
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    _land_attack(st)
+    b = _banner(st)
+    b.refresh()
+    assert b.isVisible()
+    st.attacks.clear()
+    st.tick_count += 50                         # 5초 뒤
+    _land_attack(st)
+    b.refresh()
+    assert "P1" not in b.text() or not b.isVisible()
+
+
+def test_being_betrayed_always_alerts_even_in_cooldown(qapp):
+    """배신은 필터를 안 탄다 — 드물고, 방어가 절반이 되는 쪽은 상대다."""
+    from domynion.core.events import Event, EventKind
+    st = _panel_state()
+    st.attacks.clear()
+    b = _banner(st)
+    b._last_alert = st.tick_count               # 쿨다운 한가운데
+    st.log.add(Event(kind=EventKind.ALLIANCE_BROKEN, tick=st.tick_count,
+                     who=0, other=1))
+    b.refresh()
+    assert "동맹을 깼다" in b.text() and b.isVisible()
+
+
+def test_the_same_attack_is_never_alerted_twice(qapp):
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    _land_attack(st)
+    b = _banner(st)
+    b.refresh()
+    assert b.isVisible()
+    st.tick_count += C.ALERT_COOLDOWN_TICKS + 1   # 쿨다운이 끝나도
+    b.refresh()
+    assert not b.isVisible()                      # 같은 공격은 다시 안 띄운다
+
+
+def test_hitting_someone_again_does_not_extend_the_retaliation_window(qapp):
+    """⚠ **시각을 덮어쓰지 않는다**(원본 `trackOutgoingAttacks` 의 주석이 그
+    조건을 적어 뒀다). 덮어쓰면 계속 치는 것만으로 창을 **무한히 늘려**
+    상대의 반격을 영원히 경고 없이 받게 된다 — 그러면 창이 아니라 면제다.
+
+    이 단언이 없으면 덮어쓰기 변이가 그대로 통과한다(2026-09-04, 25번째)."""
+    st = _panel_state()
+    st.attacks.clear()
+    st.players[0].troops = 50_000.0
+    start = st.tick_count
+    mine = _land_attack(st, attacker=0)
+    mine.target = 1
+    b = _banner(st)
+    b.refresh()
+    assert b._i_attacked[1] == start
+
+    # 창이 닫히기 전에 같은 상대를 또 친다.
+    st.tick_count = start + C.ALERT_RETALIATION_WINDOW_TICKS - 10
+    st.attacks.clear()
+    again = _land_attack(st, attacker=0)
+    again.target = 1
+    b.refresh()
+    assert b._i_attacked[1] == start, "두 번째 공격이 시각을 밀면 안 된다"
+
+    # 첫 공격 기준으로 창이 지났다 — 이제 상대의 공격은 경고가 된다.
+    st.tick_count = start + C.ALERT_RETALIATION_WINDOW_TICKS + 1
+    st.attacks.clear()
+    b.refresh()
+    _land_attack(st, attacker=1)
+    b.refresh()
+    assert b.isVisible() and "P1" in b.text()

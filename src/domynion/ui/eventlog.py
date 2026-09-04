@@ -274,13 +274,35 @@ class AttacksPanel(QWidget):
 
 
 class AlertBanner(QLabel):
-    """놓치면 안 되는 것 — 핵·상륙·둠스데이. 화면 가운데 위에 크게."""
+    """놓치면 안 되는 것 — 핵·상륙·둠스데이, 그리고 **큰 육상 공격과 배신**.
+
+    뒤의 둘이 원본 `AlertFrame` 이다(§5.109). 우리에게는 통째로 없었다 —
+    `URGENT` 다섯 종에 육상 공격이 없어서, 봇 400이 국경을 긁는 판에서
+    **나라의 큰 공격이 아무 경고도 없이** 들어왔다.
+
+    ⚠ **띄우지 않는 조건 넷이 규칙의 본체다.** 원본이 그 넷을 안 두면 화면이
+    계속 번쩍여 아무도 안 보게 된다 — 경고를 *더* 띄우는 것이 아니라
+    **덜 띄우는 것**이 이 파일의 규칙이다.
+    """
 
     def __init__(self, state: GameState, me: int, parent: QWidget | None = None):
         super().__init__("", parent)
         self.state = state
         self.me = me
         self._until = -1
+        # 원본 `seenAttackIds` · `lastAlertTick` · `outgoingAttackTicks`.
+        #
+        # ⚠ **`id()` 를 키로 쓰면 안 된다.** 처음에 `set[int]` 에 `id(a)` 를
+        # 담았는데, 파이썬은 해제된 객체의 주소를 **재사용한다** — 앞 공격이
+        # 사라진 자리에 새 공격이 앉으면 "이미 본 것"이 돼 경고가 통째로
+        # 사라진다. 단독 실행에서는 재현이 안 되고 **전체 스위트에서만**
+        # 나왔다(쿨다운 변이가 그때만 살아남아 잡혔다).
+        # 객체를 그대로 들고 있으면 참조가 살아 있어 주소가 재사용되지 않는다.
+        # `Attack` 은 `@dataclass` 라 unhashable 이므로 리스트다 — 나에게
+        # 들어오는 공격 수라 짧다.
+        self._seen: list = []
+        self._last_alert = -1
+        self._i_attacked: dict[int, int] = {}
         self.setStyleSheet(
             "color:#fff; background: rgba(150, 40, 34, 235); padding: 9px 18px;"
             "border-radius: 8px; font-size: 17px; font-weight: bold;")
@@ -289,12 +311,77 @@ class AlertBanner(QLabel):
     def refresh(self) -> None:
         st = self.state
         fresh = [e for e in st.log.urgent_for(self.me, st.tick_count - 3)]
-        if fresh:
-            e = fresh[-1]
-            self.setText("⚠ " + describe(st, e, self.me))
+        text = "⚠ " + describe(st, fresh[-1], self.me) if fresh else None
+        if text is None:
+            text = self._land_alert()
+        if text is not None:
+            self.setText(text)
             self.adjustSize()
             self._until = st.tick_count + 40        # 4초
+            self._last_alert = st.tick_count
             self.show()
             self.raise_()
         elif st.tick_count > self._until:
             self.hide()
+
+    # --- 원본 `AlertFrame` -------------------------------------------------
+
+    def _land_alert(self) -> str | None:
+        """육상 공격·배신 경고. 띄울 것이 없으면 None."""
+        st, me = self.state, self.me
+        mine = st.players.get(me)
+        if mine is None or not mine.alive:
+            self._seen.clear()
+            self._i_attacked.clear()
+            self._last_alert = -1
+            return None
+        self._track_my_attacks()
+        # **배신은 필터를 안 탄다**(`onBrokeAllianceUpdate` 는 쿨다운도 안 본다).
+        # 동맹이 깨진 것은 드물고, 방어가 절반이 되는 쪽은 상대다.
+        for e in st.log.recent(who=me, count=8):
+            if (e.kind is EventKind.ALLIANCE_BROKEN
+                    and e.tick >= st.tick_count - 3 and e.other is not None):
+                foe = st.players.get(e.other)
+                return f"⚠ {foe.name if foe else '?'} 가 동맹을 깼다"
+
+        cooling = (self._last_alert >= 0
+                   and st.tick_count - self._last_alert < C.ALERT_COOLDOWN_TICKS)
+        floor = mine.troops / C.ALERT_MIN_TROOPS_DIVISOR
+        out: str | None = None
+        for a in st.attacks:
+            if (a.target != me or a.retreating
+                    or any(a is seen for seen in self._seen)):
+                continue
+            self._seen.append(a)        # **본 것은 다시 안 띄운다**(띄웠든 아니든)
+            foe = st.players.get(a.attacker)
+            if foe is None or foe.is_bot:
+                continue                # 봇은 늘 긁는다
+            hit = self._i_attacked.get(a.attacker)
+            if hit is not None and (st.tick_count - hit
+                                    < C.ALERT_RETALIATION_WINDOW_TICKS):
+                continue                # **내가 먼저 쳤다** — 반격은 놀랄 일이 아니다
+            if a.troops < floor:
+                continue                # 내 병력의 1/5 미만
+            if not cooling and out is None:
+                out = f"⚠ {foe.name} 의 공격 — {a.troops:,.0f}"
+        # 목록에서 빠진 공격은 잊는다(원본도 `activeAttackIds` 로 정리한다).
+        self._seen = [s for s in self._seen
+                      if any(s is a for a in st.attacks)]
+        return out
+
+    def _track_my_attacks(self) -> None:
+        """내가 누구를 언제 쳤는가 — 반격 판정의 재료(`trackOutgoingAttacks`).
+
+        ⚠ **시각을 덮어쓰지 않는다.** 창이 살아 있는 동안 같은 상대를 또 치면
+        원본은 시각을 **그대로 둔다** — 계속 치는 것으로 창을 무한히 늘릴 수
+        없게 하려는 것이다."""
+        st, now = self.state, self.state.tick_count
+        for a in st.attacks:
+            if a.attacker != self.me or a.target is None or a.retreating:
+                continue
+            was = self._i_attacked.get(a.target)
+            if was is None or now - was >= C.ALERT_RETALIATION_WINDOW_TICKS:
+                self._i_attacked[a.target] = now
+        for pid, t in list(self._i_attacked.items()):
+            if now - t > C.ALERT_RETALIATION_WINDOW_TICKS:
+                del self._i_attacked[pid]

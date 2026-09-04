@@ -584,5 +584,11 @@ DONATE_COOLDOWN_TICKS = 10 * 10
 # §5.55 에서 "MIRV 가 안 나간다"고 본 것이 사실은 그 자리였다.
 MATCH_SECONDS = 10_200.0        # 170분 — 원본 `HARD_TIME_LIMIT_SECONDS`
 DOMINATION_TILE_RATIO = 0.80    # 원본 `percentageTilesOwnedToWin` (FFA)
+# 경고 테두리(`AlertFrame`). **큰 판에서 경고가 의미를 잃지 않게 하는 장치다** —
+# 봇 400이 국경을 긁는 판에서 들어오는 공격마다 화면이 번쩍이면 아무도 안 본다.
+ALERT_COOLDOWN_TICKS = 150          # 15초. 최근에 경고했으면 또 안 띄운다
+ALERT_RETALIATION_WINDOW_TICKS = 150  # 15초. 내가 먼저 친 상대의 공격은 반격이다
+ALERT_MIN_TROOPS_DIVISOR = 5        # 내 병력의 1/5 미만이면 안 띄운다
+
 MIN_PLAYERS = 2
 MAX_PLAYERS = 8
