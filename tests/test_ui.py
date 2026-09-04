@@ -607,3 +607,30 @@ def test_a_traitor_and_an_ally_show_their_remaining_time():
     text = win.inspect.text()
     assert "🗡" in text and "🤝" in text
     win.close()
+
+
+def test_the_overlay_counts_building_levels_not_buildings():
+    """⚠ **개수가 아니라 레벨 합이다**(`totalUnitLevels`). 도시 하나를 3레벨로
+    올린 것과 1레벨 셋은 병력 상한도 다음 업그레이드 값도 다르다 — 화면에서
+    같아 보이면 안 된다."""
+    from domynion.core.units import Unit, UnitType
+    _app, st, win = _inspect_window()
+    p = st.players[1]
+    p.units.units.append(Unit(utype=UnitType.CITY, owner=1,
+                              tile=st.gmap.ref(35, 5), level=3))
+    win._refresh_inspect()
+    assert "◉3" in win.inspect.text()            # 레벨 3 짜리 하나 = 3
+    win.close()
+
+
+def test_a_building_type_with_none_of_it_is_left_out():
+    """0 인 종류까지 띄우면 줄만 길어지고 **있는 것이 안 읽힌다.**"""
+    from domynion.core.units import Unit, UnitType
+    _app, st, win = _inspect_window()
+    st.players[1].units.units.append(
+        Unit(utype=UnitType.MISSILE_SILO, owner=1, tile=st.gmap.ref(35, 5)))
+    win._refresh_inspect()
+    text = win.inspect.text()
+    assert "▲1" in text                          # 사일로는 있다
+    assert "◉" not in text and "⚓" not in text   # 도시·항구는 없다
+    win.close()

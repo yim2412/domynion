@@ -20,12 +20,19 @@ from ..ai import nation
 from ..core import constants as C
 from ..core.engine import GameState
 from ..core.relations import RELATION_COLOUR, RELATION_LABEL
+from ..core.units import UnitType
 from .actions import EMOJI_OPEN, root_items
 from .emojitable import EmojiTable
 from .endmodal import EndModal
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
 from .map_widget import MapWidget
+from . import palette as P
+
+# 정보 오버레이에 세는 건물. 원본 `PlayerInfoOverlay` 의 여섯(도시·공장·항구·
+# 사일로·SAM·전함)에서 전함만 따로 센다 — 전함은 건물이 아니라 레벨이 없다.
+OVERLAY_UNITS = (UnitType.CITY, UnitType.FACTORY, UnitType.PORT,
+                 UnitType.MISSILE_SILO, UnitType.SAM_LAUNCHER)
 
 
 class MainWindow(QMainWindow):
@@ -241,15 +248,27 @@ class MainWindow(QMainWindow):
         if al is not None:
             left = max(0, al.expires_at - st.tick_count) * C.TICK_DT
             extra += f" · <span style='color:#8fe0a0'>🤝 {left:.0f}초</span>"
+        # 원본은 여섯 종류를 아이콘 격자로 띄운다(`displayUnitCount`) —
+        # **개수가 아니라 레벨 합**(`totalUnitLevels`)이라 우리 `owned()` 와 같다.
+        # 사일로가 몇인지가 *핵이 날아올 수 있나*, 항구가 몇인지가 *수입이 얼마나
+        # 되나* 다. 0 인 종류는 빼서 줄을 늘리지 않는다.
+        units = " ".join(
+            f"{P.UNIT_GLYPH[ut.value]}{p.units.owned(ut)}"
+            for ut in OVERLAY_UNITS if p.units.owned(ut) > 0)
+        ships = len([u for u in p.units.of(UnitType.WARSHIP) if u.active])
+        if ships:
+            units += f" ⛵{ships}"
+        # ⚠ 줄마다 `+` 로 잇는다. 암시적 문자열 연결(`"a" "b"`)과 `+` 를 섞으면
+        # 조건부 조각 다음 줄이 조용히 붙어 버린다 — 실제로 여기서 한 번 깨졌다.
         self.inspect.setText(
             f"<b>{p.name}</b> <span style='opacity:.6'>{kind}</span>  "
-            f"영토 {st.share(pid) * 100:.1f}%{rel_html}{extra}<br>"
-            f"<span style='opacity:.75'>병력 {p.troops:,.0f} / "
-            f"{cap:,.0f}"
+            + f"영토 {st.share(pid) * 100:.1f}%{rel_html}{extra}<br>"
+            + f"<span style='opacity:.75'>병력 {p.troops:,.0f} / {cap:,.0f}"
             + (f" · 나가 있음 {out:,.0f}" if out > 0 else "")
             + f" · 골드 {p.gold:,.0f}</span><br>"
-            f"<span style='opacity:.75'>내가 보낼 병력 {send:,.0f} · "
-            f"상대/내 = {ratio:.2f} ({hint})</span>")
+            + (f"<span style='opacity:.75'>{units}</span><br>" if units else "")
+            + f"<span style='opacity:.75'>내가 보낼 병력 {send:,.0f} · "
+            + f"상대/내 = {ratio:.2f} ({hint})</span>")
         self.inspect.adjustSize()
         self.inspect.move(12, self.scoreboard.y() + self.scoreboard.height() + 8)
         self.inspect.show()
