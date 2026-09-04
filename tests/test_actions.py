@@ -584,8 +584,21 @@ def test_the_donation_presets_match_the_original():
     st = state()
     st.diplomacy.form(0, 1, st.tick_count)
     st.players[0].gold = 1_000
-    assert labels(_donate_menu(st)) == [f"{p}%" for p in DONATE_PRESETS]
+    from domynion.core import constants as _C
+    # 첫 칸은 **원본 라디얼**(액수를 안 넘겨 `Config` 기본값 1/3), 나머지가
+    # 모달의 프리셋이다. 원본의 두 경로가 우리 라디얼 하나에 담긴다.
+    assert labels(_donate_menu(st)) == (
+        [f"기본 1/{_C.DONATION_DIVISOR}"] + [f"{p}%" for p in DONATE_PRESETS])
     assert DONATE_PRESETS == (10, 25, 50, 75, 100)
+
+
+def test_the_radial_default_path_is_still_one_third():
+    """원본 라디얼은 액수를 **안 넘긴다** — 그 경로가 우리 메뉴 첫 칸이다."""
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    st.players[0].gold = 3_000
+    by_label(_donate_menu(st), "기본 1/3").action()
+    assert st.players[1].gold == 1_000
 
 
 def test_a_chosen_percentage_actually_goes():
@@ -607,6 +620,8 @@ def test_troop_presets_say_how_much_actually_fits():
     mine.troops = 100_000.0
     them.troops = them.max_troops(st.tiles(1))          # 꽉 찼다
     for item in _donate_menu(st, gold=False):
+        if item.label.startswith("기본"):
+            continue                    # 기본 칸은 엔진이 거른다(§5.71)
         assert not item.enabled
         assert "상한" in item.hint
     them.troops -= 10.0                                 # 열 자리만 난다
@@ -623,3 +638,4 @@ def test_the_default_share_is_still_a_third_for_when_teams_arrive():
     st.players[0].gold = 3_000
     _donate_gold(st, 0, 1, noop)
     assert st.players[1].gold == 1_000
+    assert C.DONATION_DIVISOR == 3

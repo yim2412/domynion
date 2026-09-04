@@ -704,7 +704,21 @@ def _donate_amounts(st: GameState, me: int, target: int, notify, *,
     total = mine.gold if gold else mine.troops
     room = (None if gold or them is None
             else max(0.0, them.max_troops(st.tiles(target)) - them.troops))
-    out: list[Item] = []
+    # ⚠ **원본에는 경로가 둘이다.** 라디얼은 액수를 안 넘겨 `Config` 의 기본값
+    # 1/3 이 나가고(`handleDonateGold(recipient)` → `null`), 패널의 모달은 고른
+    # 양을 넘긴다. §5.90 은 라디얼만 보고 *"기본값이 곧 사람이 보내는 액수"* 라고
+    # 적었는데 **모달을 못 봤다.** 우리 라디얼이 유일한 경로이므로 **둘을 한
+    # 메뉴에 담는다** — 첫 칸이 원본 라디얼, 나머지가 모달의 프리셋이다.
+    out: list[Item] = [Item(
+        f"기본 1/{C.DONATION_DIVISOR}",
+        action=(lambda: (_donate_gold(st, me, target, notify) if gold
+                         else _donate_troops(st, me, target, notify))),
+        enabled=total > 0,
+        hint=(f"원본 라디얼과 같다 — "
+              + (f"골드 {_gold(int(total // C.DONATION_DIVISOR))}"
+                 if gold else f"병력 {total / C.DONATION_DIVISOR:,.0f}")
+              if total > 0 else "보낼 것이 없다"),
+        colour=COL_PLAIN)]
     for pct in DONATE_PRESETS:
         amount = total * pct / 100
         goes = amount if room is None else min(amount, room)
@@ -732,10 +746,9 @@ def _donate_amounts(st: GameState, me: int, target: int, notify, *,
 def _donate_gold(st: GameState, me: int, target: int, notify,
                  amount: float | None = None) -> None:
     """⚠ `amount=None` 은 원본 `DonateGoldExecution` 의
-    `this.gold ??= this.sender.gold() / 3n` — **양을 안 줬을 때의 기본값**이다.
-    라디얼은 이제 항상 양을 주므로 지금 호출부가 없다. 남겨 두는 이유는 원본
-    AI 의 기부(`donateTroops`)가 **팀전 전용**이고(`ai/nation.py :: _s_donate`)
-    팀 모드가 §7.3 백로그에 있기 때문이다. 그때 이 경로가 살아난다."""
+    `this.gold ??= this.sender.gold() / 3n` — **양을 안 줬을 때의 기본값**이고,
+    원본 **라디얼**이 그 경로다(`handleDonateGold(recipient)` → `null`).
+    우리 메뉴의 첫 칸(*기본 1/3*)이 여기로 온다."""
     if amount is None:
         amount = st.players[me].gold // C.DONATION_DIVISOR
     amount = int(amount)
