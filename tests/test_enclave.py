@@ -273,3 +273,39 @@ def test_every_ownership_change_stamps_the_clock():
     st._tile_changed.clear()
     st._wipe(1)
     assert st._tile_changed.get(1) == st.tick_count, "소멸이 안 찍혔다"
+
+
+# --- 작은 나라는 주기를 기다리지 않는다 (§5.111) -------------------------------
+
+def test_a_small_nation_is_checked_every_tick_not_every_twenty():
+    """원본 조건은 **`또는`** 이다 — `ticks - lastCalc > 20 || numTilesOwned < 100`.
+
+    ⚠ **막지 않았으면 무엇이 일어났을 것인가** — 갇힌 조각이 최대 20 tick(2초)
+    더 살아 있는다. 작은 나라에게 갇힌 조각은 곧 죽음이라, 그 2초가 판정을
+    미룬다. 주기 갈래만 두면 이 테스트가 실패한다.
+    """
+    st = state()
+    fill(st, 0, 5, 5, 35, 35)
+    fill(st, 1, 18, 18, 22, 22)                  # 16칸 — 100 미만이다
+    assert st._counts[1] < C.ENCLAVE_ALWAYS_BELOW_TILES
+    before = st.tiles(1)
+    # **주기가 오기 전에** 한 tick 만 돌린다. 주기는 (tick + pid) % 20 == 0 이라
+    # 아래에서 그 tick 을 피해 고른다.
+    while (st.tick_count + 1 + 1) % C.ENCLAVE_CHECK_TICKS == 0:
+        st.tick_count += 1
+    st.tick()
+    assert st.tiles(1) == before - 16, "작은 나라인데 주기를 기다렸다"
+
+
+def test_a_big_nation_still_waits_for_its_turn():
+    """반대쪽 — 큰 나라는 주기를 기다린다. 안 그러면 관문이 통째로 무의미해지고
+    판 시간의 절반이 여기로 간다(§ 위 테스트의 실측)."""
+    st = state(w=60, h=60)
+    fill(st, 0, 2, 2, 58, 58)
+    fill(st, 1, 20, 20, 32, 32)                  # 144칸 — 100 이상이다
+    assert st._counts[1] >= C.ENCLAVE_ALWAYS_BELOW_TILES
+    before = st.tiles(1)
+    while (st.tick_count + 1 + 1) % C.ENCLAVE_CHECK_TICKS == 0:
+        st.tick_count += 1
+    st.tick()
+    assert st.tiles(1) == before, "큰 나라가 주기를 안 기다렸다"

@@ -2485,7 +2485,12 @@ class GameState:
         어긋나게 해 한 tick 에 몰리지 않게 한다(원본도 pid 해시로 흩는다)."""
         gm = self.gmap
         for p in list(self.alive):
-            if (self.tick_count + p.pid) % C.ENCLAVE_CHECK_TICKS != 0:
+            # ⚠ 원본 조건은 **`또는`** 이다 — 주기가 됐거나, **땅이 100칸
+            # 미만이거나.** 작은 나라는 국경 타일이 적어 계산이 싸고, 갇힌
+            # 조각이 곧 죽음이라 늦게 반영하면 최대 2초를 더 산다.
+            if ((self.tick_count + p.pid) % C.ENCLAVE_CHECK_TICKS != 0
+                    and self._counts.get(p.pid, 0)
+                    >= C.ENCLAVE_ALWAYS_BELOW_TILES):
                 continue
             # ⚠ **영토가 안 바뀐 나라는 건너뛴다**(원본 `lastTileChange >=
             # lastCalc`). 이걸 빼면 판 시간의 절반이 여기로 간다(실측:

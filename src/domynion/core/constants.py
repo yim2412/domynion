@@ -534,6 +534,11 @@ MIRV_TARGET_ATTEMPTS = 1000 + 500
 # 국경 타일을 전부 덩어리로 묶는 계산이라 비싸다. 원본도 20 tick 에 한 번만 돌고,
 # 나라마다 시작 tick 을 해시로 흩어 한 tick 에 몰리지 않게 한다.
 ENCLAVE_CHECK_TICKS = 20
+# ⚠ **작은 나라는 주기를 기다리지 않는다** — 원본 조건이 `또는` 이다
+# (`ticks - lastCalc > 20 || numTilesOwned < 100`). 땅이 적으면 국경 타일도
+# 적어 계산이 싸고, 작은 나라에게 갇힌 조각은 곧 죽음이라 늦게 반영하면
+# **최대 2초 더 살아 있는다.**
+ENCLAVE_ALWAYS_BELOW_TILES = 100
 
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
 # `tradeShipSpawnRate` 의 시그모이드 — 배가 이 수를 넘어가면 스폰율이 0 으로
