@@ -595,5 +595,22 @@ ALERT_COOLDOWN_TICKS = 150          # 15초. 최근에 경고했으면 또 안 �
 ALERT_RETALIATION_WINDOW_TICKS = 150  # 15초. 내가 먼저 친 상대의 공격은 반격이다
 ALERT_MIN_TROOPS_DIVISOR = 5        # 내 병력의 1/5 미만이면 안 띄운다
 
+# --- 증강 드래프트 (`docs/design.md` §3) ------------------------------------
+#
+# ⚠ **원본에 없다.** openfront 복제 위에 우리가 얹는 계층이고, 규칙은
+# `core/augments.py` 에 있다. 이 상수들이 `constants.py` 에 **없어서
+# `augments.py` 는 import 조차 안 됐다**(2026-09-04에 발견) — 아무도 그 모듈을
+# 안 불렀기 때문에 문법 검사도 테스트도 통과한 채 남아 있었다.
+AUGMENT_CHOICES = 3             # 정지마다 보여 줄 카드 수
+AUGMENT_MAX_LEVEL = 3
+AUGMENT_LEVEL_MULT = (1.0, 1.7, 2.3)    # Lv1/2/3 배율
+# 첫 정지와 그 뒤 주기. ⚠ **잠정값이다** — 판이 33~37분(§5.111)이라 5분마다면
+# 일곱 번쯤 되는데, 그게 맞는지는 재 봐야 안다(`docs/design.md` 개정 표).
+AUGMENT_FIRST_TICK = 3 * 60 * TICK_HZ       # 3분
+AUGMENT_PERIOD_TICKS = 5 * 60 * TICK_HZ     # 이후 5분마다
+# 고르는 데 주는 시간. 넘기면 무작위로 골라 주고 판을 재개한다 —
+# 스폰 페이즈(`SPAWN_PHASE_TURNS`)와 **같은 구조**다.
+AUGMENT_PICK_LIMIT_TICKS = 10 * TICK_HZ     # 10초
+
 MIN_PLAYERS = 2
 MAX_PLAYERS = 8

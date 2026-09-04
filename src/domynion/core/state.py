@@ -52,7 +52,12 @@ class PlayerState:
     # 시작 골드를 켠 판에서 가만히 있는 사람을 털어 가는 것을 막는 장치다.
     attacks_sent: int = 0
 
-    augments: dict[str, int] = field(default_factory=dict)   # P7 까지 미사용
+    # 고른 증강. key -> 레벨(1~3). **사람만 채운다**(`docs/design.md` 개정).
+    augments: dict[str, int] = field(default_factory=dict)
+    # 합산된 계수 캐시. `None` 이면 다음에 쓸 때 만든다 — 증강을 고를 때마다
+    # 버린다. ⚠ **매 tick 다시 만들면 안 된다**: 병력 성장·정복 비용이 tick 마다
+    # 이걸 읽으므로, 캐시가 없으면 카드 열 장을 매 tick 다시 더하게 된다.
+    mods: object | None = None
 
     @property
     def city_levels(self) -> int:
@@ -73,6 +78,20 @@ class PlayerState:
                                  else C.ATTACK_RATIO_HUMAN)
 
     # --- 병력 -------------------------------------------------------------
+
+    def mult(self, field: str) -> float:
+        """증강 배율. 증강이 없으면 **정확히 1.0** 이라 원본 공식이 그대로 남는다.
+
+        ⚠ **원본 공식에 손대지 않고 결과에 곱한다.** 계수를 공식 안쪽에 끼워
+        넣으면 openfront 규칙과 우리 계층이 섞여, 나중에 원본과 대조할 때 어느
+        쪽이 틀렸는지 못 가른다(§ 문서의 이식 원칙).
+        """
+        if not self.augments:
+            return 1.0          # 사람이 아니거나 아직 안 골랐다 — 흔한 경우다
+        if self.mods is None:
+            from .augments import Modifiers
+            self.mods = Modifiers.from_augments(self.augments)
+        return self.mods.mult(field)
 
     def max_troops(self, tile_count: int) -> float:
         """`2 × (타일^0.6 × 1000 + 50000) + Σ도시레벨 × 250000`, 봇은 ÷3.

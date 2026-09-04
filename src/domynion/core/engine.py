@@ -21,6 +21,7 @@ import numpy as np
 from . import constants as C
 from .constants import Terrain
 from .attack import Attack
+from .augments import Modifiers, offer as augment_offer
 from .buildings import (DefensePostIndex, all_structure_tiles, euclid_sq,
                         find_spot, structure_tiles)
 from .diplomacy import Diplomacy
@@ -108,6 +109,24 @@ class GameState:
     # AI 도, 공격도, 성장도 안 돈다. None 이면 이미 끝난 것이다.
     spawn_phase: bool = False
 
+    # --- 증강 드래프트 (`docs/design.md` §3) — **원본에 없는 우리 계층** ------
+    #
+    # 구조는 스폰 페이즈와 같다: 열려 있는 동안 tick 은 흐르지만 **판은 안 돈다**.
+    # 상한(`AUGMENT_PICK_LIMIT_TICKS`)을 넘기면 무작위로 골라 주고 재개한다 —
+    # 원본도 안 고른 사람을 기다려 주지 않는다(스폰 페이즈가 그렇다).
+    #
+    # ⚠ **사람만 받는다.** 나라 72·봇 400 에 계수를 얹으면 매 tick 472명분
+    # 곱셈이 붙고, 봇의 성격(건물을 지우고 동맹을 다 받는다)과 빌드가 안 어울린다.
+    # **부수효과로 §5.111 기준선이 계속 유효하다** — 그 측정은 사람 없이 돈다.
+    augment_offer: list = field(default_factory=list)   # 열려 있으면 비지 않는다
+    augment_opened_at: int = -1
+    augment_next_tick: int = -1        # 다음 정지가 열릴 tick. -1 이면 안 연다
+    augments_taken: int = 0            # 이 판에서 몇 번 골랐나(측정용)
+    # 사람이 잡은 pid. **None 이면 헤드리스**다 — 드래프트도 스폰 페이즈도 안 연다.
+    # `new()` 가 채운다. 전에는 생성 인자로만 받고 상태에 안 남겨서, 판이 만들어진
+    # 뒤에는 "사람이 누구인가"를 물을 방법이 없었다(UI 가 따로 들고 있었다).
+    human: int | None = None
+
     # 금수 벌점을 이미 매겼는지(`embargoMalusApplied`). 매 tick 깎으면 안 된다.
     _embargo_malus: dict[int, set[int]] = field(default_factory=dict)
 
@@ -189,6 +208,9 @@ class GameState:
         st.fallout = Fallout(gmap.size)
         # 사람이 없으면(헤드리스) 고를 사람도 없다 — 그냥 시작한다.
         st.spawn_phase = human in players
+        if human in players:
+            st.human = human
+            st.augment_next_tick = C.AUGMENT_FIRST_TICK
         return st
 
     # --- 조회 -------------------------------------------------------------
@@ -1776,6 +1798,56 @@ class GameState:
         self.spawn_phase = False
         self.tick_count = 0
 
+    # --- 증강 드래프트 ------------------------------------------------------
+
+    def _augment_tick(self) -> bool:
+        """드래프트를 열고·닫는다. **판을 멈춰야 하면 True.**
+
+        열려 있으면 `augment_offer` 가 비지 않는다. 상한을 넘기면 무작위로
+        골라 주고 닫는다 — 안 그러면 헤드리스 측정이 첫 정지에서 영영 선다.
+        """
+        # ⚠ 이 관문은 **변이로 안 잡힌다. 정상이다** — 지워도 아래
+        # `players.get(None)` 이 None 을 돌려줘 같은 자리에서 막힌다. 뜻을
+        # 드러내려고 남긴다(헤드리스는 드래프트를 안 연다).
+        if self.human is None:
+            return False
+        if self.augment_offer:
+            if (self.tick_count - self.augment_opened_at
+                    >= C.AUGMENT_PICK_LIMIT_TICKS):
+                self.choose_augment(self.rng.choice(self.augment_offer).key)
+                return False            # 이 tick 부터 바로 판이 돈다
+            return True                 # 아직 고르는 중 — 판을 멈춘다
+        if self.augment_next_tick < 0 or self.tick_count < self.augment_next_tick:
+            return False
+        p = self.players.get(self.human)
+        if p is None or not p.alive:
+            self.augment_next_tick = -1     # 죽었으면 더는 안 연다
+            return False
+        offer = augment_offer(self.rng, p.augments)
+        if not offer:
+            self.augment_next_tick = -1     # 열 장을 다 Lv3 로 올렸다
+            return False
+        self.augment_offer = offer
+        self.augment_opened_at = self.tick_count
+        return True
+
+    def choose_augment(self, key: str) -> bool:
+        """카드 하나를 고른다. 같은 카드를 다시 고르면 레벨이 오른다."""
+        if not self.augment_offer:
+            return False
+        if not any(a.key == key for a in self.augment_offer):
+            return False                # 안 뜬 카드는 못 고른다
+        p = self.players.get(self.human) if self.human is not None else None
+        if p is None:
+            return False
+        p.augments[key] = p.augments.get(key, 0) + 1
+        p.mods = None                   # 캐시를 버린다 — 다음에 다시 만든다
+        self.augment_offer = []
+        self.augment_opened_at = -1
+        self.augments_taken += 1
+        self.augment_next_tick = self.tick_count + C.AUGMENT_PERIOD_TICKS
+        return True
+
     def choose_spawn(self, pid: int, centre: TileRef) -> bool:
         """시작 위치를 고른다. **페이즈 동안은 몇 번이든 옮길 수 있다.**
 
@@ -2276,6 +2348,11 @@ class GameState:
         if self.over:
             return
         self.tick_count += 1
+        # ⚠ **스폰 페이즈보다 먼저 보지 않는다.** 스폰 중에는 아직 아무도
+        # 땅이 없어서 계수를 얹을 것이 없고, 두 정지가 겹치면 어느 쪽이
+        # 시간을 먹는지 알 수 없게 된다.
+        if not self.spawn_phase and self._augment_tick():
+            return
         if self.spawn_phase:
             # 시간만 흐르고 아무 일도 일어나지 않는다. 상한(`numSpawnPhaseTurns`)을
             # 넘기면 안 고른 사람도 그냥 시작한다 — 원본도 기다려 주지 않는다.
