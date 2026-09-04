@@ -220,3 +220,175 @@ def test_the_modifier_cache_is_dropped_when_a_card_is_taken():
     st.augment_opened_at = st.tick_count
     st.choose_augment("fertile")                # Lv2
     assert p.mult("troops_cap_pct") > first, "캐시를 안 버려 Lv2 가 안 먹었다"
+
+
+# --- 계수가 실제 공식에 닿는가 (§ 2단계) ---------------------------------------
+#
+# ⚠ **축마다 "증강 없이 원본 그대로"와 "있으면 움직인다"를 둘 다 단언한다.**
+# 앞의 것이 없으면 헤드리스 기준선(§5.111)이 조용히 달라져도 안 잡힌다.
+
+def _human(**aug):
+    p = PlayerState(pid=0, name="P0", kind="human")
+    p.augments.update(aug)
+    return p
+
+
+def test_every_declared_field_is_read_by_some_formula():
+    """⚠ **선언만 하고 안 읽는 축이 있으면 그 카드는 조용히 아무 일도 안 한다.**
+    옛 `naval_range`·`cost_woodland_pct` 가 정확히 그 상태였다(openfront 이식
+    뒤 대응물이 사라졌는데 카드는 남아 있었다).
+
+    이 테스트는 **소스에서 축 이름을 찾는다** — 값으로 재는 것은 축마다 따로
+    아래에 있고, 여기서는 *배선이 어디에도 없는 축*을 잡는다."""
+    import pathlib
+    from domynion.core.augments import FIELDS
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "domynion"
+    body = "\n".join(f.read_text(encoding="utf-8")
+                     for f in src.rglob("*.py") if f.name != "augments.py")
+    for field in FIELDS:
+        assert f'"{field}"' in body, f"{field} 을 읽는 공식이 없다"
+
+
+def test_troop_cap_and_growth_move_with_their_cards():
+    plain, fertile = _human(), _human(fertile=1)
+    assert fertile.max_troops(100) > plain.max_troops(100)
+    plain.troops = fertile.troops = 1_000.0
+    grow, conscript = _human(), _human(conscript=1)
+    grow.troops = conscript.troops = 1_000.0
+    assert conscript.troop_increase(100) > grow.troop_increase(100)
+
+
+def test_growth_still_never_exceeds_the_cap():
+    """⚠ **자르기가 마지막이어야 한다.** 증강을 자른 뒤에 곱하면 상한을 넘는다."""
+    p = _human(conscript=3, fertile=0)
+    cap = p.max_troops(50)
+    p.troops = cap - 1.0
+    assert p.troops + p.troop_increase(50) <= cap + 1e-6
+
+
+def test_attack_costs_move_with_their_cards():
+    from domynion.core.attack import attack_logic
+    gm = GameMap.from_rows(["." * 20] * 10)
+    tile = gm.ref(5, 5)
+    foe = PlayerState(pid=1, name="P1", kind="nation")
+    foe.troops = 10_000.0
+
+    def loss(att, defender):
+        return attack_logic(gm, tile, 5_000.0, att, defender,
+                            defender_tiles=100, attacker_tiles=100).attacker_loss
+
+    plain = _human()
+    assert loss(_human(elite=1), foe) < loss(plain, foe)          # 적 영토 −14%
+    assert loss(_human(settlers=1), None) < loss(plain, None)     # 중립 −18%
+    # `견고한 방벽` 은 **수비자의** 카드다 — 공격자 손실을 올린다.
+    tough = PlayerState(pid=1, name="P1", kind="human")
+    tough.troops = 10_000.0
+    tough.augments["ramparts"] = 1
+    assert loss(plain, tough) > loss(plain, foe)
+
+
+def test_expand_speed_and_defender_loss_move():
+    from domynion.core.attack import attack_logic
+    gm = GameMap.from_rows(["." * 20] * 10)
+    tile = gm.ref(5, 5)
+    foe = PlayerState(pid=1, name="P1", kind="nation")
+    foe.troops = 10_000.0
+
+    def res(att):
+        return attack_logic(gm, tile, 5_000.0, att, foe,
+                            defender_tiles=100, attacker_tiles=100)
+
+    plain = res(_human())
+    assert res(_human(forced_march=1)).tiles_used > plain.tiles_used
+    assert res(_human(scorched=1)).defender_loss > plain.defender_loss
+
+
+def test_the_terrain_card_only_helps_on_highland_and_mountain():
+    """⚠ **평지에서도 깎이면 그건 그냥 '정복 비용 −32%' 다** — 카드가 둘로
+    갈리는 이유가 사라진다."""
+    from domynion.core.constants import Terrain
+    from domynion.core.attack import attack_logic
+    rows = ["." * 20] * 10
+    gm = GameMap.from_rows(rows)
+    foe = PlayerState(pid=1, name="P1", kind="nation")
+    foe.troops = 10_000.0
+    plains = gm.ref(5, 5)
+    assert gm.terrain_at(plains) is Terrain.PLAINS
+
+    def loss(att, tile):
+        return attack_logic(gm, tile, 5_000.0, att, foe,
+                            defender_tiles=100, attacker_tiles=100).attacker_loss
+
+    assert loss(_human(mountaineers=1), plains) == pytest.approx(
+        loss(_human(), plains)), "평지인데 산악병이 먹혔다"
+
+
+def test_no_augments_means_the_original_formula_is_untouched():
+    """§5.111 기준선이 계속 유효한 근거 — 사람 없는 판은 한 글자도 안 달라진다."""
+    from domynion.core.attack import attack_logic
+    gm = GameMap.from_rows(["." * 20] * 10)
+    tile = gm.ref(5, 5)
+    nat = PlayerState(pid=0, name="P0", kind="nation")
+    foe = PlayerState(pid=1, name="P1", kind="nation")
+    foe.troops = 10_000.0
+    for field in ("cost_vs_player_pct", "cost_vs_neutral_pct",
+                  "cost_highland_pct", "expand_speed_pct",
+                  "defense_pct", "defender_loss_pct",
+                  "trade_gold_pct", "boat_loss_pct",
+                  "troops_cap_pct", "troops_growth_pct"):
+        assert nat.mult(field) == 1.0, f"{field} 배율이 1.0 이 아니다"
+    r = attack_logic(gm, tile, 5_000.0, nat, foe,
+                     defender_tiles=100, attacker_tiles=100)
+    assert r.attacker_loss > 0 and r.tiles_used > 0
+
+
+def test_the_trade_card_pays_each_side_separately():
+    """⚠ **받는 쪽마다 따로 곱한다.** 무역선 하나가 양쪽 항구 주인에게 전액을
+    주므로(§5.35), 한 번만 곱하면 증강이 없는 쪽에도 보너스가 가거나 있는 쪽이
+    못 받는다.
+
+    ⚠ **엔진을 실제로 돌려야 한다.** 처음엔 `trade_gold()` 를 직접 부르고
+    `mult` 를 손으로 곱해 쟀는데, 그건 **테스트가 배선을 흉내 낸 것**이라
+    "한 번만 곱한다" 변이가 그대로 통과했다."""
+    from domynion.core.naval import TradeShip, trade_gold
+    st = state()
+    src_p, dst_p = st.players[0], st.players[1]
+    src_p.augments["traders"] = 1               # 사람 쪽만 증강이 있다
+    # ⚠ **목적지 항구가 실제로 있어야 골드가 간다**(이식 누락 여든셋 —
+    # 항구가 부서졌는데 도착해서 골드를 주던 자리). 없으면 이 테스트는
+    # 0 을 받고 "증강이 안 먹었다"로 잘못 읽힌다.
+    from domynion.core.units import Unit, UnitType
+    gm = st.gmap
+    for pid, (x, y) in ((0, (5, 5)), (1, (25, 5))):
+        u = Unit(UnitType.PORT, pid, tile=gm.ref(x, y))
+        gm.owner[u.tile] = pid
+        st.players[pid].units.units.append(u)
+    t = TradeShip(owner=0, src_port=gm.ref(5, 5), dst_port=gm.ref(25, 5),
+                  dst_owner=1, path=[gm.ref(5, 5), gm.ref(25, 5)])
+    t.step_i = 1
+    t.tiles_travelled = 500
+    st.trade_ships.append(t)
+    before_src, before_dst = src_p.gold, dst_p.gold
+    st._advance_trade()
+    got_src, got_dst = src_p.gold - before_src, dst_p.gold - before_dst
+    assert got_dst == trade_gold(500), "증강 없는 쪽이 원본 값이 아니다"
+    assert got_src > got_dst, "증강이 있는 쪽이 더 못 받았다"
+
+
+def test_the_landing_card_cuts_the_boat_retreat_malus():
+    p = _human(landing=1)
+    plain = PlayerState(pid=1, name="P1", kind="nation")
+    troops = 1_000.0
+    lost_aug = troops * C.BOAT_RETREAT_MALUS_PCT * p.mult("boat_loss_pct")
+    lost_plain = troops * C.BOAT_RETREAT_MALUS_PCT * plain.mult("boat_loss_pct")
+    assert lost_aug < lost_plain
+    assert lost_plain == pytest.approx(troops * C.BOAT_RETREAT_MALUS_PCT)
+
+
+def test_the_replaced_cards_are_gone():
+    """옛 `naval_range`·`cost_woodland_pct` 는 openfront 에 대응물이 없다 —
+    남겨 두면 3장 중 하나가 **꽝**이 되고 그 사실이 화면에 안 나온다."""
+    from domynion.core.augments import FIELDS
+    assert "naval_range" not in FIELDS and "cost_woodland_pct" not in FIELDS
+    assert "seafaring" not in AUGMENTS_BY_KEY and "rangers" not in AUGMENTS_BY_KEY
+    assert len(AUGMENTS) == 10

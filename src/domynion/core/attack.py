@@ -67,15 +67,27 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
         mag *= fallout_mod
         speed *= fallout_mod
 
+    # --- 증강 (`docs/design.md` §3) — **원본 공식이 끝난 뒤에 곱한다** --------
+    #
+    # ⚠ 공식 안쪽에 끼워 넣지 않는다. 섞으면 나중에 원본과 대조할 때 어느 쪽이
+    # 틀렸는지 못 가른다. 증강이 없으면 아래 배율이 전부 **정확히 1.0** 이라
+    # 헤드리스 판(= §5.111 기준선)은 한 글자도 달라지지 않는다.
+    #
+    # 지형 할인은 **공격자의 것**이다(`산악병`). 구릉·산악에서만 걸린다.
+    terrain_cost = (attacker.mult("cost_highland_pct")
+                    if terrain in (C.Terrain.HIGHLAND, C.Terrain.MOUNTAIN)
+                    else 1.0)
+
     if defender is None:
         div = C.NEUTRAL_LOSS_DIV_BOT if attacker.is_bot else C.NEUTRAL_LOSS_DIV_HUMAN
         return AttackResult(
-            attacker_loss=mag / div,
+            attacker_loss=(mag / div) * attacker.mult("cost_vs_neutral_pct")
+                          * terrain_cost,
             defender_loss=0.0,
             tiles_used=within(
                 C.NEUTRAL_TILES_USED_NUM * max(C.NEUTRAL_TILES_USED_SPEED_FLOOR, speed)
                 / max(attack_troops, 1e-9),
-                *C.NEUTRAL_TILES_USED_CLAMP),
+                *C.NEUTRAL_TILES_USED_CLAMP) * attacker.mult("expand_speed_pct"),
         )
 
     if attacker.is_bot is False and defender.is_bot:
@@ -106,13 +118,20 @@ def attack_logic(gmap: GameMap, tile: TileRef, attack_troops: float,
     b = (C.ATTACKER_LOSS_B_MULT * defender_loss
          * (mag / C.ATTACKER_LOSS_B_MAG_DIV) * traitor_mod)
 
+    # 방어는 **수비자의 증강**이다(`견고한 방벽`) — 남이 나를 먹을 때 비싸진다.
+    # 그래서 `defense_pct` 는 공격자의 손실을 **올린다**(계수가 양수다).
+    cost = (attacker.mult("cost_vs_player_pct") * terrain_cost
+            * defender.mult("defense_pct"))
     return AttackResult(
-        attacker_loss=C.ATTACKER_LOSS_A_WEIGHT * a + C.ATTACKER_LOSS_B_WEIGHT * b,
-        defender_loss=defender_loss,
+        attacker_loss=(C.ATTACKER_LOSS_A_WEIGHT * a
+                       + C.ATTACKER_LOSS_B_WEIGHT * b) * cost,
+        # `초토화` — 내가 뺏을 때 상대가 더 잃는다. 공격자의 증강이다.
+        defender_loss=defender_loss * attacker.mult("defender_loss_pct"),
         tiles_used=within(
             defender.troops / (C.TILES_USED_TROOP_MULT * max(attack_troops, 1e-9)),
             *C.TILES_USED_CLAMP) * speed * large_defender * large_speed_bonus
-        * (C.TRAITOR_SPEED_DEBUFF if defender_traitor else 1.0),
+        * (C.TRAITOR_SPEED_DEBUFF if defender_traitor else 1.0)
+        * attacker.mult("expand_speed_pct"),
     )
 
 

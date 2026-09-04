@@ -106,6 +106,8 @@ class PlayerState:
             return base / C.BOT_MAX_TROOPS_DIV
         if self.kind == "nation":
             return base * C.NATION_MAX_TROOPS_MULT.get(self.difficulty, 1.0)
+        # 증강은 **원본 공식이 끝난 뒤에** 곱한다(`비옥한 땅`).
+        base *= self.mult("troops_cap_pct")
         return base
 
     def troop_increase(self, tile_count: int) -> float:
@@ -120,6 +122,8 @@ class PlayerState:
             add *= C.BOT_GROWTH_MULT
         elif self.kind == "nation":
             add *= C.NATION_GROWTH_MULT.get(self.difficulty, 1.0)
+        add *= self.mult("troops_growth_pct")       # `징집령`
+        # ⚠ **자르기는 마지막이다.** 증강을 자른 뒤에 곱하면 상한을 넘겨 버린다.
         return min(self.troops + add, cap) - self.troops
 
     def attack_troops(self) -> float:

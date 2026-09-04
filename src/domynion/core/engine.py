@@ -735,7 +735,9 @@ class GameState:
                 # **내 땅에 닿으면 25% 를 잃는다**(`malusForRetreat = 25`). 퇴각만이
                 # 아니라 목적지가 그 사이 내 땅이 된 경우에도 원본은 같은 값을 뗀다 —
                 # 배에 태운 병력은 공짜로 돌아오지 않는다.
-                lost = b.troops * C.BOAT_RETREAT_MALUS_PCT
+                # `상륙전` — 퇴각 벌점이 줄어든다. 증강이 없으면 배율 1.0 이다.
+                lost = (b.troops * C.BOAT_RETREAT_MALUS_PCT
+                        * p.mult("boat_loss_pct"))
                 p.troops += b.troops - lost
                 if lost:
                     self.emit(EventKind.ATTACK_CANCELLED, who=b.owner, amount=lost)
@@ -812,21 +814,27 @@ class GameState:
             if not t.arrived:
                 still.append(t)
                 continue
-            gold = trade_gold(t.tiles_travelled)
+            # `교역로` — **받는 쪽마다 따로 곱한다.** 무역선 하나가 양쪽 항구
+            # 주인에게 전액을 주므로(§5.35), 한 번만 곱하면 증강이 없는 쪽에도
+            # 보너스가 가거나 있는 쪽이 못 받는다.
+            base_gold = trade_gold(t.tiles_travelled)
             if t.captured_by is not None:
                 # `wasCaptured` — **나포한 쪽이 전액**을 번다. 원래 주인은 0이다.
                 pirate = self.players.get(t.captured_by)
                 if pirate is not None and pirate.alive:
+                    gold = int(base_gold * pirate.mult("trade_gold_pct"))
                     pirate.gold += gold
                     self.note_gold_gain(pirate.pid, gold)
                     self.emit(EventKind.GOLD_FROM_CAPTURED_SHIP,
                               who=pirate.pid, other=t.owner,
                               tile=t.dst_port, text="나포한 무역선")
             else:
-                src_p.gold += gold
-                dst_p.gold += gold
-                self.note_gold_gain(src_p.pid, gold)
-                self.note_gold_gain(dst_p.pid, gold)
+                src_gold = int(base_gold * src_p.mult("trade_gold_pct"))
+                dst_gold = int(base_gold * dst_p.mult("trade_gold_pct"))
+                src_p.gold += src_gold
+                dst_p.gold += dst_gold
+                self.note_gold_gain(src_p.pid, src_gold)
+                self.note_gold_gain(dst_p.pid, dst_gold)
         self.trade_ships = still
 
     def _capture_trade_ship(self, t: TradeShip, pid: int) -> bool:

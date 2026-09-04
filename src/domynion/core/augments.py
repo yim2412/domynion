@@ -4,9 +4,21 @@
 이 원칙을 지켜야 카드가 늘어도 판정이 하나로 유지된다. 카드마다 예외 규칙을 두면
 "이 상황에서 뭐가 먼저 적용되는가"를 아무도 모르게 된다.
 
-예외는 항해술(`naval_range`) 하나다. 이건 계수가 아니라 **닿을 수 있는 범위**를
-바꾼다. 바다를 건널 수단이 아예 없으면 섬이 영원히 죽은 땅으로 남고, 후반에
-"더 칠 곳이 없어서" 판이 굳는다 — 계수로는 풀 수 없는 문제라 규칙을 하나 늘렸다.
+**예외는 없다. 열 장 전부 계수다.**
+
+⚠ 원래 예외가 하나 있었다(항해술 `naval_range` — 바다를 건널 칸 수). openfront
+이식 뒤에 **대응물이 사라졌다**: 원본 배는 물길만 이어지면 어디든 간다(사거리가
+아니라 경로 탐색이다). 같은 이유로 삼림 순찰대(`cost_woodland_pct`)도 갈 곳이
+없어졌다 — openfront 지형은 **평지·구릉·산악** 셋뿐이고 숲이 없다.
+둘 다 openfront 에 실재하는 축으로 갈아끼웠다(2026-09-04):
+
+| 옛 카드 | 새 카드 | 축 |
+|---|---|---|
+| 항해술(바다 1칸) | **상륙전** | `boat_loss_pct` — 퇴각할 때 잃는 25%가 줄어든다 |
+| 삼림 순찰대(숲 −32%) | **교역로** | `trade_gold_pct` — 무역선이 도착해 버는 골드가 는다 |
+
+**갈 곳 없는 축을 남겨 두면 카드가 조용히 아무 일도 안 한다** — 3장 중 하나가
+꽝이 되고, 그 사실이 화면 어디에도 안 나온다.
 
 드래프트 방식이다. 정지마다 무작위 3장을 받아 하나를 고르고, 같은 카드를 다시
 고르면 레벨이 오른다. 그래서 빌드는 미리 짜는 것이 아니라 **뽑힌 것들 사이에서
@@ -38,11 +50,11 @@ FIELDS = (
     "cost_vs_player_pct",    # 적 영토 정복 비용 +% (음수가 유리)
     "cost_vs_neutral_pct",   # 중립 정복 비용 +%
     "cost_highland_pct",     # 구릉·산악 정복 비용 +%
-    "cost_woodland_pct",     # 숲 정복 비용 +%
+    "trade_gold_pct",        # 무역선 도착 골드 +%
     "expand_speed_pct",      # 확장 속도 +%
     "defense_pct",           # 내 영토 방어 +% (남이 나를 먹을 때 비싸진다)
     "defender_loss_pct",     # 내가 뺏을 때 상대가 추가로 잃는 병력 +%
-    "naval_range",           # 바다를 건널 수 있는 칸 수 (계수가 아닌 유일한 축)
+    "boat_loss_pct",         # 상륙 부대가 퇴각할 때 잃는 몫 +% (음수가 유리)
 )
 
 AUGMENTS: list[Augment] = [
@@ -60,12 +72,12 @@ AUGMENTS: list[Augment] = [
             "defense_pct", 0.22),
     Augment("mountaineers", "산악병", "구릉·산악 정복 비용 -32%",
             "cost_highland_pct", -0.32),
-    Augment("rangers", "삼림 순찰대", "숲 정복 비용 -32%",
-            "cost_woodland_pct", -0.32),
+    Augment("traders", "교역로", "무역선 도착 골드 +25%",
+            "trade_gold_pct", 0.25),
     Augment("scorched", "초토화", "정복할 때 상대 병력 추가 손실 +35%",
             "defender_loss_pct", 0.35),
-    Augment("seafaring", "항해술", "바다를 1칸 건널 수 있다",
-            "naval_range", 1.0),
+    Augment("landing", "상륙전", "상륙 퇴각 손실 -30%",
+            "boat_loss_pct", -0.30),
 ]
 
 AUGMENTS_BY_KEY = {a.key: a for a in AUGMENTS}
@@ -79,16 +91,12 @@ def level_mult(level: int) -> float:
 
 def value_at(aug: Augment, level: int) -> float:
     """이 증강을 레벨 N 까지 올렸을 때의 실제 값."""
-    if aug.field == "naval_range":
-        return float(level)      # 범위는 배율이 아니라 칸 수다 — 반올림이 필요 없게
     return aug.per_level * level_mult(level)
 
 
 def describe(aug: Augment, level: int) -> str:
     """레벨을 반영한 설명. 카드에 Lv1 수치만 적어 두면 Lv3 을 골라도 체감이 없다."""
     v = value_at(aug, level)
-    if aug.field == "naval_range":
-        return f"바다를 {int(v)}칸 건널 수 있다"
     pct = abs(v) * 100
     sign = "-" if v < 0 else "+"
     return aug.desc.rsplit(" ", 1)[0] + f" {sign}{pct:.0f}%"
