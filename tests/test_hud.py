@@ -326,3 +326,104 @@ def test_a_nation_attack_is_never_dropped(qapp):
     assert len(rows) == 1 and "P1" in rows[0]
     # 필터가 없으면 봇 일곱 줄이 여섯 자리를 전부 채워 P1 이 사라진다.
     assert sum(1 for a in st.attacks if a.attacker == 2) == 7
+
+
+# --- 전투 패널: 맞받아치기 (§5.100 후보 둘 — 이식 누락 백여섯) ------------------
+#
+# 원본 `AttacksDisplay.handleRetaliate` 는 들어오는 공격 줄에 검 버튼을 달고
+#     counterTroops = Math.min(attack.troops, attackRatio × myPlayer.troops())
+# 로 되받는다. 우리 줄에는 버튼이 아예 없었다 — 퇴각 버튼을 내 공격에만 단다고
+# 적어 두고 그 자리에 원본이 **다른** 버튼을 둔 것을 못 봤다.
+
+def _panel_button(panel, needle):
+    """`needle` 이 들어간 줄의 (라벨, 버튼)."""
+    for lbl, btn in panel._rows:
+        if needle in lbl.text():
+            return lbl, btn
+    return None, None
+
+
+def test_an_incoming_attack_row_has_a_retaliate_button(qapp):
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    lbl, btn = _panel_button(panel, "P1")
+    assert lbl is not None
+    assert btn.isVisibleTo(panel)               # 버튼이 뜬다
+    assert btn.text() == "⚔"                    # 퇴각(✕)이 아니라 맞받아치기
+
+
+def test_retaliating_wipes_out_the_incoming_attack(qapp):
+    """⚠ **되받은 병력이 들어온 공격과 정확히 같으므로 §5.88 의 맞공격 상쇄가
+    항상 걸린다.** 그게 "받아친다"의 실제 결과다 — 나를 치던 부대가 목록에서
+    사라지고 내 쪽에도 남는 부대가 없다. 처음엔 이걸 모르고 *"내 공격이 7,000
+    으로 뜬다"* 고 단언했다가 `9.09e-13` 을 받았다(상쇄된 잔여값).
+    """
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    incoming = st.attacks[1]
+    assert incoming.attacker == 1 and incoming.target == 0
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    _, btn = _panel_button(panel, "P1")
+    btn.click()
+    assert incoming not in st.attacks            # 나를 치던 부대가 지워졌다
+    mine = [a for a in st.attacks if a.attacker == 0]
+    assert len(mine) == 1 and mine[0].target == 1
+    assert mine[0].troops == pytest.approx(0.0)  # 넘어가는 부대도 없다
+
+
+def test_the_counter_is_capped_by_the_incoming_attack_not_just_the_ratio(qapp):
+    """⚠ **`min` 이 규칙이다.** 이 단언이 없으면 `min` 을 떼도 테스트가 통과한다.
+
+    막지 않았으면 무엇이 일어났을 것인가 — 비율만 쓰면 25,000 이 나가고,
+    상쇄 뒤 **18,000 이 그쪽 땅으로 넘어간다.** 받아치기가 아니라 침공이 된다.
+    """
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    me = st.players[0]
+    me.troops = 50_000.0
+    me.attack_ratio = 0.5                       # 비율만 쓰면 25,000 이 나간다
+    assert me.attack_troops() == 25_000.0
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    _, btn = _panel_button(panel, "P1")
+    btn.click()
+    mine = [a for a in st.attacks if a.attacker == 0]
+    assert len(mine) == 1
+    # `min` 이 없으면 25,000 − 7,000 = 18,000 이 남는다.
+    assert mine[0].troops == pytest.approx(0.0)
+    assert me.troops == pytest.approx(43_000.0)  # 7,000 만 빠져나갔다
+
+
+def test_the_ratio_still_caps_the_counter_when_the_attack_is_huge(qapp):
+    """`min` 의 반대쪽 — 큰 공격에 전군을 던지지 않는다. 이쪽은 상쇄에서
+    내가 작은 쪽이라 **내 부대가 통째로 사라지고** 들어온 공격만 깎인다."""
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    incoming = st.attacks[1]
+    incoming.troops = 900_000.0                 # 나라의 공격이 아주 크다
+    me = st.players[0]
+    me.troops = 50_000.0
+    me.attack_ratio = 0.2                       # 10,000 만 나간다
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    _, btn = _panel_button(panel, "P1")
+    btn.click()
+    assert [a for a in st.attacks if a.attacker == 0] == []
+    assert incoming.troops == pytest.approx(890_000.0)
+    assert me.troops == pytest.approx(40_000.0)  # 전군이 아니라 10,000 만
+
+
+def test_a_retreating_attacker_gets_no_button(qapp):
+    """원본도 `!attack.retreating` 일 때만 버튼을 그린다 — 물러나는 부대를
+    쫓아가 치는 것은 되받는 것이 아니다."""
+    from domynion.ui.eventlog import AttacksPanel
+    st = _panel_state()
+    st.attacks[1].retreat_ordered_at = st.tick_count
+    panel = AttacksPanel(st, me=0)
+    panel.refresh()
+    lbl, btn = _panel_button(panel, "P1")
+    assert lbl is not None                      # 줄은 그대로 뜬다
+    assert not btn.isVisibleTo(panel)           # 버튼만 없다

@@ -245,9 +245,4 @@ class TribeBot:
         # `launch_attack` 이 같은 상수로 다시 거른다.
         if send < C.ATTACK_MIN_TROOPS:
             return False
-        saved = p.attack_ratio
-        p.attack_ratio = min(1.0, send / p.troops)
-        try:
-            return st.launch_attack(self.pid, target) is not None
-        finally:
-            p.attack_ratio = saved
+        return st.launch_attack_troops(self.pid, target, send) is not None

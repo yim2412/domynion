@@ -358,6 +358,26 @@ class GameState:
                 self.relate(pid, target, C.REL_ATTACKED_ALLY)
         return atk
 
+    def launch_attack_troops(self, pid: int, target: int | None,
+                             troops: float) -> Attack | None:
+        """**병력 수를 직접 주고** 공격한다 (`SendAttackIntentEvent(id, troops)`).
+
+        원본의 공격 의도 이벤트는 비율이 아니라 **병력 수**를 싣는다. 우리
+        `launch_attack` 은 `attack_ratio` 만 보므로, 수를 주려면 비율을 잠깐
+        바꿔 끼웠다 되돌려야 한다. 그 저장·복원을 AI 두 곳이 각자 적어 두고
+        있었고, 맞받아치기(§5.100 후보 둘)가 **세 번째**가 될 자리였다.
+        규칙 하나는 한 곳에만 둔다 — 세 곳이 따로 틀어지면 알 방법이 없다.
+        """
+        p = self.players.get(pid)
+        if p is None:
+            return None
+        saved = p.attack_ratio
+        p.attack_ratio = min(1.0, troops / p.troops) if p.troops > 0 else 0.0
+        try:
+            return self.launch_attack(pid, target)
+        finally:
+            p.attack_ratio = saved
+
     def _merge_attack(self, atk: Attack) -> bool:
         """새 공격을 기존 공격들과 정리한다(`AttackExecution.init` 의 두 루프).
 

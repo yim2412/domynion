@@ -640,13 +640,7 @@ class NationBot:
                     st.ai_emoji(self.pid, target, emoji.AGGRESSIVE_ATTACK)
             elif self.rng.randrange(4) == 0:
                 st.ai_emoji(self.pid, target, emoji.ATTACK)
-        p = st.players[self.pid]
-        saved = p.attack_ratio
-        p.attack_ratio = min(1.0, troops / p.troops) if p.troops > 0 else 0.0
-        try:
-            return st.launch_attack(self.pid, target) is not None
-        finally:
-            p.attack_ratio = saved
+        return st.launch_attack_troops(self.pid, target, troops) is not None
 
     def _attack_troops(self, st: GameState, target: int | None) -> float | None:
         """`calculateAttackTroops` — **남겨 둘 양**이 표적에 따라 다르다.

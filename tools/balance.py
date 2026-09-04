@@ -42,9 +42,21 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
         nations: int, bots: int, clock: str | None = None,
         progress: int = 0) -> dict:
     t0 = time.perf_counter()
+    c0 = time.process_time()
     rng = random.Random(seed)
     st = GameState.new(nations, rng, map_name="world", human=-1,
                        size=size, bots=bots)
+    # ⚠ **적재와 루프를 가른다.** §5.91 이 "벽시계 9시간 12분" 과 "판당
+    # 3,419~3,782초" 를 나란히 적어 두고 **8배 어긋난 채로** 남겼다. 어느
+    # 구간이 그 차이를 냈는지 재는 자리가 없었기 때문이다 — 도구가 낸 전체는
+    # 63분인데 시계는 9시간이었다. 이제 셋을 따로 찍는다:
+    #   load  = 지도 적재(워커 셋이 동시에 2000×1000 을 읽는다)
+    #   loop  = 게임 루프
+    #   cpu   = 이 프로세스의 CPU 시간. **멈춤과 진행을 가르는 유일한 신호**
+    #           다(§5.92). 벽시계만 크고 cpu 가 안 늘면 그건 계산이 아니라
+    #           대기(스왑·경합)다.
+    load = time.perf_counter() - t0
+    t_loop = time.perf_counter()
     # ⚠ `clock` 을 주면 **원본의 종료 규칙**으로 돈다. 안 주면 우리가 넣은
     # 안전장치(`MATCH_SECONDS` = 900초 = 9,000 tick)가 판을 자른다 — 원본에
     # 없는 조건이므로, 그 길이를 "판의 길이"로 착각하면 안 된다(§5.55).
@@ -62,7 +74,9 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
             b.tick(st)
         if progress and st.tick_count % progress == 0:
             print(f"[seed {seed}] {st.tick_count}/{ticks} tick  "
-                  f"{time.perf_counter() - t0:.0f}초  생존 {len(list(st.alive))}",
+                  f"{time.perf_counter() - t0:.0f}초"
+                  f"(cpu {time.process_time() - c0:.0f})  "
+                  f"생존 {len(list(st.alive))}",
                   file=sys.stderr, flush=True)
 
     golds = sorted(int(p.gold) for p in st.alive) or [0]
@@ -82,6 +96,9 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
         "ticks": st.tick_count,
         "victory": st.victory.value if st.victory else "미종료",
         "wall": round(time.perf_counter() - t0, 1),
+        "load": round(load, 1),
+        "loop": round(time.perf_counter() - t_loop, 1),
+        "cpu": round(time.process_time() - c0, 1),
     }
 
 
@@ -111,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
 
     jobs = [(s, a.size, a.difficulty, a.ticks, a.nations, a.bots, a.clock,
              a.progress) for s in a.seeds]
+    # ⚠ **시계 시각을 찍는다.** §5.91 의 "9시간 12분" 은 사람이 시계를 보고
+    # 적은 것이고 도구가 낸 "전체 3,783초"(63분)와 8배 어긋난다. 어느 쪽이
+    # 맞는지 가르려면 도구가 **자기 시작·끝 시각을 스스로** 남겨야 한다.
+    print(f"시작 {time.strftime('%H:%M:%S')}", file=sys.stderr, flush=True)
     t0 = time.perf_counter()
     if a.jobs > 1:
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:
@@ -119,9 +140,11 @@ def main(argv: list[str] | None = None) -> int:
         rows = [_worker(j) for j in jobs]
     rows.sort(key=lambda r: r["seed"])
 
+    total = time.perf_counter() - t0
     head = ("| seed | 핵 발사 | MIRV | 생존 | 사일로 | 골드 최고 | 골드 중앙 | tick | 종료 | 벽시계 |")
     print(f"{a.size} · 나라 {a.nations} + 봇 {a.bots} · {a.difficulty} · "
-          f"{a.ticks} tick · 전체 {time.perf_counter() - t0:.0f}초")
+          f"{a.ticks} tick · 전체 {total:.0f}초 "
+          f"({time.strftime('%H:%M:%S')} 종료)")
     print(head)
     print("|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
@@ -132,7 +155,20 @@ def main(argv: list[str] | None = None) -> int:
     def med(k):
         return statistics.median([r[k] for r in rows])
     print(f"| **중앙** | **{med('nukes')}** | {med('mirvs')} | **{med('alive')}** | "
-          f"{med('silos')} | {med('gold_max'):,.0f} | {med('gold_median'):,.0f} | | | |")
+          f"{med('silos')} | {med('gold_max'):,.0f} | {med('gold_median'):,.0f} | | | "
+          f"전체 {total:.0f}초 |")
+
+    # 시간이 어디로 갔나 — 적재 · 루프 · CPU 를 따로 본다(§7.2 의 모순).
+    print()
+    print("| seed | 적재 | 루프 | 벽시계 | CPU | CPU/벽시계 |")
+    print("|---|---|---|---|---|---|")
+    for r in rows:
+        ratio = r["cpu"] / r["wall"] if r["wall"] else 0.0
+        print(f"| {r['seed']} | {r['load']:.0f}초 | {r['loop']:.0f}초 | "
+              f"{r['wall']:.0f}초 | {r['cpu']:.0f}초 | {ratio:.0%} |")
+    print(f"| **전체** | | | **{total:.0f}초** | | |")
+    print()
+    print("> `CPU/벽시계` 가 1 에 가까우면 계산 중이고, 낮으면 대기(경합·스왑)다.")
 
     if a.out:
         a.out.write_text(json.dumps(rows, ensure_ascii=False, indent=2),

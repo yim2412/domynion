@@ -150,8 +150,11 @@ class AttacksPanel(QWidget):
         self.title = QLabel("전투")
         self.title.setStyleSheet("font-weight: bold; opacity: .8;")
         box.addWidget(self.title)
-        # 각 줄 = 설명 + 퇴각 버튼. **버튼은 내 공격에만 뜬다** — 남이 나를
-        # 치는 줄에 ❌ 가 붙으면 그걸 누르면 막히는 줄 알게 된다.
+        # 각 줄 = 설명 + 버튼 하나. **버튼의 뜻이 줄마다 다르다** — 내 공격이면
+        # 퇴각(✕), 들어오는 공격이면 **맞받아치기**(⚔). 원본도 같은 자리
+        # (`ml-auto`)에 두 버튼을 갈아 끼운다(`AttacksDisplay`). 전에는 여기
+        # 주석이 *"버튼은 내 공격에만 뜬다"* 였는데, 그건 퇴각만 옮겼을 때의
+        # 이야기고 원본에는 그 자리에 **다른** 버튼이 있었다(§5.100 후보 둘).
         self._rows: list[tuple[QLabel, QPushButton]] = []
         for _ in range(6):
             line = QHBoxLayout()
@@ -173,9 +176,11 @@ class AttacksPanel(QWidget):
 
     def refresh(self) -> None:
         st = self.state
-        # 한 줄 = (화살표, 상대, 병력, 색, 퇴각 명령, 퇴각 손실).
-        # **퇴각 명령을 콜러블로 들고 다닌다** — 육상 공격과 상륙 부대가 서로 다른
-        # 엔진 함수를 부르는데, 줄마다 종류를 다시 따지면 여기가 분기투성이가 된다.
+        # 한 줄 = (화살표, 상대, 병력, 색, 버튼 글자, 명령, 툴팁).
+        # **명령을 콜러블로 들고 다닌다** — 퇴각만 해도 육상 공격과 상륙 부대가
+        # 서로 다른 엔진 함수를 부르고, 여기에 맞받아치기까지 붙는다. 줄마다
+        # 종류를 다시 따지면 이 아래가 분기투성이가 된다.
+        me = st.players.get(self.me)
         lines = []
         for a in st.attacks:
             if a.attacker == self.me:
@@ -183,10 +188,11 @@ class AttacksPanel(QWidget):
                 mark = " (물러나는 중)" if a.retreating else ""
                 lost = a.troops * C.RETREAT_MALUS if a.target is not None else 0.0
                 lines.append(("→", (foe.name if foe else "중립") + mark, a.troops,
-                              "#8fd6f0",
+                              "#8fd6f0", "✕",
                               None if a.retreating
                               else (lambda x=a: st.order_retreat(self.me, x)),
-                              lost))
+                              f"퇴각 — {lost:,.0f} 손실" if lost
+                              else "퇴각 — 손실 없음"))
             elif a.target == self.me:
                 foe = st.players.get(a.attacker)
                 # ⚠ **봇의 공격은 안 띄운다**(원본 `AttacksDisplay` 가
@@ -197,34 +203,49 @@ class AttacksPanel(QWidget):
                 # 보여 준다.
                 if foe is not None and foe.is_bot:
                     continue
+                # **맞받아치기**(`handleRetaliate`). 보낼 병력은
+                # `min(들어온 공격, 내 비율 × 내 병력)` 이다 — ⚠ **`min` 이
+                # 규칙이다.** 비율만 쓰면 봇이 스무 명으로 긁는 줄에서도 슬라이더
+                # 대로 전군이 나간다. 들어온 크기로 한 번 깎아야 "받아친다"가 된다.
+                counter = min(a.troops, me.attack_troops()) if me else 0.0
                 lines.append(("←", foe.name if foe else "?",
-                              a.troops, "#e08a7a", None, 0.0))
+                              a.troops, "#e08a7a", "⚔",
+                              None if (a.retreating or foe is None
+                                       or counter < C.ATTACK_MIN_TROOPS)
+                              else (lambda t=a.attacker, n=counter:
+                                    st.launch_attack_troops(self.me, t, n)),
+                              f"맞받아치기 — {counter:,.0f} 보낸다"))
         for b in st.boats:
             if b.owner == self.me:
                 mark = " (돌아오는 중)" if b.retreating else ""
-                lines.append(("⛵→", "상륙 중" + mark, b.troops, "#8fd6f0",
+                blost = b.troops * C.BOAT_RETREAT_MALUS_PCT
+                lines.append(("⛵→", "상륙 중" + mark, b.troops, "#8fd6f0", "✕",
                               None if b.retreating
                               else (lambda x=b: st.order_boat_retreat(self.me, x)),
-                              b.troops * C.BOAT_RETREAT_MALUS_PCT))
+                              f"퇴각 — {blost:,.0f} 손실" if blost
+                              else "퇴각 — 손실 없음"))
             elif b.target == self.me:
                 foe = st.players.get(b.owner)
+                # ⚠ **오는 배에는 맞받아치기가 없다.** 원본이 그 버튼을
+                # `incomingAttacks` 에만 단다 — 배는 아직 내 땅에 안 닿았고,
+                # 주인의 본토는 바다 건너라 육상 공격이 성립하지 않는다.
                 lines.append(("⛵←", foe.name if foe else "?",
-                              b.troops, "#e08a7a", None, 0.0))
+                              b.troops, "#e08a7a", "", None, ""))
 
         lines = lines[:len(self._rows)]
-        for (lbl, btn), (arrow, who, troops, colour, retreat, lost) in zip(
+        for (lbl, btn), (arrow, who, troops, colour, mark, cmd, tip) in zip(
                 self._rows, lines):
             lbl.setText(f'<span style="color:{colour}">{arrow}</span> {who} '
                         f'<span style="opacity:.75">{troops:,.0f}</span>')
-            btn.setVisible(retreat is not None)
-            if retreat is not None:
-                btn.setToolTip(f"퇴각 — {lost:,.0f} 손실" if lost
-                               else "퇴각 — 손실 없음")
+            btn.setVisible(cmd is not None)
+            if cmd is not None:
+                btn.setText(mark)
+                btn.setToolTip(tip)
                 try:
                     btn.clicked.disconnect()
                 except TypeError:
                     pass          # 연결이 없으면 그냥 넘어간다
-                btn.clicked.connect(lambda _=False, f=retreat: f())
+                btn.clicked.connect(lambda _=False, f=cmd: f())
         for lbl, btn in self._rows[len(lines):]:
             lbl.setText("")
             btn.hide()
