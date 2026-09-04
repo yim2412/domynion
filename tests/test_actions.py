@@ -190,17 +190,18 @@ def test_embargo_toggles_and_donations_move_resources():
     # 클라이언트로 내려보내 잠근다 — 눌러도 안 되는 버튼을 열어 두지 않는다.
     gold = by_label(diplomacy_items(st, 0, 1, noop), "골드 주기")
     assert not gold.enabled
-    gold.action()
-    assert st.players[1].gold == 0, "잠긴 버튼은 눌러도 안 나간다"
+    assert st.players[1].gold == 0
 
     st.diplomacy.form(0, 1, st.tick_count)
     gold = by_label(diplomacy_items(st, 0, 1, noop), "골드 주기")
     assert gold.enabled
-    gold.action()
+    # ⚠ **이제 양을 고른다**(§5.107). 원본 `DonateGoldExecution` 의
+    # `this.gold ??= this.sender.gold() / 3n` 은 **양을 안 줬을 때의 기본값**이지
+    # 사람이 줄 수 있는 유일한 양이 아니다.
+    by_label(gold.submenu(), "100%").action()
+    assert st.players[1].gold == 3_000, "100% 를 골랐으면 전부 간다"
     # ⚠ **기대값을 상수로 만들면 안 된다.** `3_000 // C.DONATION_DIVISOR` 로 쓰면
     # 상수를 4 로 되돌려도 양쪽이 같이 움직여 통과한다 — 실제로 변이가 살아남았다.
-    # 한 번에 **1/3** 이 나간다(원본 `DonateGoldExecution` 의 `gold()/3n`, §5.90).
-    assert st.players[1].gold == 1_000, "3,000 의 1/3 이 아니다"
     assert C.DONATION_DIVISOR == 3
 
     # 같은 상대에게 연달아는 안 된다 — 쿨다운 10초.
@@ -568,3 +569,57 @@ def test_an_embargo_the_other_side_placed_is_shown_because_i_cannot_lift_it():
     st.diplomacy.start_embargo(1, 0, st.tick_count)
     row = by_label(diplomacy_items(st, 0, 1, noop), "금수")
     assert "그쪽도 나를 막고 있다" in row.hint
+
+
+# --- 기부 양 고르기 (§5.107) ---------------------------------------------------
+
+def _donate_menu(st, gold=True):
+    lbl = "골드 주기" if gold else "병력 주기"
+    return by_label(diplomacy_items(st, 0, 1, noop), lbl).submenu()
+
+
+def test_the_donation_presets_match_the_original():
+    """원본 `SendResourceModal.PRESETS` = 10·25·50·75·100."""
+    from domynion.ui.actions import DONATE_PRESETS
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    st.players[0].gold = 1_000
+    assert labels(_donate_menu(st)) == [f"{p}%" for p in DONATE_PRESETS]
+    assert DONATE_PRESETS == (10, 25, 50, 75, 100)
+
+
+def test_a_chosen_percentage_actually_goes():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 고정 1/3 이면 25% 를 눌러도
+    333 이 간다. 관계는 액수에 비례하므로 **관계를 사는 속도가 하나뿐**이 된다."""
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    st.players[0].gold = 1_000
+    by_label(_donate_menu(st), "25%").action()
+    assert st.players[1].gold == 250
+
+
+def test_troop_presets_say_how_much_actually_fits():
+    """상한에 붙은 동맹에게 100% 를 눌러도 아무 일이 없다(§5.71) — **누르기
+    전에** 보여 준다."""
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    mine, them = st.players[0], st.players[1]
+    mine.troops = 100_000.0
+    them.troops = them.max_troops(st.tiles(1))          # 꽉 찼다
+    for item in _donate_menu(st, gold=False):
+        assert not item.enabled
+        assert "상한" in item.hint
+    them.troops -= 10.0                                 # 열 자리만 난다
+    full = by_label(_donate_menu(st, gold=False), "100%")
+    assert full.enabled and "10 만 간다" in full.hint
+
+
+def test_the_default_share_is_still_a_third_for_when_teams_arrive():
+    """`amount=None` 경로 — 원본 `gold() / 3n`. 지금 호출부가 없어서 **조용히
+    썩을 수 있는 자리**라 여기서 붙잡아 둔다(팀 모드가 §7.3 백로그에 있다)."""
+    from domynion.ui.actions import _donate_gold
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    st.players[0].gold = 3_000
+    _donate_gold(st, 0, 1, noop)
+    assert st.players[1].gold == 1_000

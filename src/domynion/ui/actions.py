@@ -49,6 +49,11 @@ COL_DIPLO = (104, 84, 132)
 COL_PLAIN = (70, 78, 96)
 
 
+# 원본 `SendResourceModal.PRESETS`. 슬라이더는 안 옮겼다 — 라디얼은 칸이라
+# 연속 값을 담을 자리가 없고, 프리셋 다섯이 그 역할을 이미 한다.
+DONATE_PRESETS = (10, 25, 50, 75, 100)
+
+
 def _gold(n: int) -> str:
     return f"{n:,}"
 
@@ -588,17 +593,19 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
                    + ("  ⚠ 그쪽도 나를 막고 있다"
                       if d.embargoed(target, me) else "")),
              colour=COL_DIPLO),
-        Item("골드 주기", action=lambda: _donate_gold(st, me, target, notify),
+        # ⚠ **양을 고른다**(원본 `SendResourceModal` 의 `PRESETS`). 우리는
+        # `1/DONATION_DIVISOR` 고정이었다 — 그 값은 **AI 가 얼마를 주는가**의
+        # 규칙이지 사람이 얼마를 줄 수 있는가가 아니다. 관계는 액수에 비례하므로
+        # (`gold_donation_relation`), 고정이면 **관계를 사는 속도가 하나뿐**이다.
+        Item("골드 주기", submenu=lambda: _donate_amounts(
+                 st, me, target, notify, gold=True),
              enabled=can_donate and mine.gold > 0,
-             hint=(f"가진 골드의 1/{C.DONATION_DIVISOR} "
-                   f"({_gold(mine.gold // C.DONATION_DIVISOR)}) 을 보낸다"
-                   if can_donate else _no_donate),
+             hint=("얼마를 줄지 고른다" if can_donate else _no_donate),
              colour=COL_PLAIN),
-        Item("병력 주기", action=lambda: _donate_troops(st, me, target, notify),
+        Item("병력 주기", submenu=lambda: _donate_amounts(
+                 st, me, target, notify, gold=False),
              enabled=can_donate and mine.troops > 1,
-             hint=(f"병력의 1/{C.DONATION_DIVISOR} "
-                   f"({mine.troops / C.DONATION_DIVISOR:,.0f}) 을 보낸다"
-                   if can_donate else _no_donate),
+             hint=("얼마를 줄지 고른다" if can_donate else _no_donate),
              colour=COL_PLAIN),
     ]
     return items
@@ -680,14 +687,66 @@ def _extend(st: GameState, me: int, target: int, notify) -> None:
         notify(f"P{target} 에게 연장을 요청했다 — 상대가 동의해야 성사된다")
 
 
-def _donate_gold(st: GameState, me: int, target: int, notify) -> None:
-    amount = st.players[me].gold // C.DONATION_DIVISOR
+def _donate_amounts(st: GameState, me: int, target: int, notify, *,
+                    gold: bool) -> list[Item]:
+    """기부 양 하위 메뉴 — 원본 `SendResourceModal.PRESETS` = 10·25·50·75·100%.
+
+    `_nuke_amounts` · `_upgrade_amounts` 와 **같은 자리 배치**다: 살 수 없는
+    칸도 회색으로 남긴다. 자리가 밀리면 "늘 같은 자리"가 깨진다.
+
+    ⚠ **병력은 상대의 남은 자리까지만 간다**(`getCapacityLeft` = `maxTroops −
+    troops`). 넘치는 만큼은 **애초에 안 가고 관계도 안 오른다**(§5.71) —
+    상한에 붙은 동맹에게 100%를 눌러도 아무 일이 없다. 그것을 누르기 전에
+    보여 준다. 골드는 상한이 없다.
+    """
+    mine = st.players[me]
+    them = st.players.get(target)
+    total = mine.gold if gold else mine.troops
+    room = (None if gold or them is None
+            else max(0.0, them.max_troops(st.tiles(target)) - them.troops))
+    out: list[Item] = []
+    for pct in DONATE_PRESETS:
+        amount = total * pct / 100
+        goes = amount if room is None else min(amount, room)
+        ok = goes >= (1 if gold else 1.0)
+        label = f"{pct}%"
+        if gold:
+            hint = f"골드 {_gold(int(amount))} 을 보낸다"
+        elif room is not None and goes < amount:
+            hint = (f"병력 {amount:,.0f} 중 {goes:,.0f} 만 간다 — "
+                    f"상대의 남은 자리가 그만큼이다")
+        else:
+            hint = f"병력 {amount:,.0f} 을 보낸다"
+        out.append(Item(
+            label,
+            action=(lambda a=amount: (_donate_gold(st, me, target, notify, a)
+                                      if gold else
+                                      _donate_troops(st, me, target, notify, a))),
+            enabled=ok,
+            hint=hint if ok else ("보낼 것이 없다" if total <= 0
+                                  else "상대가 상한이라 못 받는다"),
+            colour=COL_PLAIN))
+    return out
+
+
+def _donate_gold(st: GameState, me: int, target: int, notify,
+                 amount: float | None = None) -> None:
+    """⚠ `amount=None` 은 원본 `DonateGoldExecution` 의
+    `this.gold ??= this.sender.gold() / 3n` — **양을 안 줬을 때의 기본값**이다.
+    라디얼은 이제 항상 양을 주므로 지금 호출부가 없다. 남겨 두는 이유는 원본
+    AI 의 기부(`donateTroops`)가 **팀전 전용**이고(`ai/nation.py :: _s_donate`)
+    팀 모드가 §7.3 백로그에 있기 때문이다. 그때 이 경로가 살아난다."""
+    if amount is None:
+        amount = st.players[me].gold // C.DONATION_DIVISOR
+    amount = int(amount)
     notify(f"P{target} 에게 골드 {_gold(amount)}" if st.donate_gold(me, target, amount)
            else "보낼 골드가 없다")
 
 
-def _donate_troops(st: GameState, me: int, target: int, notify) -> None:
-    amount = st.players[me].troops / C.DONATION_DIVISOR
+def _donate_troops(st: GameState, me: int, target: int, notify,
+                   amount: float | None = None) -> None:
+    if amount is None:
+        amount = st.players[me].troops / C.DONATION_DIVISOR
     # ⚠ 실패 이유가 둘이다(§5.71) — 내 병력이 없거나, **상대가 상한이라 못 받거나**.
     # 앞의 것만 말하면 상한에 붙은 동맹에게 보내려다 "내 병력이 없다"는 틀린 답을 본다.
     notify(f"P{target} 에게 병력 {amount:,.0f}"
