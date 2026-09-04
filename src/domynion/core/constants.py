@@ -346,6 +346,10 @@ FALLOUT_DEFENSE_SLOPE = 2.0
 
 # 핵·SAM (P5) — Config.ts :: nukeMagnitudes/nukeSpeed/samRange/nukeDeathFactor
 NUKE_TARGETABLE_RANGE = 150
+# ⚠ 한 번 "읽는 곳이 0" 으로 보고 지웠다가 되돌렸다(2026-09-04). `src/` 만
+# 세었기 때문이다 — `tools/verify_port.py` 의 **원본 값 대조표**와
+# `test_nukes.py` 가 읽는다. `sam_range(1)` = 150 − 480/6 = 70 임을 재는 자리라
+# 중복이 아니라 **대조점**이다. 읽는 곳을 셀 때 tests·tools 를 빼면 오탐이 난다.
 DEFAULT_SAM_RANGE = 70
 MAX_SAM_RANGE = 150
 SAM_MISSILE_SPEED = 12
@@ -532,7 +536,11 @@ MIRV_TARGET_ATTEMPTS = 1000 + 500
 ENCLAVE_CHECK_TICKS = 20
 
 TRADE_SHORT_RANGE_DEBUFF = 300  # 이 거리 아래는 시그모이드가 눌러 크게 손해다
+# `tradeShipSpawnRate` 의 시그모이드 — 배가 이 수를 넘어가면 스폰율이 0 으로
+# 수렴한다. ⚠ **둘 다 읽는 곳이 0 이었다**(값은 `trade_spawn_rate` 안에
+# 하드코딩돼 있었다). 매직 넘버가 로직 안에 박혀 있으면 그 자체로 규칙 위반이다.
 TRADE_SPAWN_SIGMOID_MID = 400
+TRADE_SPAWN_DECAY_HALFLIFE = 50     # `Math.LN2 / 50`
 
 # 항구는 **10 tick 마다** 스폰을 굴린다(`PortExecution.tick` 의 `% 10`). 판 전체가
 # 아니라 항구마다다 — 이걸 판 하나로 두면 항구가 몇이든 유통량이 같아진다.

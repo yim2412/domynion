@@ -677,3 +677,45 @@ def test_send_boat_actually_uses_the_moved_landing_tile() -> None:
     assert boat is not None, "안쪽을 클릭했다고 배가 안 떴다"
     assert boat.dst == st.gmap.ref(5, 1), "옮긴 상륙 지점을 안 썼다"
     assert boat.path[-1] == boat.dst, "경로 끝이 상륙 지점이 아니다"
+
+
+# --- 배선: 상수가 로직에 실제로 닿는가 (§5.105) --------------------------------
+#
+# 둘 다 `constants.py` 에 이름이 있는데 **로직 안에는 숫자가 박혀 있었다.**
+# "읽는 곳이 0 인 값 세기"(§7.5)로 나왔다.
+#
+# ⚠ **기본값이 아닌 값으로 잰다.** `assert f(x) == 원본값` 은 코드에 박힌 숫자와
+# 상수가 같으면 **배선이 끊겨도 참이다.** 상수를 흔들어 결과가 따라 움직이는지
+# 본다(공통 규칙: 배선 테스트는 기본값이 아닌 값으로).
+
+def test_the_trade_spawn_midpoint_is_actually_wired(monkeypatch):
+    from domynion.core import constants as C
+    from domynion.core.naval import trade_spawn_rate
+    base = trade_spawn_rate(0, 400)
+    monkeypatch.setattr(C, "TRADE_SPAWN_SIGMOID_MID", 800)
+    assert trade_spawn_rate(0, 400) != base
+
+
+def test_the_trade_spawn_halflife_is_actually_wired(monkeypatch):
+    from domynion.core import constants as C
+    from domynion.core.naval import trade_spawn_rate
+    base = trade_spawn_rate(0, 500)
+    monkeypatch.setattr(C, "TRADE_SPAWN_DECAY_HALFLIFE", 5)
+    assert trade_spawn_rate(0, 500) != base
+
+
+def test_a_boat_moves_one_tile_per_ticks_per_move(monkeypatch):
+    """`ticksPerMove` 가 1 이라 **배선이 끊겨도 결과가 같았다.**
+    3 으로 흔들어 세 tick 에 한 칸이 되는지 본다."""
+    from domynion.core import constants as C
+    from domynion.core.naval import TransportShip
+    path = list(range(10))
+    b = TransportShip(owner=0, target=1, troops=10.0, path=path, dst=path[-1])
+    for _ in range(3):
+        b.advance()
+    assert b.step_i == 3                    # 기본값 1 — 매 tick 한 칸
+    monkeypatch.setattr(C, "BOAT_TICKS_PER_MOVE", 3)
+    b2 = TransportShip(owner=0, target=1, troops=10.0, path=path, dst=path[-1])
+    for _ in range(3):
+        b2.advance()
+    assert b2.step_i == 1                   # 세 tick 에 한 칸

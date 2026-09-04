@@ -222,6 +222,7 @@ class TransportShip:
     path: list[TileRef]
     dst: TileRef
     step_i: int = 0
+    _since_move: int = 0            # `lastMove` — 마지막으로 움직인 뒤 몇 tick
     retreating: bool = False
     # 퇴각 경로를 이미 새로 깔았는가. 원본은 `retreatDst ??=` 로 **한 번만** 정한다 —
     # 매 tick 다시 정하면 배가 해안을 따라 움직일 때마다 목적지가 흔들려 제자리걸음한다.
@@ -245,7 +246,15 @@ class TransportShip:
         return self.step_i >= len(self.path) - 1
 
     def advance(self) -> None:
-        """tick 당 한 칸(`ticksPerMove = 1`)."""
+        """`ticksPerMove` tick 마다 한 칸. 원본도 우리도 1 이라 매 tick 이다.
+
+        ⚠ 값이 1 이라 **배선이 끊겨 있어도 결과가 같았다** — 상수는 있는데
+        읽는 곳이 0 이었고 여기 주석만 이름을 적어 뒀다. 값이 바뀌는 날
+        한 곳만 고치면 되게 둔다."""
+        self._since_move += 1
+        if self._since_move < C.BOAT_TICKS_PER_MOVE:
+            return
+        self._since_move = 0
         if not self.arrived:
             self.step_i += 1
 
@@ -413,8 +422,9 @@ def trade_gold(dist: float) -> int:
 
 def trade_spawn_rate(rejections: int, num_ships: int) -> int:
     """무역선이 뜰 확률은 `1 / 이 값`. 배가 많을수록 잘 안 뜨고, 계속 안 뜨면 보정된다."""
-    decay = math.log(2) / 50
-    base = 1.0 - 1.0 / (1.0 + math.exp(-decay * (num_ships - 400)))
+    decay = math.log(2) / C.TRADE_SPAWN_DECAY_HALFLIFE
+    base = 1.0 - 1.0 / (1.0 + math.exp(
+        -decay * (num_ships - C.TRADE_SPAWN_SIGMOID_MID)))
     pity = 1.0 / (rejections + 1)
     return int(100 * pity / base) if base > 0 else 1 << 30
 
