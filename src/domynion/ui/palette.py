@@ -217,6 +217,16 @@ UNIT_OUTLINE: RGB = (12, 12, 16)
 UNIT_FILL: RGB = (250, 250, 252)
 UNIT_MIN_ZOOM = 0.45      # 이보다 작으면 아이콘이 점이 돼 오히려 지저분하다
 
+# 유닛 진행바 (`overlays.unit_bar` · 원본 `BarPass`). **종류마다 색이 달라야 한다** —
+# 셋이 같은 자리에 뜨는데 색이 같으면 "차고 있다"와 "사라지고 있다"를 못 가른다.
+BAR_BG: RGB = (12, 12, 16)
+BAR_COLOR = {
+    "deletion":     (255, 96, 96),      # 거꾸로 줄어든다 — 빨강
+    "construction": (150, 230, 255),    # 무역선과 같은 청록 계열(건설 중)
+    "reload":       (255, 220, 140),    # 전함과 같은 호박색(무장 준비)
+}
+BAR_HEIGHT = 3            # 픽셀. 줌과 무관하게 얇게 — 아이콘을 덮으면 안 된다
+
 BOAT_COLOR: RGB = (240, 240, 245)
 WARSHIP_COLOR: RGB = (255, 220, 140)
 TRADE_COLOR: RGB = (150, 230, 255)

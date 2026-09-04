@@ -34,7 +34,7 @@ from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
 from .overlays import (attack_labels, attack_rings, border_relation,
-                       nuke_telegraphs)
+                       nuke_telegraphs, unit_bar)
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -466,6 +466,22 @@ class MapWidget(QWidget):
                 c.setAlpha(dim)
                 p.setPen(QPen(c))
                 p.drawText(int(x), int(y), text)
+                # 진행바 — 철거 > 건설 > 재장전(원본 `BarPass`). 흐리게만 두면
+                # **얼마나 남았는지**가 안 보이고, 철거는 표시가 아예 없었다.
+                bar = unit_bar(u, st.tick_count)
+                if bar is not None:
+                    self._unit_bar(p, pos, w, size, *bar)
+
+    def _unit_bar(self, p: QPainter, pos: tuple[float, float],
+                  width: float, size: int, kind: str, ratio: float) -> None:
+        """아이콘 **바로 아래**에 얇은 막대. 위에 두면 레벨 숫자와 겹친다."""
+        bw = max(10.0, width)
+        x = pos[0] - bw / 2
+        y = pos[1] + size * 0.35
+        p.fillRect(int(x), int(y), int(bw), P.BAR_HEIGHT,
+                   QColor(*P.BAR_BG))
+        p.fillRect(int(x), int(y), int(bw * ratio), P.BAR_HEIGHT,
+                   QColor(*P.BAR_COLOR[kind]))
 
     def _draw_telegraphs(self, p: QPainter, ox: float) -> None:
         """핵 낙하 예고 원 + 내 수송선의 상륙 고리 (§5.92).

@@ -24,7 +24,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
+from ..core import constants as C
 from ..core.nukes import NUKE_MAGNITUDES
+from ..core.units import UNIT_INFO, Unit, UnitType
 
 
 class Relation(IntEnum):
@@ -198,3 +200,66 @@ def wave_text(w) -> str:
 def _hms(seconds: float) -> str:
     t = max(0, int(seconds))
     return f"{t // 60}:{t % 60:02d}"
+
+
+# --- 유닛 진행바 — 원본 `client/render/gl/passes/BarPass.ts` -------------------
+#
+# ⚠ **§7.4 가 `client/render/` 를 "나머지는 WebGL" 로 넘긴 자리인데, 이 파일은
+# CPU 에서 값을 계산한다.** 파일 머리말이 그렇게 적어 뒀다
+# (*"UnitState.health / .missileTimerQueue / .constructionStartTick → CPU progress"*).
+#
+# 우리는 건설을 **흐리게**(alpha 110) 표시하는 것으로 대신하고 있었고,
+# **철거 예정과 재장전은 화면에 아예 없었다.** 특히 철거는 명령하고 30초 동안
+# 계속 돌아가는데(`DELETION_MARK_DURATION_TICKS`) 그 사실이 어디에도 안 뜬다 —
+# 눌렀는지조차 알 수 없다.
+
+BAR_KIND_DELETION = "deletion"
+BAR_KIND_CONSTRUCTION = "construction"
+BAR_KIND_RELOAD = "reload"
+
+# 발사관을 가진 종류. 원본도 이 둘만 재장전 막대를 그린다.
+_TUBE_UNITS = (UnitType.MISSILE_SILO, UnitType.SAM_LAUNCHER)
+
+
+def missile_readiness(unit: Unit, now: int) -> float:
+    """`missileReadiness` — 관 하나하나의 재장전 진행을 **합쳐서** 0~1 로.
+
+    ⚠ **"준비된 관 수 / 레벨" 이 아니다.** 재장전 중인 관도 *진행한 만큼* 더한다.
+    Lv3 사일로에서 관 하나가 반쯤 찼으면 `2/3 + 0.5/3` 이다 — 그래서 막대가
+    계단이 아니라 **연속으로** 찬다. 계단으로 그리면 "곧 쏠 수 있는가"를 알 수 없다.
+    """
+    level = max(1, unit.level)
+    reloading = len(unit.missile_queue)
+    if reloading == 0:
+        return 1.0
+    cooldown = (C.SAM_COOLDOWN_TICKS if unit.utype is UnitType.SAM_LAUNCHER
+                else C.SILO_COOLDOWN_TICKS)
+    ready = level - reloading
+    readiness = ready / level
+    for fired_at in unit.missile_queue:
+        readiness += (now - fired_at) / cooldown / level
+    return max(0.0, min(1.0, readiness))
+
+
+def unit_bar(unit: Unit, now: int) -> tuple[str, float] | None:
+    """이 유닛 위에 그릴 막대 `(종류, 0~1)`. 없으면 None.
+
+    ⚠ **우선순위가 규칙의 일부다**(원본 `unitBarProgress` 의 순서 그대로):
+    철거 > 건설 > 재장전. 철거는 **거꾸로 줄어드는** 막대라 다른 것과 섞이면
+    "차고 있다"와 "사라지고 있다"를 구별할 수 없다.
+    """
+    if unit.deletion_at is not None:
+        remaining = unit.deletion_at - now
+        return (BAR_KIND_DELETION,
+                max(0.0, min(1.0, remaining / C.DELETION_MARK_DURATION_TICKS)))
+    if unit.under_construction:
+        total = UNIT_INFO[unit.utype].construction_ticks or 50
+        done = total - unit.ticks_left
+        return (BAR_KIND_CONSTRUCTION, max(0.0, min(1.0, done / total)))
+    if unit.utype in _TUBE_UNITS:
+        r = missile_readiness(unit, now)
+        # ⚠ **꽉 찼으면 안 그린다.** 원본도 `readiness < 1` 일 때만 값을 낸다 —
+        # 늘 그리면 사일로마다 꽉 찬 막대가 붙어 신호가 아니라 장식이 된다.
+        if r < 1.0:
+            return (BAR_KIND_RELOAD, r)
+    return None
