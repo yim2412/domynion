@@ -205,8 +205,13 @@ def attack_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
         # **원자탄만 겹쳐 산다**(원본 `isStackableNuke`). 수폭·MIRV 는 한 발씩이다 —
         # SAM 하나를 뚫는 표준 수가 ×2 라 원본 주석이 그 자리를 설명해 뒀다.
         top = st.max_bulk_nuke(me, ut) if ut is UnitType.ATOM_BOMB else 1
+        # ⚠ **지금 날고 있는 내 핵의 수**(원본 `count()` = `totalUnitLevels`).
+        # 원본은 `buildTable` 의 **모든** 항목에 이 칩을 띄우는데 우리는 건물에만
+        # 있었다. 핵은 `UnitType` 이라 발사된 것도 유닛으로 세어진다 — 겹쳐 사면
+        # 대기 중인 것까지 포함이라(§5.60), **또 살지 말지의 재료**다.
+        flying = sum(1 for n in st.nukes if n.owner == me and n.utype is ut)
         items.append(Item(
-            NAMES[ut],
+            f"{NAMES[ut]}·{flying}" if flying else NAMES[ut],
             action=(None if top > 1 else
                     (lambda u=ut: _nuke(st, me, u, tile, notify))),
             submenu=((lambda u=ut: _nuke_amounts(st, me, u, tile, notify))
@@ -323,8 +328,11 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
     # 전함은 건물이 아니라 바다에 띄운다
     cost = mine.units.cost(UnitType.WARSHIP)
     ports = [u for u in mine.units.of(UnitType.PORT) if not u.under_construction]
+    # 전함도 원본 `buildTable` 항목이라 같은 칩이 붙는다(위 주석 참조).
+    fleet = sum(1 for w in st.warships if w.owner == me)
     items.append(Item(
-        "전함", action=lambda: _warship(st, me, notify),
+        f"전함·{fleet}" if fleet else "전함",
+        action=lambda: _warship(st, me, notify),
         enabled=bool(ports) and mine.gold >= cost,
         hint=("항구가 필요하다" if not ports else
               f"골드 {_gold(cost)} 필요 (보유 {_gold(mine.gold)})"

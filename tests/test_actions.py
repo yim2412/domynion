@@ -639,3 +639,35 @@ def test_the_default_share_is_still_a_third_for_when_teams_arrive():
     _donate_gold(st, 0, 1, noop)
     assert st.players[1].gold == 1_000
     assert C.DONATION_DIVISOR == 3
+
+
+# --- 건설 표의 보유 칩 — 핵·전함에도 (§5.108) ---------------------------------
+#
+# 원본 `BuildMenu.count()` 는 `buildTable` 의 **모든** 항목에 붙는다. 우리는
+# 건물에만 있었다.
+
+def test_the_nuke_entry_shows_how_many_are_already_in_the_air():
+    """겹쳐 사면 대기 중인 것까지 날고 있는 것으로 센다(§5.60) — **또 살지
+    말지의 재료**다. 이게 없으면 다섯 발을 사 놓고 또 사게 된다."""
+    from domynion.core.nukes import Nuke
+    from domynion.core.units import UnitType
+    st = state()
+    assert by_label(attack_items(st, 0, st.gmap.ref(35, 5), noop), "원폭")
+    for _ in range(3):
+        st.nukes.append(Nuke(owner=0, utype=UnitType.ATOM_BOMB,
+                             src=st.gmap.ref(5, 5), dst=st.gmap.ref(35, 5)))
+    # 남의 핵은 안 센다.
+    st.nukes.append(Nuke(owner=1, utype=UnitType.ATOM_BOMB,
+                         src=st.gmap.ref(35, 5), dst=st.gmap.ref(5, 5)))
+    labs = labels(attack_items(st, 0, st.gmap.ref(35, 5), noop))
+    assert "원폭·3" in labs
+    assert "수폭" in labs                    # 0 이면 칩을 안 붙인다
+
+
+def test_the_warship_entry_shows_the_fleet_size():
+    from domynion.core.naval import Warship
+    st = state()
+    assert by_label(build_items(st, 0, st.gmap.ref(5, 5), noop), "전함")
+    st.warships.append(Warship(owner=0, tile=st.gmap.ref(20, 20)))
+    st.warships.append(Warship(owner=1, tile=st.gmap.ref(21, 20)))
+    assert "전함·1" in labels(build_items(st, 0, st.gmap.ref(5, 5), noop))
