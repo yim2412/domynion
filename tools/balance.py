@@ -22,6 +22,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # 파이프로 넘어갈 때의 버퍼링을 끈다(`tools/gold_flow.py` 의 주석 참조).
 try:
@@ -29,6 +30,8 @@ try:
 except AttributeError:
     pass
 
+from _budget import report as budget_report          # noqa: E402
+from _budget import safe_jobs                        # noqa: E402
 from domynion.ai import nation                       # noqa: E402
 from domynion.core.engine import GameState           # noqa: E402
 from domynion.core.units import UnitType             # noqa: E402
@@ -119,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ticks", type=int, default=TICKS)
     ap.add_argument("--nations", type=int, default=NATIONS)
     ap.add_argument("--bots", type=int, default=BOTS)
-    ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--jobs", type=int, default=0, metavar="N",
+                    help="0 이면 CPU·RAM 을 재서 여유 10%% 를 남기고 정한다")
     ap.add_argument("--out", type=Path, default=None, help="JSON 으로도 남긴다")
     ap.add_argument("--progress", type=int, default=1000, metavar="N",
                     help="N tick 마다 진행을 stderr 로 찍는다 (0이면 끈다). "
@@ -131,10 +135,14 @@ def main(argv: list[str] | None = None) -> int:
     # ⚠ **시계 시각을 찍는다.** §5.91 의 "9시간 12분" 은 사람이 시계를 보고
     # 적은 것이고 도구가 낸 "전체 3,783초"(63분)와 8배 어긋난다. 어느 쪽이
     # 맞는지 가르려면 도구가 **자기 시작·끝 시각을 스스로** 남겨야 한다.
-    print(f"시작 {time.strftime('%H:%M:%S')}", file=sys.stderr, flush=True)
+    # 판 하나가 2000×1000 지도 + 나라 72 + 봇 400 이라 `augment_ab.py` 보다
+    # 무겁다. ⚠ 1.5GB 는 **추정치이지 실측이 아니다** — 상한 쪽으로만 쓴다.
+    workers = safe_jobs(want=a.jobs or len(jobs), per_job_gb=1.5)
+    print(f"시작 {time.strftime('%H:%M:%S')} · {budget_report(workers, 1.5)}",
+          file=sys.stderr, flush=True)
     t0 = time.perf_counter()
-    if a.jobs > 1:
-        with ProcessPoolExecutor(max_workers=a.jobs) as ex:
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
             rows = list(ex.map(_worker, jobs))
     else:
         rows = [_worker(j) for j in jobs]

@@ -11,7 +11,7 @@ dependencies = []
 
 [project.optional-dependencies]
 ui = ["PyQt6>=6.6"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "psutil>=5.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

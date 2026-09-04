@@ -25,12 +25,15 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
 except AttributeError:
     pass
 
+from _budget import report as budget_report          # noqa: E402
+from _budget import safe_jobs                        # noqa: E402
 from domynion.ai import nation                       # noqa: E402
 from domynion.ai.nation import NationBot             # noqa: E402
 from domynion.core import constants as C             # noqa: E402
@@ -95,18 +98,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nations", type=int, default=12)
     ap.add_argument("--bots", type=int, default=30)
     ap.add_argument("--size", default="map4x")
-    ap.add_argument("--jobs", type=int, default=1)
+    # 0 = 재서 정한다(여유 10%). 숫자를 주면 그 값을 쓰되 상한은 그대로 건다 —
+    # 이 규칙을 우회할 수 있게 두면 급할 때 반드시 우회한다.
+    ap.add_argument("--jobs", type=int, default=0, metavar="N",
+                    help="0 이면 CPU·RAM 을 재서 여유 10%% 를 남기고 정한다")
     ap.add_argument("--progress", type=int, default=2000, metavar="N")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args(argv)
 
     jobs = [(s, on, a.focus, a.ticks, a.nations, a.bots, a.size, a.progress)
             for s in a.seeds for on in (False, True)]
-    print(f"시작 {time.strftime('%H:%M:%S')} · {len(jobs)}판",
-          file=sys.stderr, flush=True)
+    workers = safe_jobs(want=a.jobs or len(jobs))
+    print(f"시작 {time.strftime('%H:%M:%S')} · {len(jobs)}판 · "
+          f"{budget_report(workers)}", file=sys.stderr, flush=True)
     t0 = time.perf_counter()
-    if a.jobs > 1:
-        with ProcessPoolExecutor(max_workers=a.jobs) as ex:
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
             rows = list(ex.map(_worker, jobs))
     else:
         rows = [_worker(j) for j in jobs]
@@ -122,18 +129,50 @@ def main(argv: list[str] | None = None) -> int:
               f"{r['ticks']} | {'○' if r['alive'] else '×'} | {r['tiles']:,} | "
               f"{r['troops']:,} | {r['gold']:,} |")
 
-    def med(on: bool, key: str) -> float:
-        return statistics.median([r[key] for r in rows if r["on"] is on])
+    # ⚠ 죽은 판의 0 을 섞은 중앙값은 **아무 말도 못 한다.** 2026-09-04 첫 실행에서
+    # 6판 중 4판이 죽어 켜고·끄고 중앙값이 나란히 0 이 나왔다. 생존을 먼저 세고,
+    # 크기는 **살아남은 판끼리만** 견준다.
+    def alive_rate(on: bool) -> tuple[int, int]:
+        g = [r for r in rows if r["on"] is on]
+        return sum(1 for r in g if r["alive"]), len(g)
 
-    print(f"| **중앙** | 끄고 | | {med(False,'ticks'):.0f} | | "
-          f"{med(False,'tiles'):,.0f} | {med(False,'troops'):,.0f} | "
-          f"{med(False,'gold'):,.0f} |")
-    print(f"| **중앙** | 켜고 | | {med(True,'ticks'):.0f} | | "
-          f"{med(True,'tiles'):,.0f} | {med(True,'troops'):,.0f} | "
-          f"{med(True,'gold'):,.0f} |")
+    def med_alive(on: bool, key: str) -> float | None:
+        v = [r[key] for r in rows if r["on"] is on and r["alive"]]
+        return statistics.median(v) if v else None
+
+    def cell(x: float | None) -> str:
+        return "—" if x is None else f"{x:,.0f}"
+
+    for on in (False, True):
+        k, n = alive_rate(on)
+        print(f"| **생존판 중앙** | {'켜고' if on else '끄고'} | | | "
+              f"**{k}/{n}** | {cell(med_alive(on,'tiles'))} | "
+              f"{cell(med_alive(on,'troops'))} | {cell(med_alive(on,'gold'))} |")
+    print()
+
+    # 짝 판정. 같은 seed 를 양쪽으로 돌렸으므로 **넷 중 하나**가 된다.
+    # "켜고만 생존" 이 "끄고만 생존" 보다 많아야 증강이 유리하다는 뜻이다.
+    tally = {"켜고만 생존": 0, "끄고만 생존": 0, "둘 다 생존": 0, "둘 다 죽음": 0}
+    for s in a.seeds:
+        off = next(r for r in rows if r["seed"] == s and not r["on"])
+        on_ = next(r for r in rows if r["seed"] == s and r["on"])
+        if on_["alive"] and off["alive"]:
+            tally["둘 다 생존"] += 1
+        elif on_["alive"]:
+            tally["켜고만 생존"] += 1
+        elif off["alive"]:
+            tally["끄고만 생존"] += 1
+        else:
+            tally["둘 다 죽음"] += 1
+    print("| 짝 결과 | 판 수 |")
+    print("|---|---|")
+    for k, v in tally.items():
+        print(f"| {k} | {v} |")
     print()
     print("> ⚠ **판이 끝난 tick 이 다르면 영토·병력을 그대로 견주면 안 된다** — "
           "오래 산 쪽이 당연히 크다. 생존(○/×)을 먼저 본다.")
+    print("> ⚠ **둘 다 죽음이 많으면 표가 증강이 아니라 봇의 사망률을 재고 있다.** "
+          "그 경우 seed 를 늘리기 전에 재료(사람 자리 봇)를 먼저 본다.")
     if a.out:
         a.out.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
                          encoding="utf-8")
