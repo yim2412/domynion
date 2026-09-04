@@ -589,6 +589,23 @@ DONATE_COOLDOWN_TICKS = 10 * 10
 # §5.55 에서 "MIRV 가 안 나간다"고 본 것이 사실은 그 자리였다.
 MATCH_SECONDS = 10_200.0        # 170분 — 원본 `HARD_TIME_LIMIT_SECONDS`
 DOMINATION_TILE_RATIO = 0.80    # 원본 `percentageTilesOwnedToWin` (FFA)
+
+# --- Overtime (교착 방지) — 원본 `OVERTIME_DEFAULTS` -------------------------
+#
+# ⚠ **원본 기본값은 꺼짐이고 로비에서만 켠다. 우리는 싱글이라 로비가 없다** —
+# 켤지 말지가 곧 판 규칙이다. §5.115 에서 seed 2 가 22,000 에서도 25,000
+# 에서도 **미종료**였다(둘이 남아 서로를 못 이긴다). 상한을 늘려서는 안 풀린다.
+#
+# 규칙: 시작 시각을 넘기면 승리 문턱(80%)이 **분당 2%p 씩 내려간다.** 바닥은
+# 0 이라 언젠가 반드시 누군가 넘는다 — 그것이 교착을 푸는 유일한 보장이다.
+#
+# ⚠ **정수 퍼센트로 센다.** 원본이 `Math.floor` 로 초와 %p 를 둘 다 자른다 —
+# 화면에 뜨는 정수와 판정이 쓰는 값이 정확히 같아야 하고, 정수 산술이라
+# 결정론이 자명해진다. 비율(0.80)로 계산하면 부동소수 오차가 끼어든다.
+OVERTIME_ENABLED = True
+OVERTIME_START_MINUTES = 30
+OVERTIME_DROP_PCT_PER_MINUTE = 2
+DOMINATION_TILE_PERCENT = 80    # `DOMINATION_TILE_RATIO` 와 같은 값의 정수 표기
 # 경고 테두리(`AlertFrame`). **큰 판에서 경고가 의미를 잃지 않게 하는 장치다** —
 # 봇 400이 국경을 긁는 판에서 들어오는 공격마다 화면이 번쩍이면 아무도 안 본다.
 ALERT_COOLDOWN_TICKS = 150          # 15초. 최근에 경고했으면 또 안 띄운다

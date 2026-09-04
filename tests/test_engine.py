@@ -180,12 +180,30 @@ def test_conquest_when_one_left():
     assert st.over and st.victory is Victory.CONQUEST and st.winner == 0
 
 
-def test_timeout_gives_it_to_the_biggest():
+def test_timeout_gives_it_to_the_biggest(monkeypatch):
+    """⚠ **Overtime 을 끄고 재야 한다.**
+
+    켜 두면 문턱이 70분에 0 이 되므로 170분 하드 리밋에 **닿을 수가 없다** —
+    판은 그 전에 지배로 끝난다. 원본도 Overtime 을 켜면 마찬가지다. 이 테스트는
+    *하드 리밋 경로가 아직 살아 있는가*를 재는 것이라 그 경로를 열고 잰다."""
+    monkeypatch.setattr(C, "OVERTIME_ENABLED", False)
     st = make_state(["." * 10] * 4, {0: (0, 0), 1: (9, 3)})
     st._counts = {0: 20, 1: 5}
     st.tick_count = int(C.MATCH_SECONDS / C.TICK_DT) - 1
     st.tick()
     assert st.over and st.victory is Victory.TIMEOUT and st.winner == 0
+
+
+def test_overtime_ends_the_game_long_before_the_hard_time_limit():
+    """켜 둔 채로는 **`Victory.TIMEOUT` 이 도달 불가**다. 그 사실을 못 박는다 —
+    안 그러면 다음 세션이 시간 종료 경로를 살아 있는 것으로 읽는다."""
+    from domynion.core.engine import domination_percent
+    assert domination_percent(C.MATCH_SECONDS) == 0
+    st = make_state(["." * 10] * 4, {0: (0, 0), 1: (9, 3)})
+    st._counts = {0: 20, 1: 5}
+    st.tick_count = int(C.MATCH_SECONDS / C.TICK_DT) - 1
+    st.tick()
+    assert st.over and st.victory is Victory.DOMINATION
 
 
 def test_tick_is_ten_hz():

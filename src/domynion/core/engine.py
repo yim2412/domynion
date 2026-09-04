@@ -58,6 +58,29 @@ class Victory(Enum):
     TIMEOUT = "시간 종료"      # HARD_TIME_LIMIT_SECONDS
 
 
+def domination_percent(elapsed_seconds: float) -> int:
+    """지배 승리에 필요한 점유율(%). Overtime 이 켜져 있으면 시간이 갈수록 내려간다.
+
+    원본 `Config.percentageTilesOwnedToWin(elapsedGameSeconds)` 그대로다.
+
+    ⚠ **정수로 센다.** 원본이 초와 %p 를 둘 다 `Math.floor` 로 자른다 — 화면에
+    뜨는 정수와 판정이 쓰는 값이 정확히 같아야 하고, 정수 산술이라 결정론이
+    자명해진다. 비율(0.80)로 계산하면 부동소수 오차가 끼어든다.
+
+    ⚠ **바닥이 없다**(0 까지 내려간다). 그것이 교착을 푸는 **유일한 보장**이다 —
+    하한을 두면 §5.115 의 seed 2 처럼 둘이 남아 서로를 못 이기는 판이 그 하한
+    아래에서 영원히 버틴다. 0 에 닿으면 남은 사람 중 영토가 가장 넓은 쪽이
+    그 tick 에 이긴다.
+    """
+    base = C.DOMINATION_TILE_PERCENT
+    if not C.OVERTIME_ENABLED:
+        return base
+    past = int(elapsed_seconds) - C.OVERTIME_START_MINUTES * 60
+    if past <= 0:
+        return base
+    return max(0, base - (past * C.OVERTIME_DROP_PCT_PER_MINUTE) // 60)
+
+
 @dataclass
 class GameState:
     gmap: GameMap
@@ -2784,6 +2807,13 @@ class GameState:
         self.diplomacy.drop_player(pid)
         self._rebuild_posts()
 
+    def domination_ratio(self) -> float:
+        """지금 이 tick 의 지배 승리 문턱. Overtime 이 켜져 있으면 내려간다.
+
+        원본 `Config.percentageTilesOwnedToWin(elapsedGameSeconds)` 그대로다.
+        """
+        return domination_percent(self.elapsed) / 100.0
+
     def _check_end(self) -> None:
         for p in self.alive:
             if self.tiles(p.pid) <= 0 and not any(a.attacker == p.pid for a in self.attacks):
@@ -2805,7 +2835,7 @@ class GameState:
         # 쓰면 안 된다 — 핵이 많이 터진 판일수록 승리가 멀어진다(§5.61).
         burnt = int(self.fallout.mask.sum()) if self.fallout is not None else 0
         usable = max(1, self.gmap.land_count - burnt)
-        if self.tiles(top.pid) / usable >= C.DOMINATION_TILE_RATIO:
+        if self.tiles(top.pid) / usable >= self.domination_ratio():
             self._finish(top.pid, Victory.DOMINATION)
             return
         if self.elapsed >= C.MATCH_SECONDS:
