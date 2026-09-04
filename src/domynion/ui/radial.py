@@ -51,6 +51,9 @@ class Item:
     enabled: bool = True
     hint: str = ""                     # 왜 못 하는지, 또는 비용
     colour: tuple[int, int, int] = (70, 78, 96)
+    # 커서를 얹었을 때 지도에 그릴 사거리 원 `(타일, 반경)`. 원본 ghost preview 의
+    # `rangeRadius` 자리다 — **놓기 전에 범위를 봐야** 골드를 안 버린다.
+    preview: tuple[int, float] | None = None
 
 
 @dataclass

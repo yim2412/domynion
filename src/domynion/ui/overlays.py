@@ -279,3 +279,30 @@ def warship_health_ratio(ship) -> float | None:
     if ship.health >= cap:
         return None                     # 성한 배에는 안 그린다
     return max(0.0, min(1.0, ship.health / cap))
+
+
+# --- 건설 미리보기 사거리 — 원본 `BuildPreviewController` + `RangeCirclePass` ----
+#
+# ⚠ 원본은 ghost preview(677줄)로 **놓기 전에** 반경을 보여 준다. 통째로 옮기지
+# 않고 **규칙이 든 부분만** 가져왔다: *"고르는 항목의 사거리를 지도에 그린다."*
+# 사거리를 모르고 놓으면 골드를 버린다 — 특히 **공장은 역 사거리(110) 안에
+# 있어야 철도가 이어진다.** 그 사실이 화면에 없으면 왜 안 이어지는지 알 수 없다.
+
+def preview_radius(utype, level: int = 1) -> float:
+    """이 종류를 놓을 때 보여 줄 반경. 없으면 0.
+
+    원본 `BuildPreviewController` 의 `switch (u.type)` 넷 그대로다.
+    ⚠ **SAM 은 레벨을 탄다**(`samRange(level)` = 150 − 480/(level+5)).
+    업그레이드를 미리 볼 때 Lv1 반경을 그리면 **덮는 범위를 과소평가한다.**
+    """
+    from ..core.nukes import NUKE_MAGNITUDES, sam_range
+    if utype is UnitType.SAM_LAUNCHER:
+        return sam_range(max(1, level))
+    if utype is UnitType.DEFENSE_POST:
+        return float(C.DEFENSE_POST_RANGE)
+    if utype is UnitType.FACTORY:
+        return float(C.TRAIN_STATION_MAX_RANGE)
+    mag = NUKE_MAGNITUDES.get(utype)
+    if mag is not None:
+        return float(mag[1])            # 바깥 반경 — 원본도 outer 를 쓴다
+    return 0.0

@@ -253,6 +253,9 @@ class MapWidget(QWidget):
             self._draw_labels(p, x)
         self._draw_pings(p)
         if self.menu is not None:
+            # ⚠ **메뉴보다 먼저 그린다.** 원은 지도 위의 것이라 메뉴에 가려야
+            # 한다 — 위에 그리면 원이 메뉴 글자를 지운다.
+            self._draw_preview_range(p)
             self.menu.draw(p, lambda size, bold: ui_font(size, bold))
         p.end()
 
@@ -508,6 +511,34 @@ class MapWidget(QWidget):
             y = pos[1] + max(2.0, z * 0.6) - i * (h + gap)
             p.fillRect(int(x), int(y), int(w), int(h),
                        QColor(*P.VETERANCY_PIP))
+
+    def _draw_preview_range(self, p: QPainter) -> None:
+        """커서를 얹은 건설 항목의 **사거리 원** (원본 `RangeCirclePass`).
+
+        사거리를 모르고 놓으면 골드를 버린다 — 특히 **공장은 역 사거리(110) 안에
+        있어야 철도가 이어진다.** 그 사실이 화면에 없으면 왜 안 이어지는지 알 수 없다.
+
+        ⚠ **가로 순환을 따라 세 번 그린다.** 지도가 순환하므로(`_draw_units` 와
+        같은 이유) 한 번만 그리면 경계 근처에서 원이 잘린 채로 보인다."""
+        menu = self.menu
+        if menu is None or not (0 <= menu.hovered < len(menu.items)):
+            return
+        item = menu.items[menu.hovered]
+        if item.preview is None:
+            return
+        tile, radius = item.preview
+        gm, z, oy = self.state.gmap, self.zoom, self.offset.y()
+        cy = oy + (tile // gm.width + 0.5) * z
+        r = radius * z
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        colour = QColor(*(P.PREVIEW_RANGE if item.enabled
+                          else P.PREVIEW_RANGE_OFF))
+        p.setPen(QPen(colour, 1.5, Qt.PenStyle.DashLine))
+        for ox in self._tiles_x():
+            cx = ox + (tile % gm.width + 0.5) * z
+            if cx + r < 0 or cx - r > self.width():
+                continue
+            p.drawEllipse(QPointF(cx, cy), r, r)
 
     def _draw_telegraphs(self, p: QPainter, ox: float) -> None:
         """핵 낙하 예고 원 + 내 수송선의 상륙 고리 (§5.92).

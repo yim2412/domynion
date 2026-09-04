@@ -233,6 +233,12 @@ HEALTH_COLOR: RGB = (110, 230, 120)     # 초록 — 진행바 셋과 겹치지 
 VETERANCY_COLOR: RGB = (255, 200, 60)   # 금색 핍(원본 "solid gold rank bars")
 VETERANCY_PIP: RGB = (255, 200, 60)
 
+# 건설 미리보기 사거리 원 (원본 `RangeCirclePass`).
+# ⚠ **못 놓는 항목도 원을 그린다** — 회색으로. "왜 못 하는가"를 알려면 항목이
+# 보이면서 이유가 붙어야 한다는 라디얼의 원칙(§ `radial.Item`)과 같은 자리다.
+PREVIEW_RANGE: RGB = (235, 235, 245)
+PREVIEW_RANGE_OFF: RGB = (130, 130, 145)
+
 BOAT_COLOR: RGB = (240, 240, 245)
 WARSHIP_COLOR: RGB = (255, 220, 140)
 TRADE_COLOR: RGB = (150, 230, 255)

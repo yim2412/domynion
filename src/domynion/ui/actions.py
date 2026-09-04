@@ -20,6 +20,7 @@ from ..core.relations import (RELATION_COLOUR, RELATION_LABEL,
                               Relation)
 from ..core.gamemap import TileRef
 from ..core.units import UNIT_INFO, UnitType
+from .overlays import preview_radius
 from .radial import Item
 
 # 건설 메뉴에 올릴 것들. 원본 `BuildMenu.ts` 의 표와 같은 목록이다
@@ -292,10 +293,16 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
     mine = st.players[me]
     items = []
     for ut in BUILDABLE:
+        # 사거리 원 — 원본 `BuildPreviewController` 의 `rangeRadius` 넷.
+        # ⚠ **업그레이드는 다음 레벨 반경**을 보여 준다. 지금 레벨을 그리면
+        # "올리면 얼마나 넓어지나"를 알 수 없다(SAM 은 레벨을 탄다).
         cost = mine.units.cost(ut)
         have = mine.units.owned(ut)
         up = st.find_upgrade(me, ut, tile)
         spot = None if up is not None else st.can_build(me, ut, tile)
+        radius = preview_radius(ut, (up.level + 1) if up is not None else 1)
+        at = up.tile if up is not None else (spot if spot is not None else tile)
+        preview = (at, radius) if radius > 0 else None
         label = f"{NAMES[ut]}·{have}" if have else NAMES[ut]
         if up is not None:
             # 여러 레벨을 살 수 있을 때만 하위 메뉴를 연다. 한 레벨뿐이면 메뉴를
@@ -312,7 +319,7 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
                 hint=(f"가까운 {NAMES[ut]}(Lv{up.level}) 를 올린다 · "
                       f"골드 {_gold(cost)}"
                       + (f" · 최대 ×{top}" if top > 1 else "")),
-                colour=COL_BUILD))
+                colour=COL_BUILD, preview=preview))
             continue
         items.append(Item(
             label,
@@ -324,7 +331,7 @@ def build_items(st: GameState, me: int, tile: TileRef, notify) -> list[Item]:
                   if spot is None else
                   f"골드 {_gold(cost)} · 건설 "
                   f"{UNIT_INFO[ut].construction_ticks * C.TICK_DT:.0f}초"),
-            colour=COL_BUILD))
+            colour=COL_BUILD, preview=preview))
     # 전함은 건물이 아니라 바다에 띄운다
     cost = mine.units.cost(UnitType.WARSHIP)
     ports = [u for u in mine.units.of(UnitType.PORT) if not u.under_construction]
