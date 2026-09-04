@@ -35,6 +35,7 @@ from . import palette as P
 from .frame import FrameBuilder
 from .overlays import (attack_labels, attack_rings, border_relation,
                        nuke_telegraphs, unit_bar, warship_health_ratio)
+from .numbers import render_number, render_troops
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -596,7 +597,7 @@ class MapWidget(QWidget):
             cx, cy = ox + (lab.x + 0.5) * z, oy + (lab.y + 0.5) * z
             if not (-60 < cx < self.width() + 60 and -60 < cy < self.height() + 60):
                 continue
-            text = f"{lab.troops:,.0f}"
+            text = render_troops(lab.troops)
             px = cx - fm.horizontalAdvance(text) / 2
             py = cy - fm.height() / 2
             p.setPen(QPen(QColor(*P.LABEL_SHADOW)))

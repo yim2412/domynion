@@ -237,6 +237,22 @@ def test_starting_troops_differ_by_kind():
             == C.NATION_START_TROOPS["easy"])
 
 
+def test_every_difficulty_has_its_own_starting_troops():
+    """⚠ **표를 재는 테스트는 모든 칸을 재야 한다.**
+
+    위 테스트가 넷 중 `easy` 하나만 재고 있었고, 그래서 `impossible` 이
+    **25,000 으로 틀린 채**(원본 31,250) 지나갔다 — 가장 어려운 난이도가
+    `hard` 와 같아져 있었다(2026-09-04 발견, §5.124).
+
+    원본 `Config.startManpower` 값 그대로 못 박는다."""
+    want = {"easy": 12_500.0, "medium": 18_750.0,
+            "hard": 25_000.0, "impossible": 31_250.0}
+    assert C.NATION_START_TROOPS == want
+    # 난이도가 올라가면 **반드시 늘어난다** — 둘이 같아지면 그 난이도는 뜻이 없다.
+    vals = [C.NATION_START_TROOPS[d] for d in ("easy", "medium", "hard", "impossible")]
+    assert vals == sorted(vals) and len(set(vals)) == len(vals)
+
+
 def test_is_bot_flag_still_works_for_old_callers():
     """`is_bot=True` 만 주던 호출부가 조용히 human 으로 바뀌면 안 된다."""
     p = PlayerState(pid=0, name="B", is_bot=True)

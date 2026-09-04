@@ -268,8 +268,12 @@ BOT_GROWTH_MULT = 0.5
 DIFFICULTIES = ("easy", "medium", "hard", "impossible")
 NATION_MAX_TROOPS_MULT = {"easy": 0.5, "medium": 0.75, "hard": 1.0, "impossible": 1.25}
 NATION_GROWTH_MULT = {"easy": 0.9, "medium": 0.95, "hard": 1.0, "impossible": 1.05}
+# ⚠ **`impossible` 이 25,000 으로 틀려 있었다**(2026-09-04 발견). 원본
+# `startManpower` 는 **31,250** 이다 — `hard` 주석이 *"Like humans"* 라 거기서
+# 멈춘 것으로 보인다. 난이도가 넷인데 값이 셋뿐이면 **가장 어려운 난이도가
+# 그 아래와 같아진다.**
 NATION_START_TROOPS = {"easy": 12_500.0, "medium": 18_750.0,
-                       "hard": 25_000.0, "impossible": 25_000.0}
+                       "hard": 25_000.0, "impossible": 31_250.0}
 
 
 # --- 전투 -----------------------------------------------------------------

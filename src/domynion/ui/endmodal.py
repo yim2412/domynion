@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (QGridLayout, QHBoxLayout, QLabel, QPushButton,
 
 from ..core.engine import GameState
 from ..core.units import UnitType
+from .numbers import render_number, render_troops
 from . import palette as P
 
 _STYLE = """
@@ -58,9 +59,9 @@ def _cell(st: GameState, pid: int, key: str, rank: int) -> str:
     if key == "tiles":
         return f"{st.tiles(pid):,} ({st.share(pid) * 100:.1f}%)"
     if key == "troops":
-        return f"{p.troops:,.0f}"
+        return render_troops(p.troops)
     if key == "gold":
-        return f"{p.gold:,}"
+        return render_number(p.gold)
     if key == "allies":
         return str(sum(1 for q in st.players if q != pid
                        and st.diplomacy.allied(pid, q)))

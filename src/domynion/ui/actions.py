@@ -21,6 +21,7 @@ from ..core.relations import (RELATION_COLOUR, RELATION_LABEL,
 from ..core.gamemap import TileRef
 from ..core.units import UNIT_INFO, UnitType
 from .overlays import preview_radius
+from .numbers import render_number, render_troops
 from .radial import Item
 
 # 건설 메뉴에 올릴 것들. 원본 `BuildMenu.ts` 의 표와 같은 목록이다
@@ -56,7 +57,9 @@ DONATE_PRESETS = (10, 25, 50, 75, 100)
 
 
 def _gold(n: int) -> str:
-    return f"{n:,}"
+    """원본 `renderNumber` 로 줄여 쓴다 — 라디얼 칸은 폭이 좁아 `1,000,000` 이
+    들어가지 않는다. ⚠ **골드는 10으로 안 나눈다**(그건 병력만이다)."""
+    return render_number(n)
 
 
 def structure_at(st: GameState, me: int, tile: TileRef):
@@ -147,7 +150,7 @@ def _attack_hint(st: GameState, me: int, tile: TileRef,
     why = _why_not_attackable(st, me, tile, target)
     if why is not None:
         return why
-    return f"보낼 병력 {st.players[me].attack_troops():,.0f}"
+    return f"보낼 병력 {render_troops(st.players[me].attack_troops())}"
 
 
 def _boat_hint(st: GameState, me: int, tile: TileRef,
@@ -170,7 +173,7 @@ def _boat_hint(st: GameState, me: int, tile: TileRef,
         # 상한도 아니고 상대도 아니면 남는 것은 지리다 — 상륙 지점이 없거나
         # 내 해안에서 물길로 닿지 않는다.
         return "물길로 닿는 해안이 없다"
-    return f"배로 병력 {mine.troops * C.BOAT_ATTACK_RATIO:,.0f} 을 보낸다"
+    return f"배로 병력 {render_troops(mine.troops * C.BOAT_ATTACK_RATIO)} 을 보낸다"
 
 
 # --- 공격 -------------------------------------------------------------------
@@ -731,7 +734,7 @@ def _donate_amounts(st: GameState, me: int, target: int, notify, *,
         enabled=total > 0,
         hint=(f"원본 라디얼과 같다 — "
               + (f"골드 {_gold(int(total // C.DONATION_DIVISOR))}"
-                 if gold else f"병력 {total / C.DONATION_DIVISOR:,.0f}")
+                 if gold else f"병력 {render_troops(total / C.DONATION_DIVISOR)}")
               if total > 0 else "보낼 것이 없다"),
         colour=COL_PLAIN)]
     for pct in DONATE_PRESETS:
@@ -742,10 +745,10 @@ def _donate_amounts(st: GameState, me: int, target: int, notify, *,
         if gold:
             hint = f"골드 {_gold(int(amount))} 을 보낸다"
         elif room is not None and goes < amount:
-            hint = (f"병력 {amount:,.0f} 중 {goes:,.0f} 만 간다 — "
+            hint = (f"병력 {render_troops(amount)} 중 {render_troops(goes)} 만 간다 — "
                     f"상대의 남은 자리가 그만큼이다")
         else:
-            hint = f"병력 {amount:,.0f} 을 보낸다"
+            hint = f"병력 {render_troops(amount)} 을 보낸다"
         out.append(Item(
             label,
             action=(lambda a=amount: (_donate_gold(st, me, target, notify, a)
@@ -777,6 +780,6 @@ def _donate_troops(st: GameState, me: int, target: int, notify,
         amount = st.players[me].troops / C.DONATION_DIVISOR
     # ⚠ 실패 이유가 둘이다(§5.71) — 내 병력이 없거나, **상대가 상한이라 못 받거나**.
     # 앞의 것만 말하면 상한에 붙은 동맹에게 보내려다 "내 병력이 없다"는 틀린 답을 본다.
-    notify(f"P{target} 에게 병력 {amount:,.0f}"
+    notify(f"P{target} 에게 병력 {render_troops(amount)}"
            if st.donate_troops(me, target, amount)
            else "병력을 보낼 수 없다 — 내 병력이 없거나 상대가 상한이다")

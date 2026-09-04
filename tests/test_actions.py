@@ -112,7 +112,8 @@ def test_build_shows_cost_and_refuses_without_gold():
     st.players[0].gold = 0
     city = by_label(build_items(st, 0, st.gmap.ref(5, 5), noop), "도시")
     assert not city.enabled
-    assert "골드" in city.hint and "125,000" in city.hint
+    # ⚠ 원본 `renderNumber` 로 줄여 쓴다(§5.124) — `125,000` 이 아니라 `125K` 다.
+    assert "골드" in city.hint and "125K" in city.hint
 
 
 def test_build_actually_places_the_building():
@@ -626,7 +627,8 @@ def test_troop_presets_say_how_much_actually_fits():
         assert "상한" in item.hint
     them.troops -= 10.0                                 # 열 자리만 난다
     full = by_label(_donate_menu(st, gold=False), "100%")
-    assert full.enabled and "10 만 간다" in full.hint
+    # 병력은 **10으로 나눠서** 보여 준다(원본 `renderTroops`) — 100,000 → `10.0K`.
+    assert full.enabled and "중 1 만 간다" in full.hint
 
 
 def test_the_default_share_is_still_a_third_for_when_teams_arrive():

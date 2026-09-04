@@ -28,6 +28,7 @@ from .endmodal import EndModal
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
 from .map_widget import MapWidget
+from .numbers import render_number, render_troops
 from . import palette as P
 
 # 정보 오버레이에 세는 건물. 원본 `PlayerInfoOverlay` 의 여섯(도시·공장·항구·
@@ -286,11 +287,11 @@ class MainWindow(QMainWindow):
         self.inspect.setText(
             f"<b>{p.name}</b> <span style='opacity:.6'>{kind}</span>  "
             + f"영토 {st.share(pid) * 100:.1f}%{rel_html}{extra}<br>"
-            + f"<span style='opacity:.75'>병력 {p.troops:,.0f} / {cap:,.0f}"
+            + f"<span style='opacity:.75'>병력 {render_troops(p.troops)} / {render_troops(cap)}"
             + (f" · 나가 있음 {out:,.0f}" if out > 0 else "")
-            + f" · 골드 {p.gold:,.0f}</span><br>"
+            + f" · 골드 {render_number(p.gold)}</span><br>"
             + (f"<span style='opacity:.75'>{units}</span><br>" if units else "")
-            + f"<span style='opacity:.75'>내가 보낼 병력 {send:,.0f} · "
+            + f"<span style='opacity:.75'>내가 보낼 병력 {render_troops(send)} · "
             + f"상대/내 = {ratio:.2f} ({hint})</span>")
         self.inspect.adjustSize()
         self.inspect.move(12, self.scoreboard.y() + self.scoreboard.height() + 8)

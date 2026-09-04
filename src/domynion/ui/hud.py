@@ -16,6 +16,7 @@ from ..core import constants as C
 from ..core.doomsday import wave_state
 from ..core.engine import GameState
 from ..core.units import UnitType
+from .numbers import render_number, render_troops
 from . import palette as P
 from .overlays import wave_text
 from .rates import gold_pip, rate_rising, troop_rate
@@ -105,7 +106,7 @@ class Scoreboard(QWidget):
                 f'<span{mine}><span style="opacity:.5">{rank}.</span> '
                 f'<span style="color:{colour}">■</span> {p.name}{mark} '
                 f'&nbsp;{share:4.1f}%&nbsp; <span style="opacity:.7">'
-                f'{p.troops:,.0f}</span></span>')
+                f'{render_troops(p.troops)}</span></span>')
             lbl.setStyleSheet(dim)
 
 
@@ -165,7 +166,7 @@ class ControlBar(QWidget):
         """% 만 보여주면 그게 몇 명인지 모른다 — 원본도 실제 병력 수를 같이 쓴다."""
         p = self.state.players.get(self.pid)
         n = p.troops * value / 100 if p else 0.0
-        self.ratio_label.setText(f"공격 {value}% <b>{n:,.0f}</b>")
+        self.ratio_label.setText(f"공격 {value}% <b>{render_troops(n)}</b>")
 
     def nudge_ratio(self, delta: float) -> None:
         """T/Y 로 10%p 씩. 1% 에서 올릴 때는 11% 가 아니라 10% 로 붙인다.
@@ -196,12 +197,12 @@ class ControlBar(QWidget):
         colour = RATE_UP if rate_rising(rate, self._last_rate) else RATE_DOWN
         self._last_rate = rate
         self.troops_label.setText(
-            f"병력 <b>{p.troops:,.0f}</b> / {cap:,.0f} ({pct:.0f}%) "
-            f'<span style="color:{colour}">+{rate:,.0f}/s</span>')
+            f"병력 <b>{render_troops(p.troops)}</b> / {render_troops(cap)} ({pct:.0f}%) "
+            f'<span style="color:{colour}">+{render_troops(rate)}/s</span>')
         pip = gold_pip(self.state, self.pid)
         gain = ("" if pip is None else
-                f' <span style="color:{GOLD_PIP}">+{pip:,.0f}</span>')
-        self.gold_label.setText(f"골드 <b>{p.gold:,}</b>{gain}")
+                f' <span style="color:{GOLD_PIP}">+{render_number(pip)}</span>')
+        self.gold_label.setText(f"골드 <b>{render_number(p.gold)}</b>{gain}")
         # 0 인 종류는 흐리게 둔다 — 빼면 자리가 밀려 **늘 같은 자리**가 깨진다
         # (원본도 일곱 칸을 고정으로 그린다). §5.108 의 라디얼 칩과 반대 판단인데,
         # 그쪽은 항목 이름 옆이라 0 이면 군더더기이고 이쪽은 **자리가 곧 종류**다.

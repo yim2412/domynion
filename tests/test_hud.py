@@ -23,6 +23,7 @@ from domynion.core.gamemap import GameMap                         # noqa: E402
 from domynion.core.state import PlayerState                       # noqa: E402
 from domynion.ui.hud import (RATE_DOWN, RATE_UP, SCOREBOARD_ROWS,   # noqa: E402
                              ControlBar, ImmunityBar, Scoreboard)
+from domynion.ui.numbers import render_troops        # noqa: E402
 from domynion.ui.rates import troop_rate                          # noqa: E402
 
 
@@ -94,7 +95,8 @@ def test_label_shows_how_many_troops_actually_go(qapp):
     c = ControlBar(state(), 0)         # 병력 40,000
     c.slider.setValue(25)
     assert "25%" in c.ratio_label.text()
-    assert "10,000" in c.ratio_label.text()
+    # 병력 표시는 원본 `renderTroops`(÷10 + 축약) 다 — 10,000 → `1.00K`.
+    assert "1.00K" in c.ratio_label.text()
 
 
 # --- 면역 바 ----------------------------------------------------------------
@@ -189,7 +191,7 @@ def test_the_bar_shows_how_fast_the_army_fills(qapp):
     c.refresh()
     rate = troop_rate(st.players[0], st.tiles(0))
     assert rate > 0
-    assert f"+{rate:,.0f}/s" in c.troops_label.text()
+    assert f"+{render_troops(rate)}/s" in c.troops_label.text()
 
 
 def test_the_colour_turns_when_the_rate_falls(qapp):
@@ -216,7 +218,8 @@ def test_a_lump_of_gold_pops_up_and_then_goes_away(qapp):
     c = ControlBar(st, 0)
     st.note_gold_gain(0, 35_000)
     c.refresh()
-    assert "+35,000" in c.gold_label.text()
+    # 골드는 **안 나눈다**. 축약만 한다 — 35,000 → `35.0K`.
+    assert "+35.0K" in c.gold_label.text()
     st.tick_count += 20                      # 2초
     c.refresh()
     assert "+35,000" not in c.gold_label.text()

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QPushButton,
 from ..core import constants as C
 from ..core.engine import GameState
 from ..core.events import Category, Event, EventKind
+from .numbers import render_number, render_troops
 from . import palette as P
 
 _PANEL = """
@@ -42,9 +43,9 @@ def describe(st: GameState, e: Event, me: int) -> str:
     who = other.name if other else "?"
     k = e.kind
     if k is EventKind.ATTACK_REQUEST:
-        return f"{who} 가 공격 (병력 {e.amount:,.0f})"
+        return f"{who} 가 공격 (병력 {render_troops(e.amount)})"
     if k is EventKind.NAVAL_INVASION_INBOUND:
-        return f"{who} 의 상륙 부대 (병력 {e.amount:,.0f})"
+        return f"{who} 의 상륙 부대 (병력 {render_troops(e.amount)})"
     if k in (EventKind.NUKE_INBOUND, EventKind.HYDROGEN_BOMB_INBOUND,
              EventKind.MIRV_INBOUND):
         return f"{who} 가 {k.value}"
@@ -257,7 +258,7 @@ class AttacksPanel(QWidget):
         for (lbl, btn), (arrow, who, troops, colour, mark, cmd, tip) in zip(
                 self._rows, lines):
             lbl.setText(f'<span style="color:{colour}">{arrow}</span> {who} '
-                        f'<span style="opacity:.75">{troops:,.0f}</span>')
+                        f'<span style="opacity:.75">{render_troops(troops)}</span>')
             btn.setVisible(cmd is not None)
             if cmd is not None:
                 btn.setText(mark)
@@ -363,7 +364,7 @@ class AlertBanner(QLabel):
             if a.troops < floor:
                 continue                # 내 병력의 1/5 미만
             if not cooling and out is None:
-                out = f"⚠ {foe.name} 의 공격 — {a.troops:,.0f}"
+                out = f"⚠ {foe.name} 의 공격 — {render_troops(a.troops)}"
         # 목록에서 빠진 공격은 잊는다(원본도 `activeAttackIds` 로 정리한다).
         self._seen = [s for s in self._seen
                       if any(s is a for a in st.attacks)]

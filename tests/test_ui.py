@@ -568,9 +568,11 @@ def test_the_overlay_shows_gold_and_the_troop_cap():
     절대값만으로는 5,000 이 많은지 적은지 알 수 없다."""
     _app, st, win = _inspect_window()
     text = win.inspect.text()
-    assert "1,234,567" in text
+    # 골드도 원본 `renderNumber` 로 줄여 쓴다 — 1,234,567 → `1.23M`.
+    assert "1.23M" in text
     cap = st.players[1].max_troops(st.tiles(1))
-    assert f"{cap:,.0f}" in text
+    from domynion.ui.numbers import render_troops
+    assert render_troops(cap) in text
     win.close()
 
 
