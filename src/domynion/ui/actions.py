@@ -469,6 +469,25 @@ def _target(st: GameState, me: int, target: int, notify) -> None:
     else:
         notify("지금은 찍을 수 없다")
 
+def _allies_hint(st: GameState, target: int) -> str:
+    """상대의 동맹을 **잔여 시간이 짧은 순**으로. 원본은 30초 이하 빨강,
+    60초 이하 노랑으로 칠한다 — 곧 풀리는 동맹은 계산에서 빼도 되기 때문이다.
+    라디얼은 한 줄 힌트뿐이라 색 대신 ⚠ 로 표시한다."""
+    d = st.diplomacy
+    rows = []
+    for al in d.alliances:
+        if not al.involves(target):
+            continue
+        other = al.other(target)
+        left = max(0, al.expires_at - st.tick_count) * C.TICK_DT
+        name = st.players[other].name if other in st.players else f"P{other}"
+        rows.append((left, f"{'⚠ ' if left <= 60 else ''}{name} {left:.0f}초"))
+    if not rows:
+        return "동맹이 없다 — 쳐도 끼어들 상대가 없다"
+    rows.sort()
+    return " · ".join(t for _, t in rows[:5])
+
+
 def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
     if target is None or target == me:
         return []
@@ -477,8 +496,25 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
     allied = d.allied(me, target)
     incoming = me in d.pending.get(target, set())
     outgoing = target in d.pending.get(me, set())
+    foe = st.players[target]
     # 동맹 요청이 받아들여질지는 **상대가 나를 보는 값**이 정한다.
     rel = st.relation_of(target, me)
+    # ⚠ **관계 값은 나라에게만 뜻이 있다.** 원본 `PlayerPanel` 이 관계 알약을
+    # 세 조건에서 아예 숨긴다 — 나라가 아니거나(`type() !== Nation`), 배신자거나,
+    # 이미 동맹이면. 우리는 **누구에게나 띄우고 있었고 힌트가 거짓이었다**:
+    # 봇에게 "우호라 동맹 요청을 대체로 받아 준다"고 적어 두는데 `tribe.py` 는
+    # 관계도 배신자도 안 보고 **전부 받는다.** 배신자는 반대로, 관계가 우호여도
+    # 90% 거절한다.
+    #
+    # 우리는 숨기는 대신 **왜 뜻이 없는지**를 적는다 — 이 메뉴의 원칙이
+    # *"못 하는 것도 보이면서 이유가 붙는다"* 이기 때문이다(`radial.Item`).
+    rel_useless = ("이미 동맹이다 — 관계는 요청을 받을지 정할 때만 쓴다" if allied
+                   else "배신자라 관계와 무관하게 90% 거절한다"
+                   if d.is_traitor(target, st.tick_count)
+                   else "봇은 관계를 안 본다 — 동맹 요청을 전부 받는다"
+                   if foe.is_bot
+                   else "사람이라 직접 판단한다" if foe.kind == "human"
+                   else "")
     # 기부는 **친한 사이에게만, 10초에 한 번**(§5.63). 원본도 이 값을 클라이언트로
     # 내려보내 버튼을 잠근다(`GameRunner` → `canDonateGold`/`canDonateTroops`).
     can_donate = st.can_donate(me, target)
@@ -494,12 +530,25 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
         Item("동맹 거절", action=lambda: _reject(st, me, target, notify),
              enabled=incoming, hint='들어온 요청이 없다' if not incoming else
                   f'P{target} 의 요청을 물린다', colour=COL_PLAIN),
-        Item(f"관계 · {RELATION_LABEL[rel]}", enabled=False,
-             hint=("상대가 나를 보는 눈이다. "
+        Item(f"관계 · {RELATION_LABEL[rel]}" if not rel_useless
+             else "관계 · —", enabled=False,
+             hint=(rel_useless if rel_useless else
+                   "상대가 나를 보는 눈이다. "
                    + ("적대라 동맹 요청을 받지 않는다" if rel < Relation.NEUTRAL
                       else "우호라 동맹 요청을 대체로 받아 준다"
                       if rel >= Relation.FRIENDLY else "중립 — 반반이다")),
-             colour=RELATION_COLOUR[rel]),
+             colour=(COL_PLAIN if rel_useless else RELATION_COLOUR[rel])),
+        # 상대가 **누구와** 동맹이고 **얼마나 남았는지**. 칠 상대를 고를 때
+        # 먼저 보는 것이다 — 동맹이 붙어 있으면 그쪽이 개입한다. 원본
+        # `PlayerPanel` 은 이름마다 잔여 시간을 달고 30초/60초에 색을 바꾼다.
+        Item(f"동맹국 {len(d.allies_of(target))}", enabled=False,
+             hint=_allies_hint(st, target), colour=COL_DIPLO),
+        # `other.betrayals()`. 몇 번 뒤통수를 쳤는지가 동맹을 맺을지의 재료다.
+        # 우리는 **종료 화면에만** 있었다 — 판 중에 정작 필요한 자리에 없었다.
+        Item(f"배신 {d.betrayals.get(target, 0)}회", enabled=False,
+             hint=("한 번도 안 깼다" if not d.betrayals.get(target)
+                   else "동맹을 먼저 깬 횟수다. 잦으면 연장이 위험하다"),
+             colour=COL_ATTACK if d.betrayals.get(target) else COL_PLAIN),
         Item("동맹 요청", action=lambda: _request(st, me, target, notify),
              enabled=not allied and not outgoing,
              hint="이미 동맹이다" if allied else
@@ -529,9 +578,16 @@ def diplomacy_items(st: GameState, me: int, target, notify) -> list[Item]:
                    if st.emojis.can_send(me, target, st.tick_count)
                    else "아직 쿨다운이다 (5초)"),
              colour=COL_DIPLO),
+        # ⚠ 원본 패널은 **무역 상태를 따로 한 줄로** 띄운다
+        # (`other.hasEmbargoAgainst(my)`). 우리는 *내가* 건 것만 보여 주고 있어서,
+        # 무역선이 왜 안 오는지가 화면 어디에도 없었다 — 상대가 건 금수는
+        # 내가 풀 수 없으므로 **버튼이 아니라 알림**이다.
         Item("금수" if not d.embargoed(me, target) else "금수 해제",
              action=lambda: _embargo(st, me, target, notify),
-             hint="무역선 항로를 끊는다 (양쪽 다 손해다)", colour=COL_DIPLO),
+             hint=("무역선 항로를 끊는다 (양쪽 다 손해다)"
+                   + ("  ⚠ 그쪽도 나를 막고 있다"
+                      if d.embargoed(target, me) else "")),
+             colour=COL_DIPLO),
         Item("골드 주기", action=lambda: _donate_gold(st, me, target, notify),
              enabled=can_donate and mine.gold > 0,
              hint=(f"가진 골드의 1/{C.DONATION_DIVISOR} "

@@ -456,3 +456,115 @@ def test_boat_refuses_the_open_sea():
     st = _sea_map()
     boat = by_label(root_items(st, 0, st.gmap.ref(20, 5), noop), "상륙")
     assert not boat.enabled and "바다" in boat.hint
+
+
+# --- 외교 패널 대조: 원본 `PlayerPanel` 이 보여 주는 것 (§5.103) ---------------
+#
+# 관계 알약 · 상대의 동맹 목록 · 배신 횟수 · 무역 상태 넷. 앞의 셋은 **판단의
+# 재료**라 없으면 사람이 눈으로 셀 방법이 없고, 관계는 **거짓 재료**였다.
+
+def _kinds(st, pid, kind):
+    """`kind` 는 생성자에서 `is_bot` 을 계산한다 — 만든 뒤 대입하면 안 먹는다."""
+    old = st.players[pid]
+    st.players[pid] = PlayerState(pid=pid, name=old.name, start=old.start,
+                                  kind=kind)
+    return st.players[pid]
+
+
+def _relation_row(st, me=0, target=1):
+    return next(i for i in diplomacy_items(st, me, target, noop)
+                if i.label.startswith("관계"))
+
+
+def test_relation_is_shown_for_a_nation():
+    """나라에게만 관계가 뜻이 있다 — 그때는 값이 그대로 보여야 한다."""
+    st = state()
+    row = _relation_row(st)
+    assert row.label != "관계 · —"
+    assert "상대가 나를 보는 눈" in row.hint
+
+
+def test_a_bot_never_shows_a_relation_because_it_ignores_one():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 봇에게 "우호라 동맹 요청을
+    대체로 받아 준다"고 적히는데, `tribe.py` 는 관계를 **아예 안 본다.**
+    화면이 없는 규칙을 있다고 말하는 자리였다."""
+    st = state()
+    _kinds(st, 1, "bot")
+    row = _relation_row(st)
+    assert row.label == "관계 · —"
+    assert "전부 받는다" in row.hint
+    assert "대체로 받아 준다" not in row.hint
+
+
+def test_a_traitor_never_shows_a_relation_because_it_is_overridden():
+    """배신자는 관계가 우호여도 90% 거절한다 — 관계를 띄우면 거짓말이 된다."""
+    st = state()
+    st.diplomacy.traitor_since[1] = st.tick_count
+    row = _relation_row(st)
+    assert row.label == "관계 · —"
+    assert "90%" in row.hint
+
+
+def test_an_ally_never_shows_a_relation_because_it_is_moot():
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    row = _relation_row(st)
+    assert row.label == "관계 · —"
+    assert "이미 동맹" in row.hint
+
+
+def test_the_panel_lists_who_the_target_is_allied_with_and_for_how_long():
+    """칠 상대를 고를 때 **누가 끼어드는지**가 먼저다."""
+    st = state()
+    st.players[2] = PlayerState(pid=2, name="P2", start=st.gmap.ref(50, 5),
+                                kind="nation")
+    st.diplomacy.form(1, 2, st.tick_count)
+    row = next(i for i in diplomacy_items(st, 0, 1, noop)
+               if i.label.startswith("동맹국"))
+    assert row.label == "동맹국 1"
+    assert "P2" in row.hint
+
+
+def test_an_alliance_about_to_expire_is_marked():
+    """30~60초 남은 동맹은 계산에서 빼도 된다 — 원본은 색, 우리는 ⚠."""
+    st = state()
+    st.players[2] = PlayerState(pid=2, name="P2", start=st.gmap.ref(50, 5),
+                                kind="nation")
+    al = st.diplomacy.form(1, 2, st.tick_count)
+    al.expires_at = st.tick_count + int(20 / C.TICK_DT)     # 20초 남았다
+    row = next(i for i in diplomacy_items(st, 0, 1, noop)
+               if i.label.startswith("동맹국"))
+    assert "⚠" in row.hint
+    # 막지 않았으면: 5분짜리 동맹과 20초짜리가 화면에서 똑같아 보인다.
+    al.expires_at = st.tick_count + C.ALLIANCE_DURATION_TICKS
+    row2 = next(i for i in diplomacy_items(st, 0, 1, noop)
+                if i.label.startswith("동맹국"))
+    assert "⚠" not in row2.hint
+
+
+def test_no_alliances_says_so_instead_of_showing_an_empty_row():
+    st = state()
+    row = next(i for i in diplomacy_items(st, 0, 1, noop)
+               if i.label.startswith("동맹국"))
+    assert row.label == "동맹국 0" and "끼어들 상대가 없다" in row.hint
+
+
+def test_betrayal_count_is_visible_during_the_game_not_only_at_the_end():
+    st = state()
+    st.diplomacy.form(0, 1, st.tick_count)
+    st.diplomacy.break_alliance(1, 0, st.tick_count)
+    row = next(i for i in diplomacy_items(st, 0, 1, noop)
+               if i.label.startswith("배신 "))
+    assert row.label == "배신 1회"
+    assert "연장이 위험" in row.hint
+
+
+def test_an_embargo_the_other_side_placed_is_shown_because_i_cannot_lift_it():
+    """상대가 건 금수는 내 버튼으로 못 푼다 — 그래서 **알림**이어야 한다.
+    이게 없으면 무역선이 왜 안 오는지가 화면 어디에도 없다."""
+    st = state()
+    row = by_label(diplomacy_items(st, 0, 1, noop), "금수")
+    assert "그쪽도" not in row.hint
+    st.diplomacy.start_embargo(1, 0, st.tick_count)
+    row = by_label(diplomacy_items(st, 0, 1, noop), "금수")
+    assert "그쪽도 나를 막고 있다" in row.hint
