@@ -231,8 +231,15 @@ class UnitStore:
                    for u in self.units if u.utype is utype and u.active)
 
     def num(self, utype: UnitType) -> int:
-        """**실제 개수.** 원본에는 없는 값이다 — 우리 AI 의 건물 개수 상한만 쓴다.
-        레벨을 올렸다고 "한 채 더 지었다"로 세면 상한이 조용히 낮아진다."""
+        """**실제 개수.** 원본에는 없는 값이다 — `owned()` 는 레벨 합이라
+        *"몇 채인가"* 를 물을 수 없어서 둔다.
+
+        ⚠ 주석이 *"우리 AI 의 건물 개수 상한만 쓴다"* 였는데 **낡아 있었다.**
+        그 상한(`STRUCTURE_CAP_PER_TILES`)은 2026-08-24 에 사라졌다 —
+        원본에 없는 우리 발명품이었고, 초소를 건설 순서에서 빼자 함께 필요
+        없어졌다(`ai/nation.py` 상단). 지금 쓰는 곳은 **테스트뿐**이고,
+        *"레벨을 올린 것"* 과 *"한 채 더 지은 것"* 을 가르는 데 쓴다 —
+        `owned()` 로는 그 둘이 같은 값이라 구별이 안 된다."""
         return sum(1 for u in self.units if u.utype is utype and u.active)
 
     def constructed(self, utype: UnitType) -> int:
