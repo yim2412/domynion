@@ -1,4 +1,14 @@
-"""증강 드래프트 창 — **원본에 없는 우리 계층**(`docs/design.md` §3).
+"""증강 UI — **원본에 없는 우리 계층**(`docs/design.md` §3). 둘이 있다.
+
+| 위젯 | 언제 보이나 |
+|---|---|
+| `AugmentDialog` | 정지가 열려 있는 동안만 (판이 멈춰 있다) |
+| `AugmentStrip` | **늘** — 내가 가진 카드와 다음 정지까지 남은 시간 |
+
+⚠ **드래프트 창만 있으면 고른 것이 어디에도 안 남는다.** 창이 닫히는 순간
+*"내가 무엇을 골랐는지 · 다음이 언제인지"* 를 화면에서 알 방법이 사라진다 —
+계수는 전부 뒤에서만 곱해지기 때문이다. §5.108(*"보유 칩이 건물에만 있었다"*)
+과 같은 모양의 빈자리다.
 
 정지마다 카드 3장이 뜨고 하나를 고른다. 같은 카드를 다시 고르면 레벨이 오른다.
 
@@ -19,7 +29,7 @@ from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
                              QWidget)
 
 from ..core import constants as C
-from ..core.augments import describe
+from ..core.augments import AUGMENTS_BY_KEY, describe
 from ..core.engine import GameState
 
 _STYLE = """
@@ -32,6 +42,8 @@ QPushButton#card {
     border-radius: 8px; padding: 14px 12px; color: #e8e8ec; text-align: left;
 }
 QPushButton#card:hover { background: rgba(120,180,255,60); }
+QWidget#augstrip { background: rgba(16, 20, 28, 200); border-radius: 6px; }
+QLabel#striphead { color: #e0c060; font-weight: bold; }
 """
 
 # 남은 시간 막대. 스폰 면역 바와 같은 색 규칙을 쓴다.
@@ -156,3 +168,74 @@ def _plain(html: str) -> str:
         elif not skip:
             out.append(ch)
     return "".join(out)
+
+
+class AugmentStrip(QWidget):
+    """내가 가진 증강 + 다음 정지까지 남은 시간. **늘 보인다.**
+
+    ⚠ **다음 정지 시각이 규칙의 일부다.** 정지는 판을 멈추므로, 언제 오는지
+    모르면 상륙·핵처럼 되돌릴 수 없는 것을 그 직전에 지르게 된다. 드래프트
+    창의 남은 시간 막대와 같은 이유로 화면에 있어야 한다.
+
+    ⚠ **가진 것이 없어도 숨기지 않는다.** 판 초반(첫 정지 전)이야말로 *"곧
+    무엇이 온다"* 를 알려야 하는 구간이다 — 숨기면 증강이 있는 판인지조차
+    모른다. 숨기는 것은 내가 죽어서 더 안 열릴 때뿐이다.
+    """
+
+    def __init__(self, state: GameState, me: int,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("augstrip")
+        self.setStyleSheet(_STYLE)
+        self.state = state
+        self.me = me
+        box = QVBoxLayout(self)
+        box.setContentsMargins(10, 7, 10, 7)
+        box.setSpacing(3)
+        self.head = QLabel(objectName="striphead")
+        box.addWidget(self.head)
+        self.body = QLabel()
+        box.addWidget(self.body)
+
+    def refresh(self) -> None:
+        st = self.state
+        p = st.players.get(self.me)
+        if p is None or not p.alive:
+            self.hide()
+            return
+        self.show()
+        self.head.setText(_next_text(st))
+        owned = p.augments
+        if not owned:
+            self.body.setText(
+                '<span style="opacity:.5">아직 없다</span>')
+            return
+        # 레벨이 높은 것부터. 같은 레벨이면 이름 순으로 — **자리가 매 tick
+        # 흔들리면 읽을 수 없다**(dict 순서는 고른 순서라 안정적이지만,
+        # 레벨로 정렬하면서 그 안정성을 잃지 않도록 이름을 2차 키로 둔다).
+        rows = sorted(
+            ((AUGMENTS_BY_KEY[k], lv) for k, lv in owned.items()
+             if k in AUGMENTS_BY_KEY),
+            key=lambda t: (-t[1], t[0].name))
+        self.body.setText("<br>".join(
+            f'<span style="color:#e0c060">{aug.name}</span> '
+            f'<b>Lv{lv}</b> '
+            f'<span style="opacity:.7">{describe(aug, lv)}</span>'
+            for aug, lv in rows))
+
+
+def _next_text(st: GameState) -> str:
+    """머리글 한 줄. **세 상태를 구분한다** — 안 구분하면 '0초'가 두 뜻이 된다.
+
+    ① 다음 정지까지 남은 시간 ② 지금 열려 있다 ③ 더는 안 열린다(다 모았다).
+    """
+    if st.augment_offer:
+        return "증강 · 고르는 중"
+    if st.augment_next_tick < 0:
+        # `_augment_tick` 이 -1 로 두는 경우는 둘인데, 죽은 쪽은 위에서 이미
+        # 숨었으므로 여기 오는 것은 **열 장을 다 Lv3 로 올린** 경우뿐이다.
+        return "증강 · 다 모았다"
+    left = max(0, st.augment_next_tick - st.tick_count)
+    sec = int(left * C.TICK_DT)
+    return f"증강 · 다음 {sec // 60}:{sec % 60:02d}"

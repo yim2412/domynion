@@ -23,7 +23,7 @@ from ..core.relations import RELATION_COLOUR, RELATION_LABEL
 from ..core.units import UnitType
 from .actions import EMOJI_OPEN, root_items
 from .emojitable import EmojiTable
-from .augment_dialog import AugmentDialog
+from .augment_dialog import AugmentDialog, AugmentStrip
 from .endmodal import EndModal
 from .eventlog import AlertBanner, AttacksPanel, EventList
 from .hud import ControlBar, ImmunityBar, Scoreboard
@@ -72,6 +72,8 @@ class MainWindow(QMainWindow):
         # 증강 드래프트. 열려 있으면 **엔진이 판을 멈춘다** — 이 창은 그 상태를
         # 보여 주기만 하고, 닫는 것도 `choose_augment` 가 한다.
         self.augments = AugmentDialog(state, human, self.map)
+        # 창은 정지 중에만 뜬다 — 고른 것과 다음 정지 시각은 **늘** 보여야 한다.
+        self.aug_strip = AugmentStrip(state, human, self.map)
 
         # 페이즈 중에는 화면에 할 일이 하나뿐이다 — 그걸 말해 준다.
         self.spawn_hint = QLabel(
@@ -149,6 +151,17 @@ class MainWindow(QMainWindow):
         self.help.move(self.map.width() - self.help.width() - 12, 12)
         self._place_side_panels()
 
+    def _place_aug_strip(self) -> None:
+        """순위표 바로 아래. ⚠ **`resizeEvent` 가 아니라 tick 에서 옮긴다** —
+        순위표는 매 tick `adjustSize()` 로 높이가 바뀌므로(탈락하면 줄이 줄어든다)
+        창 크기가 안 변해도 자리가 어긋난다."""
+        self.aug_strip.refresh()
+        if not self.aug_strip.isVisible():
+            return
+        self.aug_strip.adjustSize()
+        self.aug_strip.move(12, self.scoreboard.y() + self.scoreboard.height() + 8)
+        self.aug_strip.raise_()
+
     def _place_side_panels(self) -> None:
         """오른쪽 아래에 전투 → 소식 순으로 쌓는다. 위쪽은 도움말이 쓴다."""
         margin = 12
@@ -193,6 +206,7 @@ class MainWindow(QMainWindow):
         self.scoreboard.adjustSize()
         self.controls.refresh()
         self.immunity.refresh()
+        self._place_aug_strip()
         self.emoji.refresh()
         # ⚠ **종료 화면보다 먼저 그린다.** 둘 다 `_present()` 에서 `raise_()`
         # 하므로 **나중에 부른 쪽이 위로 온다** — 판이 끝난 tick 에 둘 다 뜨면

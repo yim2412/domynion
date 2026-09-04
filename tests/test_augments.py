@@ -73,6 +73,54 @@ def test_a_discount_stack_can_never_make_conquest_free():
     assert m.mult("cost_vs_player_pct") > 0
 
 
+def test_no_real_card_combination_can_reach_the_axis_floor():
+    """⚠ **위 테스트의 재료는 카드가 만들 수 없는 값이다.**
+
+    `Modifiers({"cost_vs_player_pct": -5.0})` 는 손으로 넣은 값이고, 실제
+    카드로는 그 축에 **한 장밖에** 안 실린다(할인 카드는 축마다 정확히 하나).
+    그래서 하한(0.2)은 **한 번도 걸리지 않는다** — 보호 장치는 있지만 잠들어
+    있다. 이 사실을 못 박아 두지 않으면 다음 세션이 *"하한이 막고 있다"* 로
+    읽는다(2026-09-04 까지 `docs/design.md` 가 실제로 그렇게 적고 있었다).
+    """
+    per_axis: dict[str, float] = {}
+    for aug in AUGMENTS:
+        if aug.per_level >= 0:
+            continue
+        per_axis[aug.field] = per_axis.get(aug.field, 0.0) + value_at(
+            aug, C.AUGMENT_MAX_LEVEL)
+    assert per_axis, "할인 카드가 하나도 없다 — 이 테스트가 아무것도 안 잰다"
+    for field, total in per_axis.items():
+        m = Modifiers({field: total})
+        assert m.mult(field) > 0.2, (
+            f"{field} 이 하한에 닿았다 — 카드 구성이 바뀌었으면 "
+            f"`docs/design.md` §3 의 '할인 중첩' 을 다시 재야 한다")
+
+
+def test_cost_axes_multiply_so_the_per_axis_floor_does_not_bound_the_product():
+    """⚠ **하한은 축마다 걸리는데 `attack.py` 는 곱을 쓴다.**
+
+    `cost = mult(cost_vs_player_pct) * terrain_cost * mult(defense_pct)` 라
+    각 축이 0.2 위여도 **곱은 0.2 아래로 내려간다**(실측 0.179).
+
+    막지 않았으면 무엇이 일어났을 것인가 — 여기서 지켜야 하는 성질은 *"0.2
+    아래로 안 간다"* 가 **아니라** *"0 이하로는 안 간다"* 다. 곱이 양수인 한
+    공짜 정복은 없다. 축 간 곱셈은 `docs/design.md` 가 *검토할 선택지 2* 로
+    적어 둔 것인데 **이미 그렇게 돌고 있다.**
+    """
+    m = Modifiers.from_augments({"elite": C.AUGMENT_MAX_LEVEL,
+                                 "mountaineers": C.AUGMENT_MAX_LEVEL})
+    a = m.mult("cost_vs_player_pct")
+    b = m.mult("cost_highland_pct")
+    assert a > 0.2 and b > 0.2          # 축마다는 하한 위인데
+    assert a * b < 0.2                  # 곱은 아래다 — 하한이 곱을 못 막는다
+    assert a * b > 0                    # 지켜지는 성질은 이것뿐이다
+
+    # 중립 경로가 더 싸다. 두 경로를 다 재지 않으면 한쪽만 고쳐도 통과한다.
+    n = Modifiers.from_augments({"settlers": C.AUGMENT_MAX_LEVEL,
+                                 "mountaineers": C.AUGMENT_MAX_LEVEL})
+    assert 0 < n.mult("cost_vs_neutral_pct") * n.mult("cost_highland_pct") < 0.2
+
+
 def test_an_unknown_card_in_a_save_does_not_kill_the_game():
     m = Modifiers.from_augments({"없는카드": 2, "fertile": 1})
     assert m.get("troops_cap_pct") > 0
