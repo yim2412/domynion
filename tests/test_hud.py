@@ -631,3 +631,58 @@ def test_hitting_someone_again_does_not_extend_the_retaliation_window(qapp):
     _land_attack(st, attacker=1)
     b.refresh()
     assert b.isVisible() and "P1" in b.text()
+
+
+# --- 하단 바의 내 건물 현황 (§5.109) ------------------------------------------
+#
+# 원본 `UnitDisplay` 는 일곱 종류를 **늘** 띄운다. 우리는 라디얼을 열어야
+# 보였다 — 건설 판단을 하려고 메뉴를 여는 셈이었다.
+
+def test_the_control_bar_always_shows_my_buildings(qapp):
+    from domynion.core.units import Unit, UnitType
+    from domynion.ui.hud import ControlBar, HUD_UNITS
+    st = _panel_state()
+    bar = ControlBar(st, pid=0)
+    bar.refresh()
+    text = bar.units_label.text()
+    # **일곱 칸이 늘 있다** — 0 이어도 자리를 비우지 않는다.
+    assert text.count("0") >= len(HUD_UNITS) + 1
+    st.players[0].units.units.append(
+        Unit(utype=UnitType.MISSILE_SILO, owner=0, tile=st.gmap.ref(5, 5),
+             level=2))
+    bar.refresh()
+    assert "▲2" in bar.units_label.text()        # 개수가 아니라 레벨 합
+
+
+def test_a_zero_count_keeps_its_slot_so_the_positions_never_move(qapp):
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 0 인 종류를 빼면 건물이
+    생길 때마다 칸이 밀려 *늘 같은 자리* 가 깨진다. 눈이 자리를 외우는 표시라
+    자리가 움직이면 읽는 데 시간이 든다."""
+    from domynion.core.units import Unit, UnitType
+    from domynion.ui.hud import ControlBar, HUD_UNITS
+    st = _panel_state()
+    from domynion.ui import palette as P
+    glyphs = [P.UNIT_GLYPH[ut.value] for ut in HUD_UNITS] + ["⛵"]
+
+    def slots(bar):
+        return sum(bar.units_label.text().count(g) for g in glyphs)
+
+    bar = ControlBar(st, pid=0)
+    bar.refresh()
+    before = slots(bar)
+    st.players[0].units.units.append(
+        Unit(utype=UnitType.PORT, owner=0, tile=st.gmap.ref(6, 5)))
+    bar.refresh()
+    assert slots(bar) == before
+    assert before == len(HUD_UNITS) + 1          # 건물 여섯 + 전함
+
+
+def test_only_my_warships_are_counted_in_the_bar(qapp):
+    from domynion.core.naval import Warship
+    from domynion.ui.hud import ControlBar
+    st = _panel_state()
+    st.warships.append(Warship(owner=0, tile=st.gmap.ref(30, 5)))
+    st.warships.append(Warship(owner=1, tile=st.gmap.ref(31, 5)))
+    bar = ControlBar(st, pid=0)
+    bar.refresh()
+    assert "⛵1" in bar.units_label.text()

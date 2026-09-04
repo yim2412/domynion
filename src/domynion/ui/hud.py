@@ -15,9 +15,17 @@ from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget)
 from ..core import constants as C
 from ..core.doomsday import wave_state
 from ..core.engine import GameState
+from ..core.units import UnitType
 from . import palette as P
 from .overlays import wave_text
 from .rates import gold_pip, rate_rising, troop_rate
+
+# 하단 바에 늘 띄우는 내 건물 — 원본 `UnitDisplay` 의 일곱이다(건설 가능한
+# 여섯 + 전함). ⚠ `PlayerInfoOverlay` 의 목록과 **다르다** — 그쪽은 초소가
+# 빠진 다섯 + 전함이다. 원본이 그렇게 갈라 놨으므로 목록을 공유하지 않는다.
+HUD_UNITS = (UnitType.CITY, UnitType.PORT, UnitType.FACTORY,
+             UnitType.DEFENSE_POST, UnitType.MISSILE_SILO,
+             UnitType.SAM_LAUNCHER)
 
 # 순위표에 몇 줄을 보여줄 것인가. 원본 기본 구성이 472명이라 전부 쓰면 화면을 덮는다.
 # 마지막 한 줄은 상위권 밖일 때 **내 자리**로 쓴다.
@@ -135,6 +143,14 @@ class ControlBar(QWidget):
         row.addWidget(self.ratio_label)
         row.addStretch(1)
 
+        # **내 건물 현황을 늘 띄운다**(원본 `UnitDisplay`). 라디얼을 열어야
+        # 보이면 건설 판단을 하려고 메뉴를 여는 셈이 된다 — 사일로가 몇인지,
+        # SAM 이 몇인지가 *열기 전에* 보여야 한다. §5.106 이 **상대**에게 붙인
+        # 것을 여기서는 **나**에게 붙인다. 값은 레벨 합(`units.owned`)이다.
+        self.units_label = QLabel()
+        self.units_label.setMinimumWidth(230)
+        row.addWidget(self.units_label)
+
         self.gold_label = QLabel()
         # `+N` 이 떴다 사라질 때 골드 숫자가 좌우로 흔들리지 않게 폭을 고정한다.
         self.gold_label.setMinimumWidth(190)
@@ -186,6 +202,15 @@ class ControlBar(QWidget):
         gain = ("" if pip is None else
                 f' <span style="color:{GOLD_PIP}">+{pip:,.0f}</span>')
         self.gold_label.setText(f"골드 <b>{p.gold:,}</b>{gain}")
+        # 0 인 종류는 흐리게 둔다 — 빼면 자리가 밀려 **늘 같은 자리**가 깨진다
+        # (원본도 일곱 칸을 고정으로 그린다). §5.108 의 라디얼 칩과 반대 판단인데,
+        # 그쪽은 항목 이름 옆이라 0 이면 군더더기이고 이쪽은 **자리가 곧 종류**다.
+        ships = sum(1 for w in self.state.warships if w.owner == self.pid)
+        cells = [(P.UNIT_GLYPH[ut.value], p.units.owned(ut)) for ut in HUD_UNITS]
+        cells.append(("⛵", ships))
+        self.units_label.setText(" ".join(
+            f"{g}{n}" if n else f'<span style="opacity:.3">{g}0</span>'
+            for g, n in cells))
         self._label_ratio(self.slider.value())
 
 
