@@ -34,7 +34,7 @@ from ..core.engine import GameState
 from . import palette as P
 from .frame import FrameBuilder
 from .overlays import (attack_labels, attack_rings, border_relation,
-                       nuke_telegraphs, unit_bar)
+                       nuke_telegraphs, unit_bar, warship_health_ratio)
 from .radial import RadialMenu
 from .status import markers, player_status
 
@@ -429,6 +429,14 @@ class MapWidget(QWidget):
             pos = on_screen(w.tile)
             if pos:
                 self._dot(p, pos, max(3.0, z * 1.1), P.WARSHIP_COLOR)
+                # 원본 `BarPass` 의 나머지 둘 — **다친 배**와 **베테랑 등급**.
+                # 점 하나만 그리면 성한 배와 다친 배가 구별되지 않는다.
+                ratio = warship_health_ratio(w)
+                if ratio is not None:
+                    self._unit_bar(p, pos, max(10.0, z * 2.2), int(z * 2.2),
+                                   None, ratio, P.HEALTH_COLOR)
+                if w.veterancy > 0:
+                    self._veterancy_pips(p, pos, z, w.veterancy)
         for t in st.trade_ships:
             pos = on_screen(t.tile)
             if pos:
@@ -473,15 +481,33 @@ class MapWidget(QWidget):
                     self._unit_bar(p, pos, w, size, *bar)
 
     def _unit_bar(self, p: QPainter, pos: tuple[float, float],
-                  width: float, size: int, kind: str, ratio: float) -> None:
-        """아이콘 **바로 아래**에 얇은 막대. 위에 두면 레벨 숫자와 겹친다."""
+                  width: float, size: int, kind: str | None, ratio: float,
+                  colour: tuple[int, int, int] | None = None) -> None:
+        """얇은 막대. 건물은 아이콘 **아래**, 전함은 점 **위**에 둔다.
+
+        ⚠ 위/아래가 다른 이유 — 건물은 위에 레벨 숫자가 붙고(겹친다), 전함은
+        아래에 베테랑 핍이 쌓인다. 원본도 체력은 위, 진행은 아래다."""
         bw = max(10.0, width)
         x = pos[0] - bw / 2
-        y = pos[1] + size * 0.35
-        p.fillRect(int(x), int(y), int(bw), P.BAR_HEIGHT,
-                   QColor(*P.BAR_BG))
-        p.fillRect(int(x), int(y), int(bw * ratio), P.BAR_HEIGHT,
-                   QColor(*P.BAR_COLOR[kind]))
+        above = colour is not None
+        y = pos[1] - size * 0.5 if above else pos[1] + size * 0.35
+        c = colour if colour is not None else P.BAR_COLOR[kind]
+        p.fillRect(int(x), int(y), int(bw), P.BAR_HEIGHT, QColor(*P.BAR_BG))
+        p.fillRect(int(x), int(y), int(bw * ratio), P.BAR_HEIGHT, QColor(*c))
+
+    def _veterancy_pips(self, p: QPainter, pos: tuple[float, float],
+                        z: float, level: int) -> None:
+        """등급마다 금색 막대 하나 — 원본 *"solid gold rank bars stacked at a
+        warship's bottom-right"*. **막대 하나에 숫자를 쓰지 않는다**: 최대 3이라
+        핍이 더 빨리 읽히고, 축소해도 개수가 보인다."""
+        w = max(3.0, z * 1.6)
+        h = 2.0
+        gap = 1.0
+        x = pos[0] + max(2.0, z * 0.8)
+        for i in range(level):
+            y = pos[1] + max(2.0, z * 0.6) - i * (h + gap)
+            p.fillRect(int(x), int(y), int(w), int(h),
+                       QColor(*P.VETERANCY_PIP))
 
     def _draw_telegraphs(self, p: QPainter, ox: float) -> None:
         """핵 낙하 예고 원 + 내 수송선의 상륙 고리 (§5.92).

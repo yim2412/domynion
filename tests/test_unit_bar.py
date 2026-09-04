@@ -214,3 +214,99 @@ def test_the_bar_is_actually_painted_on_the_map(qapp):
     three_quarters = bar_pixels()
     assert three_quarters > quarter, (
         "폭이 비율을 안 탄다 — 25% 와 75% 가 같은 크기로 그려진다")
+
+
+# --- 전함: 체력바 · 베테랑 핍 (원본 `BarPass` 의 나머지 둘) ----------------------
+
+def _ship(health: int | None = None, veterancy: int = 0):
+    from domynion.core.naval import Warship
+    w = Warship(owner=0, tile=0)
+    w.veterancy = veterancy
+    w.health = w.max_health if health is None else health
+    return w
+
+
+def test_a_healthy_warship_shows_no_health_bar():
+    """원본도 `unit.health < maxHealth` 일 때만 그린다 — 늘 그리면 장식이 된다."""
+    from domynion.ui.overlays import warship_health_ratio
+    assert warship_health_ratio(_ship()) is None
+
+
+def test_a_damaged_warship_shows_its_ratio():
+    from domynion.ui.overlays import warship_health_ratio
+    w = _ship()
+    w.health = w.max_health // 2
+    r = warship_health_ratio(w)
+    assert r == pytest.approx(0.5, abs=0.02)
+
+
+def test_a_full_veteran_reads_as_full_not_damaged():
+    """⚠ **분모가 베테랑을 반영한 최대 체력이어야 한다.**
+
+    막지 않았으면 무엇이 일어났을 것인가 — `WARSHIP_MAX_HEALTH` 로 나누면
+    Lv3 베테랑(160%)이 꽉 차 있어도 비율이 1 을 넘고, 막대가 **영원히 안 사라진다**.
+    """
+    from domynion.ui.overlays import warship_health_ratio
+    vet = _ship(veterancy=C.WARSHIP_MAX_VETERANCY)
+    assert vet.max_health > C.WARSHIP_MAX_HEALTH, "베테랑 보너스가 0 이면 이 테스트가 무의미하다"
+    assert warship_health_ratio(vet) is None            # 꽉 찼다
+    # 기본 최대 체력만큼만 남았다면 **다친 것**이다(베테랑 상한에 못 미친다).
+    vet.health = C.WARSHIP_MAX_HEALTH
+    r = warship_health_ratio(vet)
+    assert r is not None and r < 1.0
+
+
+def test_a_sunk_warship_shows_nothing():
+    from domynion.ui.overlays import warship_health_ratio
+    assert warship_health_ratio(_ship(health=0)) is None
+
+
+def test_warship_bars_and_pips_are_actually_painted(qapp):
+    """계산이 아니라 **그려지는가**. 체력바와 핍은 색이 달라 따로 셀 수 있다."""
+    import random
+
+    from PyQt6.QtGui import QImage, QPainter
+
+    from domynion.core.engine import GameState
+    from domynion.core.gamemap import GameMap
+    from domynion.core.state import PlayerState
+    from domynion.ui import palette as P
+    from domynion.ui.map_widget import MapWidget
+
+    gm = GameMap.from_rows(["." * 40] * 20)
+    ps = {0: PlayerState(pid=0, name="P0", kind="human", start=gm.ref(10, 10))}
+    st = GameState(gmap=gm, players=ps, rng=random.Random(0))
+    st._counts = {0: 1}
+    st.tick_count = 500
+
+    w = MapWidget(st)
+    w.resize(400, 300)
+    w.zoom = 8.0
+    w.offset.setX(0.0)
+    w.offset.setY(0.0)
+
+    def count(colour) -> int:
+        img = QImage(w.size(), QImage.Format.Format_RGB32)
+        p = QPainter(img)
+        w.render(p)
+        p.end()
+        return sum(1 for x in range(img.width()) for y in range(img.height())
+                   if QImage.pixelColor(img, x, y).getRgb()[:3] == colour)
+
+    ship = _ship()
+    ship.tile = gm.ref(10, 10)
+    st.warships.append(ship)
+
+    assert count(P.HEALTH_COLOR) == 0, "성한 배에 체력바가 그려졌다"
+    assert count(P.VETERANCY_PIP) == 0, "베테랑 0 인데 핍이 그려졌다"
+
+    ship.health = ship.max_health // 2
+    assert count(P.HEALTH_COLOR) > 0, "체력바가 배선되지 않았다"
+
+    ship.veterancy = 1
+    ship.health = ship.max_health // 2
+    one = count(P.VETERANCY_PIP)
+    assert one > 0, "베테랑 핍이 배선되지 않았다"
+    ship.veterancy = 3
+    ship.health = ship.max_health // 2
+    assert count(P.VETERANCY_PIP) > one, "핍 수가 등급을 안 탄다"

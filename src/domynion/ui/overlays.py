@@ -263,3 +263,19 @@ def unit_bar(unit: Unit, now: int) -> tuple[str, float] | None:
         if r < 1.0:
             return (BAR_KIND_RELOAD, r)
     return None
+
+
+def warship_health_ratio(ship) -> float | None:
+    """다친 전함의 체력 비율. **성하면 None** — 그리지 않는다.
+
+    ⚠ **분모가 `WARSHIP_MAX_HEALTH` 가 아니라 베테랑을 반영한 최대 체력이다**
+    (원본 `maxHealthWithVeterancy`, 우리 `Warship.max_health`). 기본값으로 나누면
+    **꽉 찬 베테랑 배가 계속 다친 것으로 보인다** — 레벨 3 이면 160% 라 막대가
+    영원히 안 사라진다.
+    """
+    if ship.health <= 0:
+        return None
+    cap = ship.max_health
+    if ship.health >= cap:
+        return None                     # 성한 배에는 안 그린다
+    return max(0.0, min(1.0, ship.health / cap))

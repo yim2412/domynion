@@ -227,6 +227,12 @@ BAR_COLOR = {
 }
 BAR_HEIGHT = 3            # 픽셀. 줌과 무관하게 얇게 — 아이콘을 덮으면 안 된다
 
+# 전함 체력바·베테랑 핍 (원본 `BarPass` 의 나머지 둘).
+# ⚠ **체력은 다쳤을 때만 그린다**(원본 `if (unit.health < maxHealth)`).
+HEALTH_COLOR: RGB = (110, 230, 120)     # 초록 — 진행바 셋과 겹치지 않는 색
+VETERANCY_COLOR: RGB = (255, 200, 60)   # 금색 핍(원본 "solid gold rank bars")
+VETERANCY_PIP: RGB = (255, 200, 60)
+
 BOAT_COLOR: RGB = (240, 240, 245)
 WARSHIP_COLOR: RGB = (255, 220, 140)
 TRADE_COLOR: RGB = (150, 230, 255)
