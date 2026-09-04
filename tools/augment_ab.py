@@ -45,6 +45,10 @@ FOCUS = {
     "cost": ("cost_vs_player_pct", "cost_vs_neutral_pct", "cost_highland_pct"),
     "defense": ("defense_pct", "defender_loss_pct"),
     "economy": ("trade_gold_pct",),
+    # ⚠ **꽝인지 재기 위한 축이다.** §5.121 실측에서 `boat_loss_pct` 는 한 판에
+    # 9번밖에 안 걸렸다(정예 병단의 1/38,000). 카드를 갈아끼울지 판단하려면
+    # "이 축만 밀었을 때 판이 달라지는가"를 재야 한다 — 안 달라지면 꽝이다.
+    "naval": ("boat_loss_pct",),
 }
 
 

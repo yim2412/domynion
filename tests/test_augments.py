@@ -349,7 +349,13 @@ def test_every_declared_field_is_read_by_some_formula():
     뒤 대응물이 사라졌는데 카드는 남아 있었다).
 
     이 테스트는 **소스에서 축 이름을 찾는다** — 값으로 재는 것은 축마다 따로
-    아래에 있고, 여기서는 *배선이 어디에도 없는 축*을 잡는다."""
+    아래에 있고, 여기서는 *배선이 어디에도 없는 축*을 잡는다.
+
+    ⚠ **이 테스트는 "그 축이 판에서 실제로 걸리는가"를 재지 않는다.** 2026-09-04
+    실측(§5.121)에서 `boat_loss_pct` 는 한 판에 **9번** 걸렸다 — `cost_vs_player_pct`
+    의 **1/38,000** 이라 그 카드는 사실상 꽝인데 **이 테스트는 초록이다.**
+    "축이 있는가"와 "축이 걸리는가"는 다른 질문이고, 후자는 판을 돌려야 안다:
+    `python tools/axis_hits.py --seed 11 --ticks 12000`."""
     import pathlib
     from domynion.core.augments import FIELDS
     src = pathlib.Path(__file__).resolve().parents[1] / "src" / "domynion"
