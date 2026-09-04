@@ -514,3 +514,96 @@ def test_the_grid_gets_coarser_as_the_territory_grows():
     (_, _, _, rw, rh), = FrameBuilder(gm).label_anchors(st.alive)
     assert rw % 32 == 0 and rh % 32 == 0, \
         f"성긴 격자를 안 썼다 — 자리가 32의 배수가 아니다 ({rw}, {rh})"
+
+
+# --- 정보 오버레이 — 커서가 얹힌 나라 (§5.106) --------------------------------
+#
+# 원본 `PlayerInfoOverlay`(654줄) 대조. 우리는 이름·영토·병력·관계만 띄웠다.
+# ⚠ **관계를 누구에게나 띄우는 버그가 여기에도 있었다** — §5.103 에서 외교
+# 메뉴의 같은 자리를 고치면서 이 자리를 놓쳤다.
+
+def _inspect_window(kind: str = "nation"):
+    import random as _r
+
+    from PyQt6.QtWidgets import QApplication
+
+    from domynion.core.state import PlayerState
+    from domynion.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    st = state()
+    old = st.players[1]
+    st.players[1] = PlayerState(pid=1, name="P1", start=old.start, kind=kind)
+    st.players[1].troops = 5_000.0
+    st.players[1].gold = 1_234_567.0
+    win = MainWindow(st, human=0, rng=_r.Random(0))
+    win.timer.stop()
+    win.map.hovered_owner = 1
+    win._refresh_inspect()
+    return app, st, win
+
+
+def test_the_overlay_says_what_kind_of_player_this_is():
+    """봇인지 나라인지로 **외교가 통째로 달라진다** — 봇은 동맹을 전부 받는다."""
+    for kind, word in (("bot", "봇"), ("nation", "나라"), ("human", "사람")):
+        _app, _st, win = _inspect_window(kind)
+        assert word in win.inspect.text()
+        win.close()
+
+
+def test_a_bot_gets_no_relation_because_it_ignores_one():
+    """⚠ §5.103 과 **같은 거짓 재료**다. 여기서도 봇에게 관계를 띄우고 있었다."""
+    from domynion.core.relations import RELATION_LABEL
+    _app, _st, win = _inspect_window("bot")
+    text = win.inspect.text()
+    assert not any(lbl in text for lbl in RELATION_LABEL.values())
+    win.close()
+    _app, _st, win = _inspect_window("nation")
+    assert any(lbl in win.inspect.text() for lbl in RELATION_LABEL.values())
+    win.close()
+
+
+def test_the_overlay_shows_gold_and_the_troop_cap():
+    """골드는 **핵을 살 수 있는가**, 상한은 **더 불어날 여지가 있는가** 다.
+    절대값만으로는 5,000 이 많은지 적은지 알 수 없다."""
+    _app, st, win = _inspect_window()
+    text = win.inspect.text()
+    assert "1,234,567" in text
+    cap = st.players[1].max_troops(st.tiles(1))
+    assert f"{cap:,.0f}" in text
+    win.close()
+
+
+def test_troops_out_on_attack_are_shown_only_when_there_are_any():
+    """**집에 얼마가 남았는가** 가 방어 판단의 재료다. 없을 때 0 을 띄우면
+    줄만 길어진다(원본도 그때는 흐리게 죽인다)."""
+    from domynion.core.attack import Attack
+    _app, st, win = _inspect_window()
+    assert "나가 있음" not in win.inspect.text()
+    # ⚠ **국경을 맞대게 만든다.** 기본 판은 두 나라가 한 칸씩만 갖고 있어
+    # `Attack.launch` 가 붙을 칸을 못 찾고 `None` 을 돌려준다 — 그러면 이
+    # 테스트가 skip 으로 넘어가 **아무것도 재지 않는다.**
+    gm = st.gmap
+    for y in range(30):
+        for x in range(0, 20):
+            gm.owner[gm.ref(x, y)] = 0
+        for x in range(20, 40):
+            gm.owner[gm.ref(x, y)] = 1
+    st._counts = {0: 600, 1: 600}
+    a = Attack.launch(gm, 1, 0, 700.0, random.Random(0))
+    assert a is not None
+    st.attacks.append(a)
+    win._refresh_inspect()
+    assert "나가 있음" in win.inspect.text()
+    win.close()
+
+
+def test_a_traitor_and_an_ally_show_their_remaining_time():
+    _app, st, win = _inspect_window()
+    assert "🗡" not in win.inspect.text() and "🤝" not in win.inspect.text()
+    st.diplomacy.traitor_since[1] = st.tick_count
+    st.diplomacy.form(0, 1, st.tick_count)
+    win._refresh_inspect()
+    text = win.inspect.text()
+    assert "🗡" in text and "🤝" in text
+    win.close()

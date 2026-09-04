@@ -215,12 +215,39 @@ class MainWindow(QMainWindow):
         hint = ("유리" if ratio < 0.6 else "불리" if ratio > 2 else "팽팽")
         # **상대가 나를 어떻게 보는가**. 내가 상대를 보는 눈이 아니다 —
         # 동맹 요청이 받아들여질지 정하는 것은 상대 쪽 값이다.
-        rel = st.relation_of(pid, self.human)
+        #
+        # ⚠ **나라에게만 띄운다**(원본 `getRelationSmiley`: `type() !== Nation`
+        # 이면 빈 문자열). §5.103 에서 외교 메뉴의 같은 버그를 고치면서 **이
+        # 자리를 놓쳤다** — 같은 거짓 재료가 두 곳에 있었다. 봇은 관계를 안 보고
+        # 동맹을 전부 받고, 사람은 직접 판단한다.
+        # ⚠ 원본은 **중립일 때도 안 띄운다**(스마일리가 없다). 우리는 값이 있는
+        # 쪽이 낫다고 보고 띄우되, 뜻이 없는 상대에게만 뺀다.
+        rel_html = ""
+        if p.kind == "nation":
+            rel = st.relation_of(pid, self.human)
+            rel_html = (f"  <span style='color:{RELATION_COLOUR[rel]}'>"
+                        f"{RELATION_LABEL[rel]}</span>")
+        # 원본 오버레이가 함께 띄우는 것들. 없으면 판단의 재료가 빈다:
+        # **종류**(봇인지 나라인지로 외교가 통째로 달라진다) · **골드**(핵을 살
+        # 수 있는가) · **나가 있는 병력**(집에 얼마가 남았는가) · **상한 대비**.
+        kind = {"bot": "봇", "nation": "나라", "human": "사람"}.get(p.kind, "?")
+        cap = p.max_troops(st.tiles(pid))
+        out = sum(a.troops for a in st.attacks if a.attacker == pid)
+        traitor = st.diplomacy.traitor_remaining(pid, st.tick_count)
+        al = st.diplomacy.alliance_between(pid, self.human)
+        extra = ""
+        if traitor > 0:
+            extra += f" · <span style='color:#e08a7a'>🗡 {traitor * C.TICK_DT:.0f}초</span>"
+        if al is not None:
+            left = max(0, al.expires_at - st.tick_count) * C.TICK_DT
+            extra += f" · <span style='color:#8fe0a0'>🤝 {left:.0f}초</span>"
         self.inspect.setText(
-            f"<b>{p.name}</b>  영토 {st.share(pid) * 100:.1f}%  "
-            f"병력 {p.troops:,.0f}  "
-            f"<span style='color:{RELATION_COLOUR[rel]}'>"
-            f"{RELATION_LABEL[rel]}</span><br>"
+            f"<b>{p.name}</b> <span style='opacity:.6'>{kind}</span>  "
+            f"영토 {st.share(pid) * 100:.1f}%{rel_html}{extra}<br>"
+            f"<span style='opacity:.75'>병력 {p.troops:,.0f} / "
+            f"{cap:,.0f}"
+            + (f" · 나가 있음 {out:,.0f}" if out > 0 else "")
+            + f" · 골드 {p.gold:,.0f}</span><br>"
             f"<span style='opacity:.75'>내가 보낼 병력 {send:,.0f} · "
             f"상대/내 = {ratio:.2f} ({hint})</span>")
         self.inspect.adjustSize()
