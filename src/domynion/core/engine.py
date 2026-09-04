@@ -941,6 +941,12 @@ class GameState:
             if hostile(b.owner) and self._dist_sq(w.tile, b.tile) <= r2:
                 return b
         for o in self.warships:
+            # ⚠ **정박한 전함은 표적이 아니다**(원본 `findBestTarget` 의
+            # `state === "docked"` 갈래). 없으면 수리하러 항구에 들어간 배가
+            # **거기서 계속 두들겨 맞아 영영 못 낫는다** — 후퇴 규칙(§ 스물셋)이
+            # 만들어 놓은 자리를 이 한 줄이 무의미하게 만든다.
+            if o.docked:
+                continue
             if o is not w and not o.sunk and hostile(o.owner)                     and self._dist_sq(w.tile, o.tile) <= r2:
                 return o
         # 무역선은 관문이 더 있다(`findBestTarget` 의 `includeTradeShips` 분기).

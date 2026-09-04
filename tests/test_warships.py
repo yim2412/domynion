@@ -995,3 +995,32 @@ def test_docked_count_is_one_place_only():
     assert st._docked_at(port, exclude=a) == 1
     assert st._port_full_of_healing(port)
     assert not st._port_full_of_healing(port, exclude=a)
+
+
+# --- 정박한 전함은 표적이 아니다 (§5.112) --------------------------------------
+
+def test_a_docked_warship_is_not_shot_at():
+    """⚠ **막지 않았으면 무엇이 일어났을 것인가** — 수리하러 항구에 들어간 배가
+    **거기서 계속 두들겨 맞아 영영 못 낫는다.** 후퇴 규칙(§ 스물셋)이 만들어 놓은
+    자리를 이 한 줄이 없으면 통째로 무의미하게 만든다.
+
+    원본 `findBestTarget` 의 `state === "docked"` 갈래다."""
+    st = state()
+    hunter = Warship(owner=0, tile=st.gmap.ref(30, 10))
+    prey = Warship(owner=1, tile=st.gmap.ref(31, 10))
+    st.warships += [hunter, prey]
+    # 정박 전이면 표적이다 — **재료가 표적을 만드는지 먼저 확인한다.**
+    assert st._pick_naval_target(hunter, C.WARSHIP_TARGETTING_RANGE ** 2) is prey
+    prey.docked = True
+    assert st._pick_naval_target(hunter, C.WARSHIP_TARGETTING_RANGE ** 2) is None
+
+
+def test_a_warship_merely_retreating_is_still_a_target():
+    """**정박한 것만** 빠진다. 돌아가는 중인 배는 아직 바다에 있다 — 원본도
+    `retreating` 은 안 뺀다. 이걸 함께 빼면 다치기만 하면 무적이 된다."""
+    st = state()
+    hunter = Warship(owner=0, tile=st.gmap.ref(30, 10))
+    prey = Warship(owner=1, tile=st.gmap.ref(31, 10))
+    prey.retreat_port = st.gmap.ref(61, 1)      # 돌아가는 중
+    st.warships += [hunter, prey]
+    assert st._pick_naval_target(hunter, C.WARSHIP_TARGETTING_RANGE ** 2) is prey
