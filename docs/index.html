@@ -1,0 +1,923 @@
+<title>Domynion 개발 노트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+<style>
+  /* 색은 게임 HUD 에서 그대로 가져왔다 (src/domynion/ui/palette.py) */
+  :root{
+    --bg:#f2f4f7; --panel:#ffffff; --sunk:#f7f9fb; --ink:#141821;
+    --dim:#5d6675; --faint:#8b93a4;
+    --rule:#dde2e9; --rule-soft:#eaeef3;
+    --accent:#8a6708; --accent-bg:#faf3dd;
+    --ok:#1f7a3a; --ok-bg:#e6f5ea;
+    --bad:#b02626; --bad-bg:#fdecec;
+    --cool:#1d6b86;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0b0e14; --panel:#10141c; --sunk:#0d1118; --ink:#e8e8ec;
+      --dim:#98a1b2; --faint:#6b7484;
+      --rule:#212836; --rule-soft:#181e28;
+      --accent:#e0c060; --accent-bg:#241f10;
+      --ok:#6ee678; --ok-bg:#122417;
+      --bad:#ff6060; --bad-bg:#2a1416;
+      --cool:#96e6ff;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0e14; --panel:#10141c; --sunk:#0d1118; --ink:#e8e8ec;
+    --dim:#98a1b2; --faint:#6b7484;
+    --rule:#212836; --rule-soft:#181e28;
+    --accent:#e0c060; --accent-bg:#241f10;
+    --ok:#6ee678; --ok-bg:#122417;
+    --bad:#ff6060; --bad-bg:#2a1416;
+    --cool:#96e6ff;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+    font-weight:400; line-height:1.78; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:74rem;margin:0 auto;padding:0 1.75rem 6rem}
+  a{color:inherit}
+  .num{font-family:"IBM Plex Mono",ui-monospace,"Consolas",monospace;
+    font-variant-numeric:tabular-nums}
+
+  /* 머리 */
+  header{padding:4.5rem 0 3rem;border-bottom:1px solid var(--rule)}
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace;font-size:.72rem;font-weight:500;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
+  }
+  h1{
+    font-family:"IBM Plex Mono",monospace;font-weight:600;
+    font-size:clamp(2rem,5.2vw,3.1rem);line-height:1.12;letter-spacing:-.02em;
+    margin:.7rem 0 0;text-wrap:balance;
+  }
+  .lede{max-width:41rem;color:var(--dim);font-size:1.04rem;margin:1.1rem 0 0}
+  .lede strong{color:var(--ink);font-weight:600}
+
+  .facts{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));
+    margin:2.6rem 0 0;border:1px solid var(--rule);border-radius:3px;
+    background:var(--panel);overflow:hidden;
+  }
+  .fact{padding:.95rem 1.15rem;border-right:1px solid var(--rule)}
+  .fact:last-child{border-right:0}
+  .fact dt{font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint)}
+  .fact dd{margin:.25rem 0 0;font-family:"IBM Plex Mono",monospace;font-weight:600;
+    font-size:1.32rem;font-variant-numeric:tabular-nums;line-height:1.2}
+  .fact small{font-size:.74rem;font-weight:400;color:var(--dim);margin-left:.3rem}
+  .stamp{margin:.9rem 0 0;font-size:.78rem;color:var(--faint)}
+  .stamp code{font-family:"IBM Plex Mono",monospace;font-size:.95em;color:var(--dim)}
+
+  /* 절 */
+  section{padding-top:3.6rem}
+  .sec-head{display:flex;align-items:baseline;gap:.9rem;flex-wrap:wrap;
+    padding-bottom:.7rem;border-bottom:1px solid var(--rule)}
+  .sec-head h2{font-family:"IBM Plex Mono",monospace;font-size:1.02rem;
+    font-weight:600;letter-spacing:.04em;margin:0}
+  .sec-head p{margin:0;color:var(--faint);font-size:.86rem}
+  .prose{max-width:42rem;color:var(--dim);margin:1.4rem 0 0}
+  .prose strong{color:var(--ink);font-weight:600}
+  .prose + .prose{margin-top:.9rem}
+
+  /* 배경 용어 */
+  .terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));
+    gap:.7rem;margin-top:1.5rem}
+  .term{border:1px solid var(--rule);border-left:3px solid var(--accent);
+    border-radius:3px;background:var(--panel);padding:.9rem 1.05rem}
+  .term dt{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:.88rem}
+  .term dd{margin:.3rem 0 0;color:var(--dim);font-size:.88rem;line-height:1.62}
+  .term dd b{color:var(--ink);font-weight:600}
+
+  /* 목차 */
+  .toc{margin-top:1.5rem;border:1px solid var(--rule);border-radius:3px;
+    background:var(--sunk);padding:.4rem 0}
+  .toc a{display:grid;grid-template-columns:7.5rem 1fr;gap:1rem;
+    padding:.5rem 1.1rem;text-decoration:none;align-items:baseline}
+  .toc a:hover{background:var(--accent-bg)}
+  .toc a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .toc .k{font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--accent)}
+  .toc .t{font-size:.94rem}
+
+  /* 노트 */
+  .notes{display:flex;flex-direction:column}
+  .note{padding:2.6rem 0;border-bottom:1px solid var(--rule-soft);scroll-margin-top:1rem}
+  .kind{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.68rem;
+    font-weight:500;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--accent);background:var(--accent-bg);padding:.2rem .5rem;border-radius:2px}
+  .note h3{font-size:1.46rem;font-weight:600;line-height:1.3;margin:.65rem 0 0;
+    letter-spacing:-.01em;text-wrap:balance}
+  .note h3 a{text-decoration:none;border-bottom:2px solid transparent}
+  .note h3 a:hover{border-bottom-color:var(--accent)}
+  .note h3 a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  .note p{max-width:42rem;color:var(--dim);margin:.7rem 0 0}
+  .note p strong{color:var(--ink);font-weight:600}
+  .note .lead{font-size:1.02rem}
+
+  .step-head{font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.11em;
+    text-transform:uppercase;color:var(--faint);margin:1.6rem 0 0}
+  ol.steps{max-width:42rem;margin:.6rem 0 0;padding-left:0;list-style:none;
+    counter-reset:s;display:flex;flex-direction:column;gap:.55rem}
+  ol.steps li{counter-increment:s;position:relative;padding-left:2rem;color:var(--dim)}
+  ol.steps li::before{content:counter(s);position:absolute;left:0;top:.28rem;
+    font-family:"IBM Plex Mono",monospace;font-size:.7rem;font-weight:600;
+    color:var(--accent);background:var(--accent-bg);border-radius:2px;
+    width:1.3rem;height:1.3rem;display:grid;place-items:center;line-height:1}
+  ol.steps li b{color:var(--ink);font-weight:600}
+
+  /* 적혀 있던 것 ↔ 실제 */
+  .ledger{margin:1.4rem 0 0;border:1px solid var(--rule);border-radius:3px;
+    background:var(--panel);overflow:hidden}
+  .ledger-head,.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}
+  .ledger-head span{font-family:"IBM Plex Mono",monospace;font-size:.67rem;
+    letter-spacing:.11em;text-transform:uppercase;padding:.5rem .95rem;
+    color:var(--faint);border-bottom:1px solid var(--rule)}
+  .ledger-head span:first-child{border-right:1px solid var(--rule)}
+  .row{border-top:1px solid var(--rule-soft)}
+  .row:first-of-type{border-top:0}
+  .row>div{padding:.72rem .95rem;font-size:.93rem;line-height:1.62}
+  .row .was{border-right:1px solid var(--rule);color:var(--dim)}
+  .row .is{color:var(--ink)}
+  .row .is b{font-weight:600;color:var(--bad)}
+  .row .is em{font-style:normal;font-weight:600;color:var(--ok)}
+
+  /* 증거 */
+  .evidence{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center;margin-top:1.2rem}
+  .chip{font-family:"IBM Plex Mono",monospace;font-size:.73rem;padding:.22rem .55rem;
+    border-radius:2px;border:1px solid var(--rule);color:var(--dim)}
+  .chip.caught{color:var(--ok);background:var(--ok-bg);border-color:transparent}
+  .chip.survived{color:var(--bad);background:var(--bad-bg);border-color:transparent}
+  a.sha{font-family:"IBM Plex Mono",monospace;font-size:.73rem;text-decoration:none;
+    padding:.22rem .55rem;border-radius:2px;border:1px solid var(--accent);color:var(--accent)}
+  a.sha:hover{background:var(--accent-bg)}
+  a.sha:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* 인용 */
+  .pull{margin:1.4rem 0 0;padding:.15rem 0 .15rem 1.05rem;
+    border-left:3px solid var(--accent);color:var(--ink);font-size:1rem;max-width:44rem}
+  .pull b{font-weight:600}
+  .pull em{font-style:normal;color:var(--dim)}
+
+  /* 코드 */
+  pre{margin:1.2rem 0 0;background:var(--sunk);border:1px solid var(--rule);
+    border-radius:3px;padding:.85rem 1rem;overflow-x:auto;max-width:44rem;
+    font-family:"IBM Plex Mono",monospace;font-size:.8rem;line-height:1.7;color:var(--ink)}
+  pre .c{color:var(--faint)}
+  pre .hl{color:var(--bad);font-weight:600}
+
+  /* 로그 눈금 막대 */
+  .chart{margin:1.4rem 0 0;border:1px solid var(--rule);border-radius:3px;
+    background:var(--panel);padding:1.1rem 1.15rem .8rem;overflow-x:auto}
+  .chart-cap{font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:.85rem}
+  .bars{display:flex;flex-direction:column;gap:.42rem;min-width:22rem}
+  .bar{display:grid;grid-template-columns:8.5rem 1fr 5rem;align-items:center;gap:.7rem}
+  .bar .lab{font-family:"IBM Plex Mono",monospace;font-size:.75rem;color:var(--dim);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar .track{height:9px;background:var(--rule-soft);border-radius:1px}
+  .bar .fill{display:block;height:100%;background:var(--cool);border-radius:1px}
+  .bar.low .fill{background:var(--bad)}
+  .bar.low .lab{color:var(--bad)}
+  .bar .val{font-family:"IBM Plex Mono",monospace;font-size:.75rem;text-align:right;
+    font-variant-numeric:tabular-nums;color:var(--dim)}
+  .bar.low .val{color:var(--bad);font-weight:600}
+  .axis{display:grid;grid-template-columns:8.5rem 1fr 5rem;gap:.7rem;margin-top:.55rem;
+    min-width:22rem}
+  .ticks{position:relative;height:1.1rem}
+  .ticks span{position:absolute;transform:translateX(-50%);
+    font-family:"IBM Plex Mono",monospace;font-size:.66rem;color:var(--faint)}
+
+  /* 저장소 */
+  .repos{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+    gap:.7rem;margin-top:1.4rem}
+  .repo{border:1px solid var(--rule);border-radius:3px;background:var(--panel);
+    padding:.95rem 1.05rem;text-decoration:none;display:block}
+  .repo:hover{border-color:var(--accent)}
+  .repo:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .repo .name{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:.95rem}
+  .repo .desc{color:var(--dim);font-size:.85rem;margin-top:.2rem;line-height:1.5}
+  .repo .meta{font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--faint);
+    margin-top:.5rem;font-variant-numeric:tabular-nums}
+
+  footer{margin-top:3.4rem;padding-top:1.4rem;border-top:1px solid var(--rule);
+    color:var(--faint);font-size:.83rem}
+
+  @media (max-width:640px){
+    .ledger-head,.row{grid-template-columns:1fr}
+    .row .was{border-right:0;border-bottom:1px solid var(--rule-soft)}
+    .ledger-head span:first-child{border-right:0}
+    .fact{border-right:0;border-bottom:1px solid var(--rule)}
+    .toc a{grid-template-columns:1fr;gap:.15rem}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">개발 노트 · 2026</div>
+  <h1>Domynion</h1>
+  <p class="lede">
+    <a href="https://openfront.io" rel="noopener">openfront.io</a> 라는 실시간 영토 확장
+    게임을 <strong>규칙 단위로 복제</strong>한 뒤, 그 위에 원본에 없는
+    <strong>증강 드래프트</strong>를 얹는 개인 프로젝트다.
+    원본은 TypeScript, 이쪽은 Python + PyQt6 다.
+  </p>
+  <p class="lede">
+    아래는 만들면서 <strong>무엇이 어떻게 깨졌고 어떻게 알아냈는지</strong>의 기록이다.
+    기능 소개가 아니라 판단 기록이라 <strong>&ldquo;이건 아직 안 쟀다&rdquo;</strong> 도
+    그대로 적는다. 수치는 전부 실측이고, 각 노트 끝의 커밋에서 확인할 수 있다.
+  </p>
+  <dl class="facts">
+    <div class="fact"><dt>커밋</dt><dd data-stat="commits">264</dd></div>
+    <div class="fact"><dt>메운 이식 누락</dt><dd data-stat="ported-gaps">128</dd><small>개</small></div>
+    <div class="fact"><dt>테스트</dt><dd data-stat="tests">1,269</dd><small>통과</small></div>
+    <div class="fact"><dt>변이 누적</dt><dd data-stat="mutations">278</dd><small>개</small></div>
+    <div class="fact"><dt>문서</dt><dd data-stat="doc-lines">10,558</dd><small>줄</small></div>
+  </dl>
+  <p class="stamp">위 다섯은 <code>tools/site_stats.py</code> 가 잰 값이다 —
+    <span data-stat="measured-at">2026-09-05 09:22</span> 기준.</p>
+</header>
+
+<section id="background">
+  <div class="sec-head">
+    <h2>배경</h2>
+    <p>노트를 읽기 전에 알면 되는 것.</p>
+  </div>
+
+  <p class="prose">
+    원본은 브라우저에서 도는 대규모 실시간 게임이다. 판 하나에
+    <strong>지도 65만 타일</strong> 위에서 <strong>나라 72개 + 봇 400개</strong>가 동시에
+    움직이고, 전투·골드·동맹·핵·철도가 전부 맞물려 돈다.
+    이걸 <strong>개념만 비슷하게</strong> 만드는 것과 <strong>공식과 상수를 그대로</strong>
+    옮기는 것은 완전히 다른 일이다. 이 프로젝트는 후자를 목표로 한다.
+  </p>
+  <p class="prose">
+    그래서 이 프로젝트의 어려움은 &ldquo;어떻게 만드나&rdquo; 가 아니라
+    <strong>&ldquo;안 옮긴 것을 어떻게 알아내나&rdquo;</strong> 다.
+    빠뜨린 규칙은 오류를 내지 않는다. 게임은 멀쩡히 돌아가고, 테스트도 통과하고,
+    그냥 <strong>원본과 다른 게임</strong>이 되어 있을 뿐이다. 아래 노트 대부분이 그
+    이야기다.
+  </p>
+
+  <dl class="terms">
+    <div class="term">
+      <dt>tick</dt>
+      <dd>게임 시간의 최소 단위. <b>1초 = 10 tick</b> 이다.
+        판 하나가 보통 <b>2만 tick(약 35분)</b> 쯤 간다.</dd>
+    </div>
+    <div class="term">
+      <dt>이식 누락</dt>
+      <dd>원본에는 있는데 우리에게 없는 규칙. <b>오류를 안 내는 게 특징</b>이라
+        찾아내는 것 자체가 일이다. 지금까지 <b data-stat="ported-gaps">128</b>개 를 메웠다.</dd>
+    </div>
+    <div class="term">
+      <dt>변이 테스트</dt>
+      <dd>규칙을 지키는 코드 줄을 <b>일부러 깨뜨려</b> 테스트가 빨개지는지 재는 것.
+        빨개지면 <b>잡힘</b>, 그대로 통과하면 <b>살아남음</b> — 후자는 테스트가
+        아무것도 안 재고 있었다는 뜻이다.</dd>
+    </div>
+    <div class="term">
+      <dt>기준선</dt>
+      <dd>고정된 난수 씨앗으로 판을 끝까지 돌려 핵 발사 수·생존자·골드를 표로 뜬 것.
+        규칙을 건드리면 다시 떠서 <b>조용한 변화</b>를 잡는다.</dd>
+    </div>
+  </dl>
+
+  <p class="prose">
+    반복해서 나오는 문장이 하나 있다 —
+    <strong>&ldquo;통과는 증거가 아니다.&rdquo;</strong>
+    아무것도 검증하지 않는 테스트도 통과하기 때문이다. 아래 일곱 편 중 다섯 편이
+    <strong>테스트가 전부 초록인 상태에서 발견된 것</strong>이다.
+  </p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>노트</h2>
+    <p>일곱 편. 기능이 아니라 서로 다른 교훈으로 골랐다.</p>
+  </div>
+
+  <nav class="toc">
+    <a href="#n1"><span class="k">실험 설계</span><span class="t">켠 쪽이 더 나빴다 — 다른 판을 재고 있었다</span></a>
+    <a href="#n2"><span class="k">규칙 설계</span><span class="t">안 끝나는 판 — 상한을 늘려서는 안 풀린다</span></a>
+    <a href="#n3"><span class="k">문서 관리</span><span class="t">안 여는 문서만 썩었다</span></a>
+    <a href="#n4"><span class="k">테스트</span><span class="t">한 번도 발동한 적 없는 규칙</span></a>
+    <a href="#n5"><span class="k">계측</span><span class="t">&ldquo;축이 있는가&rdquo; 와 &ldquo;축이 걸리는가&rdquo; 는 다른 질문</span></a>
+    <a href="#n6"><span class="k">대조 검증</span><span class="t">병력을 원본의 10배로 보여주고 있었다</span></a>
+    <a href="#n7"><span class="k">훑는 방법</span><span class="t">&ldquo;작다&rdquo; 고 적어 둔 항목이 넷이었다</span></a>
+  </nav>
+
+  <div class="notes">
+
+    <!-- 1 -->
+    <article class="note" id="n1">
+      <span class="kind">실험 설계</span>
+      <h3><a href="notes/01-ab-was-measuring-a-different-game.md">켠 쪽이 더 나빴다 — 다른 판을 재고 있었다</a></h3>
+      <p class="lead">
+        증강 드래프트를 다 만들고 나서 물어야 할 것은 하나였다 —
+        <strong>정말 판이 달라지는가.</strong> 같은 난수 씨앗으로 켜고/끄고 돌려
+        비교했다. 그런데 결과가 상식과 정반대로 나왔다.
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>기대</span><span>실제</span></div>
+        <div class="row">
+          <div class="was">seed 11 · 증강을 켜면 더 커진다</div>
+          <div class="is"><span class="num">46,594</span> → <b><span class="num">20,983</span></b> (절반)</div>
+        </div>
+        <div class="row">
+          <div class="was">계수가 세거나 약해서 난 차이다</div>
+          <div class="is"><b>같은 seed 인데 다른 판이었다</b></div>
+        </div>
+        <div class="row">
+          <div class="was">테스트가 잡아 줄 것이다</div>
+          <div class="is">테스트 29개도 전체 스위트도 <b>전부 초록</b>이었다</div>
+        </div>
+        <div class="row">
+          <div class="was">고친 뒤</div>
+          <div class="is">생존판 영토 중앙 <span class="num">36,732</span> → <em><span class="num">108,162</span></em> (2.9배)</div>
+        </div>
+      </div>
+
+      <p class="step-head">어떻게 알아냈나</p>
+      <ol class="steps">
+        <li>증강은 <b>전부 유리한 계수</b>다(병력 상한 +18%, 정복 비용 −14% …).
+          그런데 켠 쪽이 절반이다 — <b>계수 조정으로 설명되는 방향이 아니다.</b></li>
+        <li>그래서 값이 아니라 <b>비교 자체가 성립하는지</b>를 의심했다.
+          같은 씨앗을 넣었으니 두 판은 같아야 한다.</li>
+        <li>드래프트가 카드를 뽑을 때 <b>판의 난수를 쓰고 있었다.</b>
+          카드를 뽑느라 난수를 한 번 더 소비하면, 그 뒤로 스폰 위치도 전투 굴림도
+          AI 판단도 전부 어긋난다.</li>
+        <li>드래프트 전용 난수를 분리했다. ⚠ <b>켜든 끄든 만들어야 한다</b> —
+          조건부로 만들면 판을 만들 때 난수가 한 번 더 불려
+          <b>고치려던 버그를 같은 자리에 다시 만든다.</b></li>
+      </ol>
+
+      <p>
+        검증은 테스트가 아니라 <strong>판</strong>으로 했다. 첫 드래프트는 750 tick 에
+        열리므로 <strong>그 이전 구간은 양쪽이 같은 판이어야 한다.</strong>
+      </p>
+<pre>[7 off] 400/900 tick  영토 4769
+[7 on ] 400/900 tick  영토 4769      <span class="c">← 정확히 같다</span></pre>
+      <p>버그가 남아 있었다면 여기서 이미 갈렸다. <strong>진행 로그가 자기 전제를 스스로 검증한다.</strong></p>
+
+      <p class="pull">
+        <b>A/B 결과가 상식과 반대면 계수보다 난수 소비를 먼저 의심한다.</b><br>
+        <em>이 종류는 결과를 봐야만 나온다 — 드래프트 자체는 완벽하게 돌고 있었다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip caught">변이 2 / 2 잡힘</span>
+        <span class="chip">A/B 24판 · 394초</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/17c3303" rel="noopener">17c3303</a>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/3e4e033" rel="noopener">3e4e033</a>
+      </div>
+    </article>
+
+    <!-- 2 -->
+    <article class="note" id="n2">
+      <span class="kind">규칙 설계</span>
+      <h3><a href="notes/02-a-game-that-cannot-end.md">안 끝나는 판 — 상한을 늘려서는 안 풀린다</a></h3>
+      <p class="lead">
+        기준선을 재는데 한 판이 <span class="num">22,000</span> tick 에서 안 끝났다.
+        상한을 <span class="num">25,000</span> 으로 올렸더니 <strong>거기서도 안 끝났다.</strong>
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>그럴듯한 해법</span><span>실제로 필요한 것</span></div>
+        <div class="row">
+          <div class="was">tick 상한을 더 올린다</div>
+          <div class="is"><b>안 풀린다.</b> 두 번 연속 미종료가 그 증거다</div>
+        </div>
+        <div class="row">
+          <div class="was">승리 문턱에 하한을 20% 쯤 둔다</div>
+          <div class="is"><b>바닥이 없어야 한다</b> — 하한을 두면 그 아래에서 영원히 버틴다</div>
+        </div>
+        <div class="row">
+          <div class="was">기존 테스트는 그대로 통과할 것이다</div>
+          <div class="is">하나가 깨졌다 — <b>시간 종료 승리가 도달 불가</b>가 됐다</div>
+        </div>
+        <div class="row">
+          <div class="was">원본 그대로 옮기면 된다</div>
+          <div class="is">원본은 <b>기본 꺼짐이고 로비에서만 켠다.</b> 싱글이라 로비가 없어 <em>켤지 말지가 곧 판 규칙</em>이었다</div>
+        </div>
+      </div>
+
+      <p class="step-head">어떻게 알아냈나</p>
+      <ol class="steps">
+        <li>미종료 판의 <b>생존자 수가 2로 고정</b>돼 있었다. 판이 <b>느린</b> 게 아니라
+          <b>끝날 수 없는 상태</b>다 — 둘이 남아 서로를 못 이긴다.</li>
+        <li>그러면 상한을 올리는 것은 답이 아니다. <b>승리 조건 쪽</b>을 봐야 한다.</li>
+        <li>원본에 이미 있었다. 시작 시각을 넘기면 지배 승리에 필요한 점유율이
+          <b>분당 2%p 씩 내려가고, 바닥이 없다.</b></li>
+      </ol>
+
+      <div class="chart">
+        <div class="chart-cap">지배 승리에 필요한 점유율 · 경과 시간에 따라</div>
+        <div class="bars">
+          <div class="bar"><span class="lab">0~30분</span><span class="track"><span class="fill" style="width:80%"></span></span><span class="val">80%</span></div>
+          <div class="bar"><span class="lab">40분</span><span class="track"><span class="fill" style="width:60%"></span></span><span class="val">60%</span></div>
+          <div class="bar"><span class="lab">50분</span><span class="track"><span class="fill" style="width:40%"></span></span><span class="val">40%</span></div>
+          <div class="bar"><span class="lab">60분</span><span class="track"><span class="fill" style="width:20%"></span></span><span class="val">20%</span></div>
+          <div class="bar low"><span class="lab">70분</span><span class="track"><span class="fill" style="width:0.6%"></span></span><span class="val">0%</span></div>
+        </div>
+        <div class="axis">
+          <span></span>
+          <span class="ticks">
+            <span style="left:0%">0%</span><span style="left:25%">25%</span>
+            <span style="left:50%">50%</span><span style="left:75%">75%</span>
+            <span style="left:100%">100%</span>
+          </span>
+          <span></span>
+        </div>
+      </div>
+
+      <p>
+        <strong>바닥이 없는 것이 핵심이다.</strong> 하한을 20% 쯤 두면 그럴듯해 보이지만,
+        <strong>남은 둘이 각자 15% 씩 갖고 있으면 그 판은 여전히 안 끝난다.</strong>
+        0 에 닿는 순간 남은 사람 중 영토가 가장 넓은 쪽이 이기므로
+        <strong>판 길이가 70분으로 못 박힌다.</strong>
+      </p>
+      <p>
+        딸려서 승리 조건 하나가 사라졌다. 문턱이 70분에 0 이면
+        <strong>170분 하드 리밋에 닿을 수가 없다.</strong> 테스트가 틀린 게 아니라
+        규칙이 바뀐 결과였고, 원본도 이 기능을 켜면 마찬가지다. 경로를 지우지 않고
+        테스트를 둘로 갈랐다 — 하나는 <strong>껐을 때</strong> 그 경로가 아직 도는지 재고,
+        하나는 켠 채 <strong>도달 불가임을 못 박는다.</strong>
+      </p>
+
+      <p class="pull">
+        <b>교착을 푸는 장치에 하한을 두면 그 장치가 아니게 된다.</b><br>
+        <em>하한 아래에서 버티는 판이 정확히 우리가 풀려던 판이다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip caught">변이 6 / 6 잡힘</span>
+        <span class="chip survived">측정 미완 — 45,000 tick 중 14,000 에서 중단</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/24b6683" rel="noopener">24b6683</a>
+      </div>
+    </article>
+
+    <!-- 3 -->
+    <article class="note" id="n3">
+      <span class="kind">문서 관리</span>
+      <h3><a href="notes/03-only-the-document-i-never-reopened-rotted.md">안 여는 문서만 썩었다</a></h3>
+      <p class="lead">
+        문서가 둘이다. <strong>이식 문서</strong>(원본과 우리 코드를 나란히 놓은 것, 8,700줄)와
+        <strong>설계 문서</strong>(우리가 얹는 계층, 460줄). 둘 다 같은 규칙을 지키기로
+        돼 있었는데 <strong>한쪽만 썩었다.</strong>
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>설계 문서가 적어 둔 것</span><span>실제 코드</span></div>
+        <div class="row">
+          <div class="was">상한 = <span class="num">250 + 영토 × 22</span></div>
+          <div class="is"><span class="num">2 × (타일^0.6 × 1000 + 50000) + Σ도시레벨 × 250000</span></div>
+        </div>
+        <div class="row">
+          <div class="was">지형에 <b>숲</b>이 있다 (방어 1.20)</div>
+          <div class="is">숲이 없다. 평지·구릉·산악 셋뿐</div>
+        </div>
+        <div class="row">
+          <div class="was">시간 종료 <b>15분</b></div>
+          <div class="is">170분, 그마저 도달 불가</div>
+        </div>
+        <div class="row">
+          <div class="was">도구 도움말: &ldquo;안 주면 <b>900초</b>에 판을 자른다&rdquo;</div>
+          <div class="is">실제 <span class="num">10,200초</span></div>
+        </div>
+        <div class="row">
+          <div class="was">이식 문서 (전투 공식 상수 37개)</div>
+          <div class="is"><em>불일치 0</em></div>
+        </div>
+      </div>
+
+      <p class="step-head">어떻게 알아냈나</p>
+      <ol class="steps">
+        <li>증강 UI 를 만들다 설계 문서의 카드 표를 다시 읽었다.
+          표에 <b>이미 삭제한 카드 둘</b>이 그대로 있었다.</li>
+        <li>이상해서 <b>절마다 코드와 대조</b>했다. 규칙 절이 한 줄도 안 맞았다.</li>
+        <li>가장 나빴던 것은 <b>&ldquo;미해결&rdquo; 로 표시된 항목</b>이었다 —
+          <em>&ldquo;할인 두 장이면 비용이 음수가 된다. 하한이 막고 있다.&rdquo;</em>
+          실측하니 <b>두 카드는 축이 달라 합산 자체가 안 일어난다.</b>
+          일어날 수 없는 계산을 미해결 문제로 적어 두고 있었다.</li>
+        <li>그리고 하한도 <b>막고 있지 않았다.</b> 하한은 축마다 걸리는데 코드는
+          <b>곱</b>을 쓴다 — 실측 배율 <span class="num">0.179</span> 로 하한 아래다.</li>
+        <li>같은 잣대를 이식 문서에도 돌렸다. <b>불일치 0</b> 이었다.</li>
+      </ol>
+
+      <p>
+        여기가 이 노트의 요점이다. <strong>두 문서에 같은 규칙이 걸려 있었는데 한쪽만
+        썩었다.</strong> 차이는 규칙이 아니었다 — 이식 문서는 세션마다 절을 붙이며 계속
+        읽었고, 설계 문서는 방향이 바뀔 때 <strong>머리말만 붙이고 본문을 안 열었다.</strong>
+      </p>
+      <p>
+        그리고 설계 문서 마지막 절이 <strong>&ldquo;다음에 할 일&rdquo;</strong> 이었는데,
+        이식 문서에도 같은 절이 있었다. <strong>계획이 두 자리에서 경쟁하고 있었다.</strong>
+        설계 문서 쪽이 가리키던 상수 넷은 <strong>하나도 존재하지 않았다.</strong>
+      </p>
+
+      <p class="pull">
+        <b>문서를 지키는 것은 규칙이 아니라 다시 읽는 빈도다.</b><br>
+        <em>그래서 규칙 대신 구조를 바꿨다 — 공식을 지우고 &ldquo;어디를 보면 되는지&rdquo; 만
+        남겼다. 베껴 적은 수식이 썩은 원인이었다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip">틀린 문장 스물 남짓</span>
+        <span class="chip">재개 지점이 두 자리에 있었다</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/94c99c3" rel="noopener">94c99c3</a>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/a540edd" rel="noopener">a540edd</a>
+      </div>
+    </article>
+
+    <!-- 4 -->
+    <article class="note" id="n4">
+      <span class="kind">테스트 방법론</span>
+      <h3><a href="notes/04-a-rule-that-never-fired.md">한 번도 발동한 적 없는 규칙</a></h3>
+      <p class="lead">
+        증강 카드는 계수다. 병력 상한 +18%, 정복 비용 −14% 같은 것들이 각자
+        <strong>축</strong>에 실린다. 문서와 코드 주석이 둘 다 앞자리에 이 원칙을 적어 뒀다 —
+        <strong>&ldquo;같은 축에 여러 카드가 실리면 더한다.&rdquo;</strong>
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>있다고 믿은 것</span><span>실제</span></div>
+        <div class="row">
+          <div class="was">합산 규칙이 돌고 있다</div>
+          <div class="is"><b>한 번도 돈 적이 없다.</b> 쌓이는 것은 레벨뿐</div>
+        </div>
+        <div class="row">
+          <div class="was">그 규칙을 재는 테스트가 있다</div>
+          <div class="is">이름은 <span class="num">same_axis_cards_add</span> 인데 재료는 <b>한 장의 Lv2</b> 였다</div>
+        </div>
+        <div class="row">
+          <div class="was">주석이 산수를 적어 뒀으니 맞겠지</div>
+          <div class="is"><span class="num">0.486</span> 이라 적혀 있고 실제는 <b><span class="num">0.306</span></b> — <b>틀린 주석과 함께 통과</b>하고 있었다</div>
+        </div>
+        <div class="row">
+          <div class="was">테스트를 더 쓰면 잡힌다</div>
+          <div class="is">새로 쓴 테스트도 못 잡았다 — 재료를 <b>손으로 만들어</b> 그 코드를 아예 안 탔다</div>
+        </div>
+      </div>
+
+      <p class="step-head">어떻게 알아냈나</p>
+      <ol class="steps">
+        <li>다음에 카드를 늘린다면 어느 축에 놓을지 보려고 <b>분포를 한 줄로 세었다.</b>
+          카드 10장이 축 10개에 <b>정확히 하나씩</b>이었다.</li>
+        <li>그러면 합산 규칙은 <b>발동할 조합 자체가 없다.</b></li>
+        <li>확인차 합산 코드를 <b>덮어쓰기로 바꾸는 변이</b>를 넣었다.
+          <b>살아남았다</b> — 두 구현의 동작이 같기 때문이다.</li>
+        <li>축마다 카드가 하나뿐이니 누적값이 늘 0 이고,
+          <span class="num">0.0 + x</span> 와 <span class="num">x</span> 는 같다.</li>
+        <li>합성 카드를 임시로 얹어 <b>같은 축 두 장</b>을 만들고 나서야 잡혔다.</li>
+      </ol>
+
+<pre>values[field] = values.get(field, 0.0) + value_at(aug, level)
+<span class="c">            → </span>values[field] = value_at(aug, level)   <span class="hl">← 결과가 같다</span></pre>
+
+      <p>
+        규칙을 지울 수도 있었지만 카드를 늘리면 되살아날 규칙이다. 대신
+        <strong>깨어나는 순간을 알리는 테스트</strong>를 뒀다 — 열한 번째 카드를 이미 있는
+        축에 얹으면 그 테스트가 깨지고, 실패 메시지가
+        <strong>&ldquo;이제 설계 문서의 할인 계산을 다시 재야 한다&rdquo;</strong> 고 알려 준다.
+      </p>
+      <p>
+        같은 날 같은 모양을 하나 더 만났다. 할인 하한도 <strong>카드로는 절대 닿을 수
+        없는 값</strong>을 막고 있었다. 보호 장치가 있고, 그 장치를 재는 테스트도 있고,
+        <strong>그 상황이 게임에서 일어날 수 없었다.</strong>
+      </p>
+
+      <p class="pull">
+        <em>&ldquo;막지 않았으면 무엇이 일어났을 것인가&rdquo;</em> 를 단언해도 빠져나간다.
+        빠진 것은 다음 질문이다 —
+        <b>&ldquo;그 일이 이 게임에서 실제로 일어날 수 있는가.&rdquo;</b>
+      </p>
+      <div class="evidence">
+        <span class="chip survived">변이 1 살아남음 → 재료 문제</span>
+        <span class="chip caught">고친 뒤 3 / 3 잡힘</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/22d1284" rel="noopener">22d1284</a>
+      </div>
+    </article>
+
+    <!-- 5 -->
+    <article class="note" id="n5">
+      <span class="kind">계측</span>
+      <h3><a href="notes/05-existing-is-not-the-same-as-firing.md">&ldquo;축이 있는가&rdquo; 와 &ldquo;축이 걸리는가&rdquo; 는 다른 질문</a></h3>
+      <p class="lead">
+        예전에 카드 둘이 <strong>갈 곳을 잃은 적</strong>이 있다. 이식하면서 지형과 이동
+        규칙이 통째로 바뀌었는데 카드는 그대로 남아 있었다 — <em>항해술</em>(바다 건너기)은
+        원본 배가 물길만 이어지면 어디든 가서 곱할 자리가 없어졌고,
+        <em>삼림 순찰대</em>는 원본 지형에 <strong>숲이 없어서</strong> 갈 곳이 없어졌다.
+        그래서 <strong>모든 계수 축이 코드에 등장하는지</strong> 재는 테스트를 뒀다.
+      </p>
+      <p>이번에는 다른 질문을 던졌다 — <strong>한 판에 몇 번 걸리는가.</strong></p>
+
+      <div class="chart">
+        <div class="chart-cap">한 판(8,258 tick)에서 계수가 곱해진 횟수 · 로그 눈금</div>
+        <div class="bars">
+          <div class="bar"><span class="lab">강행군</span><span class="track"><span class="fill" style="width:94.9%"></span></span><span class="val">497,947</span></div>
+          <div class="bar"><span class="lab">정예 병단</span><span class="track"><span class="fill" style="width:92.3%"></span></span><span class="val">342,374</span></div>
+          <div class="bar"><span class="lab">산악병</span><span class="track"><span class="fill" style="width:91.9%"></span></span><span class="val">325,415</span></div>
+          <div class="bar"><span class="lab">개척단</span><span class="track"><span class="fill" style="width:86.5%"></span></span><span class="val">155,573</span></div>
+          <div class="bar"><span class="lab">징집령</span><span class="track"><span class="fill" style="width:83.7%"></span></span><span class="val">104,785</span></div>
+          <div class="bar"><span class="lab">비옥한 땅</span><span class="track"><span class="fill" style="width:65.5%"></span></span><span class="val">8,519</span></div>
+          <div class="bar"><span class="lab">교역로</span><span class="track"><span class="fill" style="width:38.8%"></span></span><span class="val">213</span></div>
+          <div class="bar low"><span class="lab">상륙전</span><span class="track"><span class="fill" style="width:15.9%"></span></span><span class="val">9</span></div>
+        </div>
+        <div class="axis">
+          <span></span>
+          <span class="ticks">
+            <span style="left:0%">1</span><span style="left:33.3%">100</span>
+            <span style="left:66.7%">1만</span><span style="left:100%">100만</span>
+          </span>
+          <span></span>
+        </div>
+      </div>
+
+      <p>
+        <strong>상륙전은 한 판에 9번 걸린다</strong> — 정예 병단의
+        <span class="num">1/38,000</span> 이다. 그 축은 <em>배가 도착했는데 목적지가 이미 내
+        땅일 때</em>만 걸리고, 걸려 봐야 퇴각 벌점의 일부를 깎는다.
+        <strong>막으려던 자리가 그 자리에 다시 생겼다.</strong> 그때는 축이
+        <strong>없어서</strong> 꽝이었고, 지금은 축이 <strong>거의 안 걸려서</strong> 꽝이다.
+        그리고 <strong>기존 테스트는 초록이다.</strong>
+      </p>
+
+      <p class="step-head">여기서 두 번 넘어졌다</p>
+      <ol class="steps">
+        <li>계수 함수를 감쌀 때 <b>인자 개수를 잘못 짚었다.</b> 비슷한 이름의 다른
+          함수 시그니처를 썼다 — 즉시 오류라 금방 알았다.</li>
+        <li><b>사람이 없는 판으로 쟀다.</b> 증강은 사람만 받는데 관전 모드로 돌렸다.
+          그러면 병력 상한 함수가 봇·AI 분기에서 <b>먼저 반환</b>해 계수 줄에 도달조차
+          안 한다. 그 축이 <b>0회</b>로 나왔고, 하마터면
+          <b>&ldquo;이 카드가 배선 안 됐다&rdquo;</b> 로 읽을 뻔했다.</li>
+      </ol>
+      <p>둘 다 도구 머리말에 박아 뒀다. <strong>다음에 다시 만들면 또 같은 데서 넘어진다.</strong></p>
+
+      <p class="pull">
+        <b>축이 있는가와 축이 걸리는가는 다른 질문이다.</b><br>
+        <em>다만 횟수만으로 세기를 판정하면 안 된다 — 교역로는 213회지만 한 번에 큰
+        골드가 걸린다. 결론이 나오는 것은 9회짜리 하나뿐이다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip">재료 오류 2회</span>
+        <span class="chip">도구로 굳힘 · tools/axis_hits.py</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/8f63dd3" rel="noopener">8f63dd3</a>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/2b205fd" rel="noopener">2b205fd</a>
+      </div>
+    </article>
+
+    <!-- 6 -->
+    <article class="note" id="n6">
+      <span class="kind">대조 검증</span>
+      <h3><a href="notes/06-troops-were-shown-ten-times-too-large.md">병력을 원본의 10배로 보여주고 있었다</a></h3>
+      <p class="lead">
+        원본 코드에서 화면에 숫자를 찍는 함수를 열어 보니 이렇게 돼 있었다.
+      </p>
+<pre>export function renderTroops(troops: number): string {
+  return renderNumber(troops / <span class="hl">10</span>);
+}</pre>
+      <p>
+        <strong>원본은 병력을 표시할 때 10으로 나눈다.</strong> 우리는 날것을 찍고 있었다 —
+        시작 병력 <span class="num">25,000</span> 을 원본은 <span class="num">2.5K</span> 라고 쓴다.
+        <strong>화면의 모든 병력 숫자가 원본의 10배였다.</strong>
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>우리가 하던 것</span><span>원본</span></div>
+        <div class="row">
+          <div class="was">한 자리만 고치면 된다</div>
+          <div class="is">병력이 뜨는 <b>거의 모든 곳</b>에 쓰인다 — 한 자리만 고치면 <b>화면 안에서 축이 갈린다.</b> 열여섯 자리를 한 번에 바꿨다</div>
+        </div>
+        <div class="row">
+          <div class="was">골드도 같이 나누면 되겠지</div>
+          <div class="is"><b>골드는 안 나눈다.</b> 합치면 골드가 1/10 이 된다</div>
+        </div>
+        <div class="row">
+          <div class="was">&ldquo;적당히 K 로 줄이기&rdquo;</div>
+          <div class="is">구간마다 자릿수가 다른 <b>표</b>다 (1K~10K 소수 둘 · 10K~100K 하나 · 100K 이상 정수)</div>
+        </div>
+        <div class="row">
+          <div class="was">반올림하면 되겠지</div>
+          <div class="is"><b>내림이 먼저다.</b> 반올림이면 <span class="num">9,999</span> 가 <span class="num">10.00K</span> 가 되어 다음 구간 표기와 섞인다</div>
+        </div>
+        <div class="row">
+          <div class="was">난이도 impossible 시작 병력 <span class="num">25,000</span></div>
+          <div class="is">원본 <em><span class="num">31,250</span></em> — <b>가장 어려운 난이도가 그 아래와 같았다</b></div>
+        </div>
+      </div>
+
+      <p class="step-head">어떻게 알아냈나</p>
+      <ol class="steps">
+        <li>렌더링 폴더는 대부분 셰이더라 규칙이 없다고 보고 넘긴 곳이다.
+          그런데 파일 하나의 <b>머리말</b>이 스스로
+          <span class="num">→ CPU progress</span> 라고 적어 뒀다.</li>
+        <li>그래서 <b>같은 폴더 32개의 머리말만</b> 다시 훑었고, 그중 하나가
+          <span class="num">number formatting</span> 이었다.</li>
+        <li>구간 경계에서 틀리기 딱 좋은 표라 눈으로 옮기지 않고
+          <b>원본을 실제로 실행해</b> 대조했다.</li>
+        <li>원본 파일을 통째로 불러오면 클라이언트 트리 전체가 딸려 와 실행되지 않는다.
+          그래서 <b>그 두 함수의 본문만 떼어</b> 돌렸다 — 로직은 한 글자도 안 건드린다.</li>
+        <li>같은 자리에서 시작 병력 표를 대조하다 값 하나가 더 나왔다.
+          ⚠ <b>테스트가 넷 중 하나만 재고 있었다.</b></li>
+      </ol>
+
+      <p class="pull">
+        <b>표를 재는 테스트는 모든 칸을 재야 한다.</b><br>
+        <em>하나만 재면 나머지가 조용히 틀릴 수 있고, 실제로 그랬다. 넷을 다 재고
+        단조 증가까지 단언하도록 고쳤다 — 두 난이도가 같아지면 그 난이도는 뜻이 없다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip caught">원본 대조 54건 · 불일치 0</span>
+        <span class="chip survived">값 대조 도구가 현재 고장 — 백로그</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/34c330d" rel="noopener">34c330d</a>
+      </div>
+    </article>
+
+    <!-- 7 -->
+    <article class="note" id="n7">
+      <span class="kind">훑는 방법</span>
+      <h3><a href="notes/07-i-did-not-stop-after-the-first-one.md">&ldquo;작다&rdquo; 고 적어 둔 항목이 넷이었다</a></h3>
+      <p class="lead">
+        백로그에 이런 항목이 있었다 —
+        <em>&ldquo;사일로 재장전 진행바. 값은 이미 있다. 그리기만 없다. 언제든(작다).&rdquo;</em>
+        시간이 남아서 집었는데 <strong>작지 않았다.</strong>
+      </p>
+      <div class="ledger">
+        <div class="ledger-head"><span>집을 때 생각한 것</span><span>실제</span></div>
+        <div class="row">
+          <div class="was">막대 하나 그리면 끝난다</div>
+          <div class="is">원본 막대 하나가 <b>셋</b>을 보여 준다 — 철거 예정 · 건설 진행 · 재장전</div>
+        </div>
+        <div class="row">
+          <div class="was">재장전만 없다</div>
+          <div class="is"><b>철거 예정이 아예 없었다.</b> 건물을 철거하면 30초 동안 계속 돌아가는데 <b>화면에 아무 표시가 없었다</b> — 눌렀는지조차 알 수 없다</div>
+        </div>
+        <div class="row">
+          <div class="was">그 파일만 보면 된다</div>
+          <div class="is">같은 폴더 32개 머리말을 마저 읽었더니 <b>사거리 패스 셋</b>이 나왔고, 그게 <b>건설 미리보기(677줄)</b> 로 이어졌다 — 통째로 없던 기능이다</div>
+        </div>
+        <div class="row">
+          <div class="was">677줄을 다 옮겨야 한다</div>
+          <div class="is">아니다. <b>규칙은 반경 넷</b>뿐이다 — 나머지는 &ldquo;이미 있는 것을 어떻게 보여 주나&rdquo; 라 백로그로 넘겼다</div>
+        </div>
+      </div>
+
+      <p class="step-head">왜 반경이 규칙인가</p>
+      <ol class="steps">
+        <li><b>SAM</b> — 사거리가 <b>레벨을 탄다</b>(Lv1 70 · Lv3 90).
+          업그레이드 미리보기에서 Lv1 반경을 그리면 덮는 범위를 과소평가한다.</li>
+        <li><b>공장</b> — <b>역 사거리 110 안에 있어야 철도가 이어진다.</b>
+          모르고 놓으면 <b>왜 안 이어지는지 알 방법이 없고</b> 골드는 이미 나갔다.</li>
+        <li><b>핵</b> — <b>바깥</b> 반경을 그린다. 안쪽(전멸)을 그리면 원자탄이
+          12 대 30 이라 <b>피해를 2.5배 과소평가</b>한다.</li>
+      </ol>
+
+      <p class="step-head">순수 함수 테스트만으로는 &ldquo;안 그려진다&rdquo; 를 못 잡는다</p>
+      <p>
+        계산을 순수 함수로 옮기고 테스트도 통과했다. 그런데 <strong>그리는 쪽이 그 함수를
+        안 부르면 테스트는 전부 초록인 채 화면에는 아무것도 안 뜬다.</strong>
+        그래서 화면을 실제로 그려 <strong>막대 색 픽셀을 셌다.</strong>
+      </p>
+      <p>
+        ⚠ <strong>존재가 아니라 개수를 센다.</strong> 처음엔 색이 있는지만 봤더니
+        <em>&ldquo;채우는 폭이 비율을 안 탄다&rdquo;</em> 변이가 <strong>살아남았다.</strong>
+        25% 와 75% 를 그려 픽셀 수를 견주도록 고치고 나서야 잡혔다.
+      </p>
+
+      <p class="pull">
+        <b>폴더 이름으로 넘긴 곳은 파일 머리말로 한 번 더 훑는다.</b><br>
+        <em>그 파일은 자기가 CPU 계산이라고 직접 적어 뒀다. 그리고 &ldquo;작다&rdquo; 고
+        적어 둔 항목을 믿지 않는다 — 그 판단은 우리에게 무엇이 없는지 모르는 상태에서
+        내린 것이다.</em>
+      </p>
+      <div class="evidence">
+        <span class="chip caught">변이 15 / 15 잡힘</span>
+        <span class="chip survived">재료 오류 3회</span>
+        <span class="chip">이식 누락 124~127</span>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/3efe0c6" rel="noopener">3efe0c6</a>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/b3630fc" rel="noopener">b3630fc</a>
+        <a class="sha" href="https://github.com/yim2412/domynion/commit/ff4e253" rel="noopener">ff4e253</a>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<section id="tools">
+  <div class="sec-head">
+    <h2>검증 장치</h2>
+    <p>&ldquo;되는지&rdquo; 를 재는 방법들.</p>
+  </div>
+  <p class="prose">
+    이 프로젝트에서 가장 많이 쓰는 문장은 <strong>&ldquo;통과는 증거가 아니다&rdquo;</strong> 다.
+    그래서 테스트 외에 네 가지를 더 쓴다. 위 노트 일곱 편 중
+    <strong>다섯 편이 이 장치들에서 나왔다.</strong>
+  </p>
+  <div class="ledger" style="margin-top:1.25rem">
+    <div class="ledger-head"><span>장치</span><span>무엇을 잡나</span></div>
+    <div class="row">
+      <div class="was"><span class="num">mutate.py</span> · 변이 테스트</div>
+      <div class="is">규칙을 지키는 줄을 <b>일부러 깨뜨려</b> 테스트가 빨개지는지 잰다.
+        살아남으면 테스트가 아무것도 안 재고 있었다는 뜻이다 —
+        <b>그게 오늘만 네 번 나왔고, 네 번 다 테스트가 아니라 재료 문제였다</b></div>
+    </div>
+    <div class="row">
+      <div class="was"><span class="num">balance.py</span> · 기준선</div>
+      <div class="is">고정 씨앗으로 판을 끝까지 돌려 핵 발사·생존자·골드를 표로 뜬다.
+        규칙을 건드리면 다시 떠서 <b>조용한 변화</b>를 잡는다</div>
+    </div>
+    <div class="row">
+      <div class="was"><span class="num">augment_ab.py</span> · A/B</div>
+      <div class="is">같은 씨앗을 켜고/끄고 돌려 <b>짝으로</b> 비교한다.
+        죽은 판의 0 을 중앙값에 섞지 않는다</div>
+    </div>
+    <div class="row">
+      <div class="was"><span class="num">axis_hits.py</span> · 축 계측</div>
+      <div class="is">각 계수가 한 판에 몇 번 곱해지는지 센다 —
+        <b>코드를 읽어서는 안 보이는 것</b></div>
+    </div>
+    <div class="row">
+      <div class="was"><span class="num">oracle.mts</span> · 값 대조</div>
+      <div class="is">원본 TypeScript 를 <b>실제로 실행해</b> 같은 입력에 같은 출력이
+        나오는지 본다. <b>현재 고장</b> — README 의 &ldquo;185/185 일치&rdquo; 는
+        그 뒤로 한 번도 안 돌려 본 값이다</div>
+    </div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="sec-head">
+    <h2>지금 상태</h2>
+    <p>끝난 것과 안 끝난 것.</p>
+  </div>
+  <p class="prose">
+    규칙 이식은 사실상 끝났다. 원본의 클라이언트 코드를 전부 훑었고, 남은 것은
+    백로그에 조건과 함께 적혀 있다 — <strong>&ldquo;언젠가&rdquo; 가 아니라
+    &ldquo;무엇이 갖춰지면&rdquo;</strong> 으로.
+    그 위에 얹는 증강 계층은 카드 10종까지 만들었고,
+    <strong>켜면 판이 달라진다는 것까지 측정으로 확인</strong>했다.
+  </p>
+  <div class="ledger" style="margin-top:1.25rem">
+    <div class="ledger-head"><span>항목</span><span>상태</span></div>
+    <div class="row">
+      <div class="was">규칙 이식</div>
+      <div class="is"><em>원본 클라이언트를 전부 훑었다.</em> 이식 누락 <span data-stat="ported-gaps">128</span>개를 메웠다</div>
+    </div>
+    <div class="row">
+      <div class="was">증강 계층</div>
+      <div class="is"><em>카드 10종 · 드래프트 · 보유 표시.</em> 켜면 생존판 영토 중앙이 2.9배</div>
+    </div>
+    <div class="row">
+      <div class="was">교착 방지(Overtime)</div>
+      <div class="is">규칙·테스트는 끝. <b>&ldquo;안 끝나던 판이 실제로 끝나는가&rdquo; 는 아직 못 쟀다</b> — 판당 2시간 이상이라 중단했다</div>
+    </div>
+    <div class="row">
+      <div class="was">기준선</div>
+      <div class="is"><b>없다.</b> 교착 방지를 켜면서 옛 기준선이 무효가 됐고, 재측정이 미완이다</div>
+    </div>
+    <div class="row">
+      <div class="was">값 대조 도구</div>
+      <div class="is"><b>고장.</b> Node 런타임이 올라가면서 원본을 그대로 실행하지 못하게 됐다</div>
+    </div>
+    <div class="row">
+      <div class="was">상륙전 카드</div>
+      <div class="is">한 판에 9번 걸린다 — <b>갈아끼울지 A/B 로 정할 차례</b></div>
+    </div>
+  </div>
+</section>
+
+<section id="repos">
+  <div class="sec-head">
+    <h2>다른 저장소</h2>
+    <p>노트는 아직 Domynion 만 있다.</p>
+  </div>
+  <div class="repos">
+    <a class="repo" href="https://github.com/yim2412/joint-defense-sim" rel="noopener">
+      <div class="name">joint-defense-sim</div>
+      <div class="desc">국방시스템공학 — 3층 감사 체계와 무인 GUI 검증</div>
+      <div class="meta">커밋 667 · 문서 11,572줄</div>
+    </a>
+    <a class="repo" href="https://github.com/yim2412/Argus" rel="noopener">
+      <div class="name">Argus</div>
+      <div class="desc">수집기 여러 개를 붙인 모니터링 도구</div>
+      <div class="meta">커밋 217 · 문서 11,419줄</div>
+    </a>
+    <a class="repo" href="https://github.com/yim2412/fifa-match-tracker" rel="noopener">
+      <div class="name">fifa-match-tracker</div>
+      <div class="desc">외부 API 기반 전적 조회 · 캐싱 우선 설계</div>
+      <div class="meta">커밋 77 · 문서 610줄</div>
+    </a>
+    <a class="repo" href="https://github.com/yim2412/RL3D" rel="noopener">
+      <div class="name">RL3D</div>
+      <div class="desc">강화학습 3D 환경</div>
+      <div class="meta">커밋 30 · 문서 675줄</div>
+    </a>
+  </div>
+</section>
+
+<footer>
+  임준 · <a href="https://github.com/yim2412" rel="noopener">github.com/yim2412</a><br>
+  수치는 전부 실측이고, 각 노트 끝의 커밋에서 확인할 수 있다.
+  못 잰 것은 &ldquo;남은 것&rdquo; 으로 적어 둔다.
+</footer>
+
+</div>

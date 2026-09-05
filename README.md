@@ -76,6 +76,12 @@ python -m pytest tests -q
 # 변이 하네스 — 테스트가 규칙을 진짜로 재는지 확인한다.
 # ⚠ 도는 동안 pytest 도 실측 스크립트도 새로 띄우지 않는다 (소스를 제자리에서 고친다)
 python tools/mutate.py --spec <변이명세.json> --timeout 180
+# ⚠ 실행마다 docs/mutation-log.tsv 에 한 줄 남는다 (누적 변이 수를 손으로 세다 두 번 틀렸다)
+
+# 개발 노트 페이지(docs/index.html)의 통계 다섯 개를 실측해 갱신한다
+python tools/site_stats.py               # 재서 보여만 준다
+python tools/site_stats.py --write       # 갱신 (pytest 를 같이 돌린다)
+python tools/site_stats.py --check --no-tests   # 어긋나면 exit 1 · 커밋 전 확인용
 ```
 
 조작: **좌클릭 = 메뉴**(공격 · 건설 · 상륙 · 외교) · 우클릭 드래그/WASD = 이동 ·

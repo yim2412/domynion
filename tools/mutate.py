@@ -120,6 +120,35 @@ def run_tests(tests: str, k: str | None, timeout: float) -> tuple[str, float]:
     return (SURVIVED if done.returncode == 0 else CAUGHT), time.monotonic() - t0
 
 
+MUT_LOG = ROOT / "docs" / "mutation-log.tsv"
+
+
+def _log_run(spec: Path, results: list, n_bad: int, n_inv: int) -> None:
+    """실행 한 번을 mutation-log.tsv 에 한 줄로 남긴다.
+
+    누적 변이 수를 손으로 세다가 두 번 틀렸다 — 2026-09-04 커밋 메시지(11개라고
+    적었으나 실제 272/55)와 2026-09-05 docs/index.html(309개, 근거 없음)이다.
+    기록 실패가 하네스를 죽이면 안 된다: 변이 결과는 이미 화면에 나온 뒤다.
+    """
+    try:
+        first = not MUT_LOG.exists()
+        with MUT_LOG.open("a", encoding="utf-8", newline="\n") as f:
+            if first:
+                f.write("# 변이 하네스 실행 기록. tools/site_stats.py 가 이 파일을 더한다.\n")
+                f.write("# 2026-09-05 이전 누적 278개는 기록이 없어 site_stats.py 에 상수로 있다.\n")
+                f.write("#시각\t변이수\t잡힘\t살아남음\t무효\t명세\n")
+            f.write("\t".join([
+                time.strftime("%Y-%m-%d %H:%M"),
+                str(len(results)),
+                str(len(results) - n_bad - n_inv),
+                str(n_bad),
+                str(n_inv),
+                spec.name,
+            ]) + "\n")
+    except OSError as e:
+        print(f"[!] 기록 실패 (결과는 위에 그대로다): {e}", file=sys.stderr)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="변이 하네스")
     ap.add_argument("--spec", required=True, type=Path, help="변이 명세 JSON")
@@ -180,6 +209,8 @@ def main() -> int:
     n_to = sum(1 for _, v, _ in results if v == TIMEOUT)
     print(f"\n잡힘 {len(results) - n_bad - n_inv}건"
           f"(그중 타임아웃 {n_to}) · 살아남음 {n_bad}건 · 무효 {n_inv}건")
+
+    _log_run(args.spec, results, n_bad, n_inv)
 
     # 되돌리기가 실제로 됐는지 눈으로 본다. 하네스가 남긴 변이로 하루를 날린 적이 있다.
     diff = subprocess.run(["git", "diff", "--stat"], cwd=ROOT,
