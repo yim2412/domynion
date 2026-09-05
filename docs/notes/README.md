@@ -19,6 +19,7 @@ Python + PyQt6. 원본은 TypeScript 다.
 | [한 번도 발동한 적 없는 규칙](04-a-rule-that-never-fired.md) | **테스트 방법론** — 변이가 살아남았을 때 무엇을 의심하나 |
 | ["축이 있는가" 와 "축이 걸리는가"](05-existing-is-not-the-same-as-firing.md) | **계측** — 코드를 읽어서는 안 보이는 것 |
 | [병력을 원본의 10배로 보여주고 있었다](06-troops-were-shown-ten-times-too-large.md) | **대조 검증** — 눈으로 옮기지 않고 원본을 실행한다 |
+| ["작다"고 적어 둔 항목이 넷이었다](07-i-did-not-stop-after-the-first-one.md) | **백로그** — 넘긴 곳을 다시 훑는 방법, 그리고 "작다"는 메모를 믿지 않는 이유 |
 
 ### 이 프로젝트에서 쓰는 검증 장치
 
