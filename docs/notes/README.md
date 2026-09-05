@@ -7,9 +7,9 @@
 
 ## Domynion
 
-[openfront.io](https://openfront.io) 를 규칙 단위로 복제한 뒤, 그 위에 **증강
+[openfront.io](https://openfront.io) 에서 모티브를 얻어 제작했고, 그 위에 **증강
 드래프트**(일정 시간마다 판이 멈추고 카드 셋 중 하나를 고르는 계층)를 얹는 프로젝트.
-Python + PyQt6. 원본은 TypeScript 다.
+Python + PyQt6 로 만들었다.
 
 | 노트 | 무엇에 관한 글인가 |
 |---|---|
@@ -18,7 +18,7 @@ Python + PyQt6. 원본은 TypeScript 다.
 | [안 여는 문서만 썩었다](03-only-the-document-i-never-reopened-rotted.md) | **문서 관리** — 같은 규칙을 지킨 문서 둘 중 하나만 썩은 이유 |
 | [한 번도 발동한 적 없는 규칙](04-a-rule-that-never-fired.md) | **테스트 방법론** — 변이가 살아남았을 때 무엇을 의심하나 |
 | ["축이 있는가" 와 "축이 걸리는가"](05-existing-is-not-the-same-as-firing.md) | **계측** — 코드를 읽어서는 안 보이는 것 |
-| [병력을 원본의 10배로 보여주고 있었다](06-troops-were-shown-ten-times-too-large.md) | **대조 검증** — 눈으로 옮기지 않고 원본을 실행한다 |
+| [병력을 10배로 보여주고 있었다](06-troops-were-shown-ten-times-too-large.md) | **대조 검증** — 눈으로 옮기지 않고 참고 구현을 실행한다 |
 | ["작다"고 적어 둔 항목이 넷이었다](07-i-did-not-stop-after-the-first-one.md) | **백로그** — 넘긴 곳을 다시 훑는 방법, 그리고 "작다"는 메모를 믿지 않는 이유 |
 
 ### 이 프로젝트에서 쓰는 검증 장치
@@ -29,4 +29,4 @@ Python + PyQt6. 원본은 TypeScript 다.
 | **기준선**(`tools/balance.py`) | 고정 seed 로 판을 끝까지 돌려 핵 발사·생존·골드를 표로 뜬다. 규칙을 건드리면 다시 뜬다 |
 | **A/B 도구**(`tools/augment_ab.py`) | 같은 seed 를 켜고/끄고 돌려 짝으로 비교한다 |
 | **축 계측**(`tools/axis_hits.py`) | 각 계수가 한 판에 몇 번 곱해지는지 센다 |
-| **값 대조**(`tools/oracle.mts`) | 원본 TypeScript 를 실제로 실행해 같은 입력에 같은 출력이 나오는지 본다 ⚠ 현재 고장 |
+| **값 대조**(`tools/oracle.mts`) | 참고 구현을 실제로 실행해 같은 입력에 같은 출력이 나오는지 본다 ⚠ 현재 고장 |

@@ -2,7 +2,7 @@
 
 > Domynion · 2026-09-04 · [`17c3303`](https://github.com/yim2412/domynion/commit/17c3303) [`3e4e033`](https://github.com/yim2412/domynion/commit/3e4e033)
 
-Domynion 은 openfront.io 를 규칙 단위로 복제한 뒤, 그 위에 **증강 드래프트**(일정
+Domynion 은 openfront.io 에서 모티브를 얻어 제작했고, 그 위에 **증강 드래프트**(일정
 시간마다 판이 멈추고 카드 세 장 중 하나를 고르는 계층)를 얹는 프로젝트다.
 증강을 다 만들고 나서 물어야 할 것은 하나였다 — **정말 판이 달라지는가.**
 
