@@ -5,7 +5,7 @@
 "원본이 이 값인가, 아니면 우리가 튜닝하는 것인가." 후자라면 그 자리에 그렇게 적는다.
 
 원본: github.com/openfrontio/OpenFrontIO (main, 2026-08-21)
-이식 계획과 공식 전문: docs/openfront-port.md
+이식 계획과 공식 전문: docs/implementation-log.md
 
 주의 — **지도 크기가 이 수치들을 지배한다.** 공식이 육지 수만~수백만 타일에 맞춰져
 있어서 작은 지도에 넣으면 다른 게임이 된다. 자세한 건 계획서 4.5절.

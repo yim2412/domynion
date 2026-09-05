@@ -11,9 +11,9 @@
 > | 4. 파일 구조 | ✂ `core` 20개 중 6개만 적혀 있었다. 전면 갱신 |
 > | 5. 먼저 겪은 함정 | ⚠ **살아 있는 것 넷 / 사라진 엔진 이야기 여덟**로 갈랐다 |
 > | 6 · 6.5 | 📌 **스냅샷.** 옛 엔진의 측정이라 갱신하지 않는다 |
-> | 7. 재개 지점 | ✂ **삭제.** 재개 지점은 [`openfront-port.md`](openfront-port.md) §7 **하나뿐**이다 |
+> | 7. 재개 지점 | ✂ **삭제.** 재개 지점은 [`implementation-log.md`](implementation-log.md) §7 **하나뿐**이다 |
 >
-> **구현 작업의 근거는 여전히 [`openfront-port.md`](openfront-port.md) 다.**
+> **구현 작업의 근거는 여전히 [`implementation-log.md`](implementation-log.md) 다.**
 > 이 문서가 맡는 것은 **이 게임의 고유 계층**(증강)과 설계 의도뿐이다.
 
 # Domynion 설계
@@ -57,7 +57,7 @@ openfront 는 확장의 손맛이 좋지만 **모든 플레이어의 능력이 �
 | 지형 | `constants.py :: Terrain` · `TERRAIN_MAG` | `gamemap.py` |
 | 승리 | `DOMINATION_TILE_PERCENT` · `MATCH_SECONDS` · `OVERTIME_*` | `engine.py :: domination_percent` · `_check_end` |
 
-**전문은 `docs/openfront-port.md` 4절**에 참고 구현의 위치와 함께 있다. 그쪽이 대조
+**전문은 `docs/implementation-log.md` 4절**에 참고 구현의 위치와 함께 있다. 그쪽이 대조
 문서라 참고 구현과 나란히 놓여 있고, 값이 바뀌면 거기가 먼저 바뀐다.
 
 ⚠ **이 표를 쓰면서도 이름 둘을 틀렸다**(`troop_growth` · `resolve` — 둘 다 없는
@@ -442,11 +442,11 @@ tests/             pytest. `conftest.py` 가 `tools/` 를 import 가능하게 �
 
 ## 7. 재개 지점은 **여기가 아니다**
 
-> ⚠ **2026-09-04 정리.** 이 절이 `docs/openfront-port.md` §7 과 **경쟁하는 두 번째
+> ⚠ **2026-09-04 정리.** 이 절이 `docs/implementation-log.md` §7 과 **경쟁하는 두 번째
 > 재개 지점**이었다. `CLAUDE.md` 5번이 경고한 그 모양이다 — *"살아 있는 계획은 한
 > 자리에만."*
 
-**재개 지점은 `docs/openfront-port.md` §7 하나뿐이다.** 여기에는 다시 적지 않는다.
+**재개 지점은 `docs/implementation-log.md` §7 하나뿐이다.** 여기에는 다시 적지 않는다.
 
 옛 본문이 가리키던 것 넷(`DEFAULT_ATTACK_RATIO` · `TROOPS_GROWTH_RATE` ·
 `NEUTRAL_BIAS` · `MAX_CONCURRENT`)은 **코드에 하나도 없다.** 1번 항목

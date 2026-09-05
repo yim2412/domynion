@@ -32,7 +32,7 @@
 | 종류별 자리 값 함수 5개 + 철도 연결성 점수 | **아직 안 옮겼다(보류).** 600줄이고 철도 클러스터까지 얽힌다. 지금은 `find_spot` 이 가까운 빈자리를 고른다 |
 | `sampleTilesNearFront` 의 3단 폴백 | 간략화했다. 전선 타일을 그대로 `find_spot` 에 넘긴다 |
 
-⚠ 위 표의 마지막 둘은 **보류지 완료가 아니다.** `docs/openfront-port.md` §7 참조.
+⚠ 위 표의 마지막 둘은 **보류지 완료가 아니다.** `docs/implementation-log.md` §7 참조.
 """
 
 from __future__ import annotations

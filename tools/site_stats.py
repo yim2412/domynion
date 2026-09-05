@@ -23,11 +23,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = ROOT / "docs" / "index.html"
-PORT_DOC = ROOT / "docs" / "openfront-port.md"
+PORT_DOC = ROOT / "docs" / "implementation-log.md"
 MUT_LOG = ROOT / "docs" / "mutation-log.tsv"
 
 # 변이 하네스가 기록을 남기기 전(2026-09-05)까지의 누적. 이 값의 근거는
-# openfront-port.md §7.1 한 줄뿐이라 소급할 수 없다 — 그래서 상수로 박고,
+# implementation-log.md §7.1 한 줄뿐이라 소급할 수 없다 — 그래서 상수로 박고,
 # 이후 실행분만 mutation-log.tsv 에서 더한다.
 MUT_BASELINE_DEFAULT = 278
 
@@ -55,7 +55,7 @@ def doc_lines() -> int:
 
 
 def ported_gaps() -> int:
-    """메운 이식 누락. 출처는 openfront-port.md §7.1 한 곳뿐이다."""
+    """메운 이식 누락. 출처는 implementation-log.md §7.1 한 곳뿐이다."""
     text = PORT_DOC.read_text(encoding="utf-8", errors="replace")
     m = re.search(r"\|\s*메운 이식 누락\s*\|\s*\*\*(\d+)개", text)
     if not m:
