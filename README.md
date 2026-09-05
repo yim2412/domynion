@@ -166,6 +166,24 @@ tools/
 계층 규칙: `core` 는 아무것도 import 하지 않는다. UI 와 AI 는 `core` 위에 나란히
 얹으며 서로를 참조하지 않는다.
 
+## 개발 노트
+
+만들면서 **무엇이 어떻게 깨졌고 어떻게 알아냈는지**를 [`docs/notes/`](docs/notes/) 에
+일곱 편으로 적었다. 기능 소개가 아니라 판단 기록이라 *"이건 아직 안 쟀다"* 도 그대로 적는다.
+
+| | 노트 |
+|---|---|
+| 01 | [A/B가 아예 다른 판을 재고 있었다](docs/notes/01-ab-was-measuring-a-different-game.md) |
+| 02 | [끝날 수 없는 판 — 상한을 늘려서는 안 풀린다](docs/notes/02-a-game-that-cannot-end.md) |
+| 03 | [안 여는 문서만 썩었다](docs/notes/03-only-the-document-i-never-reopened-rotted.md) |
+| 04 | [한 번도 발동한 적 없는 규칙](docs/notes/04-a-rule-that-never-fired.md) |
+| 05 | ["축이 있는가"와 "축이 걸리는가"는 다른 질문](docs/notes/05-existing-is-not-the-same-as-firing.md) |
+| 06 | [병력을 10배로 보여주고 있었다](docs/notes/06-troops-were-shown-ten-times-too-large.md) |
+| 07 | ["작다"고 적어 둔 항목이 넷이었다](docs/notes/07-i-did-not-stop-after-the-first-one.md) |
+
+읽기 좋은 페이지는 <https://yim2412.github.io/domynion/> · 다섯 프로젝트의 공개 색인은
+<https://yim2412.github.io> 에 있다.
+
 ## 핵심 규칙 요약
 
 ```
