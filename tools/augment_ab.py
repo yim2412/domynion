@@ -81,11 +81,17 @@ def run(seed: int, augments: bool, focus: str, ticks: int, nations: int,
                   f"영토 {st.tiles(0)}  카드 {st.augments_taken}",
                   file=sys.stderr, flush=True)
     p = st.players[0]
+    # ⚠ **어떤 카드를 몇 레벨까지 쌓았는지 남긴다.** `picks`(장수)만으로는
+    # *"같은 축에 둘을 쌓았나"* 를 알 수 없다 — 축에 두 번째 카드가 생긴
+    # 뒤로는(§5.127) 그게 곧 하한 도달 여부다.
+    owned = dict(getattr(p, "augments", {}) or {})
     return {
         "seed": seed, "on": augments,
         "ticks": st.tick_count, "alive": p.alive,
         "tiles": st.tiles(0), "troops": int(p.troops), "gold": int(p.gold),
         "picks": st.augments_taken,
+        "owned": owned,
+        "highland_mult": round(p.mult("cost_highland_pct"), 3),
         "wall": round(time.perf_counter() - t0, 1),
     }
 
@@ -126,10 +132,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{a.size} · 나라 {a.nations} + 봇 {a.bots} · {a.focus} 빌드 · "
           f"{a.ticks} tick · 전체 {total:.0f}초 "
           f"({time.strftime('%H:%M:%S')} 종료)")
-    print("| seed | 증강 | 카드 | tick | 생존 | 영토 | 병력 | 골드 |")
-    print("|---|---|---|---|---|---|---|---|")
+    # ⚠ **seed 목록을 결과에 박는다.** §5.116 이 *"같은 seed 12개"* 라고만 적고
+    # 목록을 안 남겨 대조가 불가능했다(§5.126 에서 두 개만 겨우 되찾았다).
+    # 결정론이라 seed 만 있으면 언제든 재현되는데, 그 한 줄이 없으면 판 전체를
+    # 다시 돌려야 한다.
+    print(f"seed: {' '.join(str(s) for s in a.seeds)}")
+    print("| seed | 증강 | 카드 | 빌드 | tick | 생존 | 영토 | 병력 | 골드 |")
+    print("|---|---|---|---|---|---|---|---|---|")
     for r in sorted(rows, key=lambda r: (r["seed"], r["on"])):
+        build = "+".join(f"{k}{v}" for k, v in sorted(r.get("owned", {}).items())) or "—"
+        floor = " ⬛" if r.get("highland_mult") == 0.2 else ""
         print(f"| {r['seed']} | {'켜고' if r['on'] else '끄고'} | {r['picks']} | "
+              f"{build}{floor} | "
               f"{r['ticks']} | {'○' if r['alive'] else '×'} | {r['tiles']:,} | "
               f"{r['troops']:,} | {r['gold']:,} |")
 
@@ -149,9 +163,18 @@ def main(argv: list[str] | None = None) -> int:
 
     for on in (False, True):
         k, n = alive_rate(on)
-        print(f"| **생존판 중앙** | {'켜고' if on else '끄고'} | | | "
+        print(f"| **생존판 중앙** | {'켜고' if on else '끄고'} | | | | "
               f"**{k}/{n}** | {cell(med_alive(on,'tiles'))} | "
               f"{cell(med_alive(on,'troops'))} | {cell(med_alive(on,'gold'))} |")
+    print()
+
+    # 같은 축에 둘을 쌓은 판을 센다(§5.127). ⬛ 는 하한(0.2)에 닿은 판이다.
+    stacked = [r for r in rows if r["on"]
+               and len({"mountaineers", "sappers"} & set(r.get("owned", {}))) == 2]
+    floored = [r for r in rows if r.get("highland_mult") == 0.2]
+    on_n = sum(1 for r in rows if r["on"])
+    print(f"**같은 축에 둘을 쌓은 판:** {len(stacked)}/{on_n} · "
+          f"**하한(0.2)에 닿은 판:** {len(floored)}/{on_n}")
     print()
 
     # 짝 판정. 같은 seed 를 양쪽으로 돌렸으므로 **넷 중 하나**가 된다.
