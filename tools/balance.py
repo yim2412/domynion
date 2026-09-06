@@ -36,6 +36,7 @@ try:
 except AttributeError:
     pass
 
+from _budget import be_nice                        # noqa: E402
 from _budget import report as budget_report          # noqa: E402
 from _budget import safe_jobs                        # noqa: E402
 from domynion.ai import nation                       # noqa: E402
@@ -152,10 +153,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=0, metavar="N",
                     help="0 이면 CPU·RAM 을 재서 여유 10%% 를 남기고 정한다")
     ap.add_argument("--out", type=Path, default=None, help="JSON 으로도 남긴다")
+    # ⚠ **긴 측정이 기계를 독차지하지 않게.** `safe_jobs` 는 시작 때 한 번만
+    # 재므로 도중에 사용자가 기계를 쓰기 시작하면 못 비켜 준다 — 우선순위를
+    # 내려 두면 스케줄러가 매 순간 조절한다. **결과는 안 변한다**(결정론,
+    # §5.129) — 벽시계만 늘어난다.
+    ap.add_argument("--nice", action=argparse.BooleanOptionalAction, default=True,
+                    help="낮은 우선순위로 돈다 (기본 켬)")
     ap.add_argument("--progress", type=int, default=1000, metavar="N",
                     help="N tick 마다 진행을 stderr 로 찍는다 (0이면 끈다). "
                          "판이 한 시간을 넘으므로 기본으로 켜 둔다")
     a = ap.parse_args(argv)
+    if a.nice:
+        print(be_nice(), file=sys.stderr, flush=True)
 
     jobs = [(s, a.size, a.difficulty, a.ticks, a.nations, a.bots, a.clock,
              a.progress) for s in a.seeds]

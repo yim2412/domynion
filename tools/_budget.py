@@ -18,6 +18,7 @@ CPU 사용률이 **72.7%** 까지 올라가 있었다.
 from __future__ import annotations
 
 import os
+import time
 
 # 남겨 둘 여유. 한 곳에만 둔다 — 도구마다 다른 값을 쓰면 "왜 이 도구만 무거운가"를
 # 다시 재야 한다.
@@ -65,3 +66,68 @@ def report(jobs: int, per_job_gb: float = 0.6) -> str:
     return (f"병렬 {jobs} / 코어 {cores} · CPU 사용 {ps.cpu_percent():.0f}% · "
             f"RAM 여유 {m.available / 2 ** 30:.1f}GB "
             f"(워커당 {per_job_gb}GB 가정, 여유 {HEADROOM:.0%} 확보)")
+
+
+def snapshot(pid: int | None = None) -> str:
+    """지금 기계가 얼마나 바쁜가 — **시스템 전체와 이 작업 트리를 따로** 찍는다.
+
+    ⚠ 둘을 섞으면 읽는 사람이 속는다. 단일 스레드 측정은 코어 하나를 꽉 잡으므로
+    **트리 사용률은 늘 100% 근처**다 — 다른 프로그램을 껐든 말든 그대로다.
+    2026-09-06 에 사용자가 다른 프로그램을 끄면서 시스템 사용률이 90% → 23% 로
+    떨어졌는데 진행 박스는 계속 90%대를 찍었다. 틀린 값이 아니라 **다른 값**을
+    보여 주고 있었고, 그러면 사용자는 보고를 못 믿게 된다.
+    """
+    ps = _psutil()
+    if ps is None:
+        return "psutil 없음 — 사용률을 못 잰다"
+    cores = os.cpu_count() or 1
+    sys_pct = ps.cpu_percent(interval=0.5)
+    m = ps.virtual_memory()
+    out = [f"시스템 CPU {sys_pct:.0f}% ({sys_pct * cores / 100:.1f}/{cores}코어)",
+           f"RAM 여유 {m.available / 2 ** 30:.1f}GB"]
+    if pid is not None:
+        try:
+            root = ps.Process(pid)
+            tree = [root] + root.children(recursive=True)
+            for q in tree:
+                try:
+                    q.cpu_percent(None)
+                except ps.Error:
+                    pass
+            time.sleep(0.5)
+            cpu = sum((q.cpu_percent(None) or 0.0) for q in tree
+                      if q.is_running())
+            rss = sum(q.memory_info().rss for q in tree if q.is_running())
+            out.append(f"이 작업 {cpu:.0f}% ({cpu / 100:.1f}코어) · "
+                       f"{rss / 2 ** 30:.1f}GB · 프로세스 {len(tree)}")
+        except ps.Error:
+            out.append("이 작업 — 프로세스가 없다")
+    return " · ".join(out)
+
+
+def be_nice(pid: int | None = None) -> str:
+    """이 프로세스(와 자식)를 **낮은 우선순위**로 내린다.
+
+    긴 측정이 기계를 독차지하는 것을 막는 가장 싼 방법이다 — 코어 수를 손으로
+    줄이는 것과 달리, 사용자가 기계를 쓸 때만 양보하고 놀 때는 다 쓴다.
+    **결과는 안 변한다**(판은 결정론이다, §5.129). 벽시계만 늘어난다.
+
+    ⚠ `safe_jobs` 는 **시작 시점에 한 번만** 잰다. 도는 도중에 기계가 바빠져도
+    워커 수는 안 바뀐다(`ProcessPoolExecutor` 는 만들 때 정해진다). 그 구간을
+    메우는 것이 이 함수다 — 스케줄러가 매 순간 조절해 준다.
+    """
+    ps = _psutil()
+    if ps is None:
+        return "psutil 없음 — 우선순위를 못 내렸다"
+    try:
+        root = ps.Process(pid if pid is not None else os.getpid())
+        low = (ps.BELOW_NORMAL_PRIORITY_CLASS if hasattr(ps, "BELOW_NORMAL_PRIORITY_CLASS")
+               else 10)
+        for q in [root] + root.children(recursive=True):
+            try:
+                q.nice(low)
+            except ps.Error:
+                pass
+        return "우선순위 낮춤(사용자가 기계를 쓰면 양보한다)"
+    except ps.Error as e:
+        return f"우선순위를 못 내렸다: {e}"

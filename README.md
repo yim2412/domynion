@@ -48,6 +48,9 @@ python -m domynion.ui.app --shot shot.png --at 600 --map world
 python -m domynion.cli.play --games 40 --map world --jobs 8
 python -m domynion.cli.play --games 20 --map world --clock normal --difficulty hard
 
+# ⚠ 긴 측정은 기본이 **낮은 우선순위**다(--no-nice 로 끈다). 한 판은 코어 하나만
+# 쓰므로(tick 이 순차다) 빠르게 하려면 코어가 아니라 seed 를 병렬로 돌린다.
+
 # 기준선을 뜬다 (핵 발사·MIRV·생존·골드). ⚠ --ticks 를 명시한다 (기본 9,000 은
 # 더 이상 기준선이 아니다). --jobs 를 생략하면 CPU·RAM 을 재서 여유 10% 를 남긴다
 python tools/balance.py --seeds 1 2 3 --ticks 45000
@@ -178,6 +181,8 @@ tools/
     axis_worth.py  그 축이 얼마를 벌어 줬는가 (횟수의 다음 질문)
     site_stats.py  개발 노트 페이지의 통계를 실측해 갱신한다
     _budget.py     병렬 작업이 CPU·RAM 여유 10% 를 남기게 한다
+                   · snapshot() 시스템 전체와 이 작업을 **따로** 찍는다
+                   · be_nice() 우선순위를 내려 사용자가 기계를 쓸 때 양보한다
 ```
 
 계층 규칙: `core` 는 아무것도 import 하지 않는다. UI 와 AI 는 `core` 위에 나란히

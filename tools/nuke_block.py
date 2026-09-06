@@ -18,13 +18,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _budget import be_nice                        # noqa: E402
+from _budget import report as budget_report        # noqa: E402
+from _budget import safe_jobs                      # noqa: E402
 
 from domynion.ai import nation                       # noqa: E402
 from domynion.ai.nukes import NationNukeBehavior   # noqa: E402
@@ -43,9 +50,74 @@ REASONS = (
 )
 
 
+def run(seed: int, ticks: int, nations: int, bots: int, size: str,
+        difficulty: str, bucket: int, progress: int) -> dict:
+    """판 하나를 돌리고 (버킷, 사유) → 횟수를 돌려준다.
+
+    ⚠ **워커 프로세스에서 돈다.** 관문 세기는 `NationNukeBehavior.maybe_send`
+    를 갈아 끼우는 것이라 프로세스마다 따로 걸어야 한다 — 부모에서 한 번 걸고
+    자식이 물려받기를 기대하면 Windows(spawn)에서는 안 걸린다."""
+    tally: Counter[tuple[int, str]] = Counter()
+    orig = NationNukeBehavior.maybe_send
+
+    def counted(self, st, should_attack) -> bool:
+        b = st.tick_count // bucket * bucket
+        p = st.players.get(self.pid)
+        if p is None or not p.alive:
+            tally[(b, "죽었다")] += 1
+            return False
+        silos = [u for u in p.units.of(UnitType.MISSILE_SILO)
+                 if not u.under_construction]
+        if not silos:
+            tally[(b, "사일로 없음")] += 1
+            return orig(self, st, should_attack)
+        if st.ready_missiles(self.pid) <= 0:
+            tally[(b, "빈 발사관 없음")] += 1
+            return orig(self, st, should_attack)
+        target = self.find_target(st)
+        if target is None:
+            tally[(b, "표적 없음")] += 1
+            return orig(self, st, should_attack)
+        if target.is_bot or not should_attack(st, target.pid):
+            tally[(b, "표적이 봇/공격 안 함")] += 1
+            return orig(self, st, should_attack)
+        if self._pick_type(st, p) is None:
+            tally[(b, "탄종 없음")] += 1
+            return orig(self, st, should_attack)
+        fired = orig(self, st, should_attack)
+        tally[(b, "**발사**" if fired else "쏠 칸 없음")] += 1
+        return fired
+
+    NationNukeBehavior.maybe_send = counted      # type: ignore[assignment]
+    try:
+        t0 = time.perf_counter()
+        rng = random.Random(seed)
+        st = GameState.new(nations, rng, map_name="world", human=-1,
+                           size=size, bots=bots)
+        ai = nation.attach(st, rng, difficulty=difficulty)
+        while not st.over and st.tick_count < ticks:
+            st.tick()
+            for b in ai:
+                b.tick(st)
+            if progress and st.tick_count % progress == 0:
+                fired = sum(n for (bk, r), n in tally.items() if r == "**발사**")
+                print(f"[seed {seed}] {st.tick_count}/{ticks} "
+                      f"{time.perf_counter() - t0:.0f}초  발사 {fired}",
+                      file=sys.stderr, flush=True)
+        return {"seed": seed, "ticks": st.tick_count,
+                "wall": round(time.perf_counter() - t0, 1),
+                "tally": {f"{k[0]}|{k[1]}": v for k, v in tally.items()}}
+    finally:
+        NationNukeBehavior.maybe_send = orig     # type: ignore[assignment]
+
+
+def _worker(a: tuple) -> dict:
+    return run(*a)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="핵이 왜 안 나가는가 (§7.2)")
-    ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--seeds", type=int, nargs="+", default=[3])
     ap.add_argument("--ticks", type=int, default=24_000)
     ap.add_argument("--nations", type=int, default=72)
     ap.add_argument("--bots", type=int, default=400)
@@ -53,82 +125,68 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--difficulty", default="medium")
     ap.add_argument("--bucket", type=int, default=1000, metavar="N",
                     help="이 tick 수마다 한 줄. 기준선 진행줄과 같은 눈금으로 둔다")
+    # ⚠ **한 판은 코어 하나로만 돈다**(tick 이 순차라 쪼갤 수 없다). 12코어 중
+    # 하나만 쓰며 87분을 보낸 적이 있어(2026-09-06) seed 를 병렬로 돌리게 했다 —
+    # 같은 벽시계에 판 수만 는다.
+    ap.add_argument("--jobs", type=int, default=0, metavar="N",
+                    help="0 이면 CPU·RAM 을 재서 여유 10%% 를 남기고 정한다")
+    # ⚠ **긴 측정이 기계를 독차지하지 않게.** `safe_jobs` 는 시작 때 한 번만
+    # 재므로 도중에 사용자가 기계를 쓰기 시작하면 못 비켜 준다 — 우선순위를
+    # 내려 두면 스케줄러가 매 순간 조절한다. **결과는 안 변한다**(결정론,
+    # §5.129) — 벽시계만 늘어난다.
+    ap.add_argument("--nice", action=argparse.BooleanOptionalAction, default=True,
+                    help="낮은 우선순위로 돈다 (기본 켬)")
     ap.add_argument("--progress", type=int, default=1000, metavar="N")
+    ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args(argv)
+    if a.nice:
+        print(be_nice(), file=sys.stderr, flush=True)
 
-    # (버킷, 사유) → 횟수
-    tally: Counter[tuple[int, str]] = Counter()
-
-    orig = NationNukeBehavior.maybe_send
-
-    def counted(self, st, should_attack) -> bool:
-        bucket = st.tick_count // a.bucket * a.bucket
-        p = st.players.get(self.pid)
-        if p is None or not p.alive:
-            tally[(bucket, "죽었다")] += 1
-            return False
-        silos = [u for u in p.units.of(UnitType.MISSILE_SILO)
-                 if not u.under_construction]
-        if not silos:
-            tally[(bucket, "사일로 없음")] += 1
-            return orig(self, st, should_attack)
-        if st.ready_missiles(self.pid) <= 0:
-            tally[(bucket, "빈 발사관 없음")] += 1
-            return orig(self, st, should_attack)
-        target = self.find_target(st)
-        if target is None:
-            tally[(bucket, "표적 없음")] += 1
-            return orig(self, st, should_attack)
-        if target.is_bot or not should_attack(st, target.pid):
-            tally[(bucket, "표적이 봇/공격 안 함")] += 1
-            return orig(self, st, should_attack)
-        if self._pick_type(st, p) is None:
-            tally[(bucket, "탄종 없음")] += 1
-            return orig(self, st, should_attack)
-        # 여기까지 왔으면 칸 고르기와 발사만 남았다 — 결과로 가른다.
-        fired = orig(self, st, should_attack)
-        tally[(bucket, "**발사**" if fired else "쏠 칸 없음")] += 1
-        return fired
-
-    NationNukeBehavior.maybe_send = counted                      # type: ignore[assignment]
-
+    jobs = [(s, a.ticks, a.nations, a.bots, a.size, a.difficulty,
+             a.bucket, a.progress) for s in a.seeds]
+    workers = safe_jobs(want=a.jobs or len(jobs))
+    print(f"시작 {time.strftime('%H:%M:%S')} · {len(jobs)}판 · "
+          f"{a.size} · {a.difficulty} · {budget_report(workers)}",
+          file=sys.stderr, flush=True)
     t0 = time.perf_counter()
-    print(f"시작 {time.strftime('%H:%M:%S')} · seed {a.seed} · {a.size} · "
-          f"{a.difficulty}", file=sys.stderr, flush=True)
-    rng = random.Random(a.seed)
-    st = GameState.new(a.nations, rng, map_name="world", human=-1,
-                       size=a.size, bots=a.bots)
-    ai = nation.attach(st, rng, difficulty=a.difficulty)
+    if workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            rows = list(ex.map(_worker, jobs))
+    else:
+        rows = [_worker(j) for j in jobs]
 
-    while not st.over and st.tick_count < a.ticks:
-        st.tick()
-        for b in ai:
-            b.tick(st)
-        if a.progress and st.tick_count % a.progress == 0:
-            fired = sum(n for (bk, r), n in tally.items() if r == "**발사**")
-            print(f"  {st.tick_count}/{a.ticks} "
-                  f"{time.perf_counter() - t0:.0f}초  발사 {fired}",
-                  file=sys.stderr, flush=True)
+    print(f"{a.size} · 나라 {a.nations} + 봇 {a.bots} · {a.difficulty} · "
+          f"{a.ticks} tick · 전체 {time.perf_counter() - t0:.0f}초 "
+          f"({time.strftime('%H:%M:%S')} 종료)")
+    print(f"seed: {' '.join(str(s) for s in a.seeds)}")
+    print()
 
-    print(f"seed {a.seed} · {st.tick_count} tick · "
-          f"{time.perf_counter() - t0:.0f}초 ({time.strftime('%H:%M:%S')} 종료)")
-    print()
-    used = [r for r in REASONS if any(k[1] == r for k in tally)]
-    print("| tick | " + " | ".join(used) + " |")
-    print("|---" * (len(used) + 1) + "|")
-    for bucket in range(0, st.tick_count + 1, a.bucket):
-        row = [tally.get((bucket, r), 0) for r in used]
-        if not any(row):
-            continue
-        print(f"| {bucket:,} | " + " | ".join(f"{v:,}" for v in row) + " |")
-    print()
-    print("| 사유 | 합계 |")
-    print("|---|---|")
-    for r in used:
-        print(f"| {r} | {sum(n for k, n in tally.items() if k[1] == r):,} |")
-    print()
+    for r in rows:
+        tally: Counter[tuple[int, str]] = Counter()
+        for k, v in r["tally"].items():
+            b, reason = k.split("|", 1)
+            tally[(int(b), reason)] = v
+        used = [x for x in REASONS if any(k[1] == x for k in tally)]
+        print(f"#### seed {r['seed']} · {r['ticks']:,} tick · {r['wall']:.0f}초")
+        print()
+        print("| tick | " + " | ".join(used) + " |")
+        print("|---" * (len(used) + 1) + "|")
+        for b in range(0, r["ticks"] + 1, a.bucket):
+            row = [tally.get((b, x), 0) for x in used]
+            if any(row):
+                print(f"| {b:,} | " + " | ".join(f"{v:,}" for v in row) + " |")
+        print()
+        print("| 사유 | 합계 |")
+        print("|---|---|")
+        for x in used:
+            print(f"| {x} | {sum(n for k, n in tally.items() if k[1] == x):,} |")
+        print()
+
     print("> ⚠ **횟수는 나라마다 매 tick 세진다.** 한 나라가 오래 막히면 그 사유가"
           " 크게 나온다 — **비율이 아니라 어느 사유가 그 구간을 채우는지**를 본다.")
+    if a.out:
+        a.out.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
     return 0
 
 
