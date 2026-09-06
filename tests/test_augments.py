@@ -79,9 +79,10 @@ def test_two_different_cards_on_one_axis_would_add():
     """*"같은 축에 여러 카드가 실리면 더한다"* — `augments.py` 와 `design.md` 가
     둘 다 앞자리에 적어 둔 원칙이다.
 
-    ⚠ **그런데 지금 그런 조합이 하나도 없다**(아래 테스트). 카드 10장이 축
-    10개에 정확히 하나씩이라 **이 규칙은 한 번도 발동한 적이 없다.** 규칙이
-    잠들어 있다고 지우지는 않되, **작동은 하는지** 합성 재료로 확인한다."""
+    ⚠ 2026-09-06 까지는 *"그런 조합이 하나도 없다"* 가 여기 적혀 있었다 —
+    카드 열 장이 축 열 개에 하나씩이라 규칙이 잠들어 있었다(§5.120).
+    공병대가 그 조합을 만들었다(§5.127). 이 테스트는 **합성 재료로 산수만**
+    보고, 실제 카드로 도는지는 아래 테스트가 본다."""
     a, b = 0.18, 0.22
     m = Modifiers({"troops_cap_pct": a + b})
     assert m.get("troops_cap_pct") == pytest.approx(a + b)
@@ -89,7 +90,7 @@ def test_two_different_cards_on_one_axis_would_add():
     assert m.mult("troops_cap_pct") != pytest.approx((1 + a) * (1 + b))
 
 
-def test_from_augments_actually_adds_when_two_cards_share_an_axis(monkeypatch):
+def test_from_augments_actually_adds_when_two_cards_share_an_axis():
     """⚠ **위 테스트는 `from_augments` 를 안 탄다.** `Modifiers({...})` 를 손으로
     만들면 합산 코드가 한 줄도 안 돈다.
 
@@ -98,33 +99,40 @@ def test_from_augments_actually_adds_when_two_cards_share_an_axis(monkeypatch):
     `0.0 + x == x` 라 **두 구현의 동작이 같다.** 테스트 구멍이 아니라 **재료가 그
     경로를 못 만드는 것**이다(§5.109 · §5.117 과 같은 자리).
 
-    → 같은 축에 실린 카드 **둘**을 합성해서 실제 경로를 태운다."""
-    from domynion.core import augments as A
-    extra = A.Augment("second_cap", "합성 카드", "상한 +10%",
-                      "troops_cap_pct", 0.10)
-    monkeypatch.setitem(A.AUGMENTS_BY_KEY, extra.key, extra)
-    m = Modifiers.from_augments({"fertile": 1, extra.key: 1})
-    base = AUGMENTS_BY_KEY["fertile"].per_level
-    assert m.get("troops_cap_pct") == pytest.approx(base + extra.per_level)
+    → 같은 축에 실린 카드 **둘**로 실제 경로를 태운다.
+
+    ⚠ 2026-09-06 이전에는 이 재료를 `monkeypatch` 로 **합성**해야 했다(카드가
+    축마다 하나뿐이었다). 이제 진짜 카드 둘이 같은 축에 있으므로 합성을
+    걷어낸다 — **합성 재료로 통과하는 것과 게임이 만들 수 있는 값으로
+    통과하는 것은 다른 말이다**(§5.117 이 하한에서 겪은 그 자리)."""
+    m = Modifiers.from_augments({"mountaineers": 1, "sappers": 1})
+    a = AUGMENTS_BY_KEY["mountaineers"].per_level
+    b = AUGMENTS_BY_KEY["sappers"].per_level
+    assert m.get("cost_highland_pct") == pytest.approx(a + b)
     # 덮어쓰기 구현이면 둘 중 하나만 남는다 — 그 값과 구별되는지 단언한다.
-    assert m.get("troops_cap_pct") != pytest.approx(base)
-    assert m.get("troops_cap_pct") != pytest.approx(extra.per_level)
+    assert m.get("cost_highland_pct") != pytest.approx(a)
+    assert m.get("cost_highland_pct") != pytest.approx(b)
 
 
-def test_every_axis_has_exactly_one_card_so_the_add_rule_is_dormant():
-    """⚠ **§5.117 과 같은 모양이다** — 문서가 앞자리에 적어 둔 규칙이 실제로는
-    **한 번도 안 돈다.** 여기서 그 사실을 못 박아, 열한 번째 카드를 같은 축에
-    얹는 순간 이 테스트가 깨지면서 *"이제 합산 규칙이 깨어난다"* 를 알린다.
+def test_the_add_rule_is_awake_on_exactly_one_axis():
+    """⚠ **이 테스트는 뒤집힌 것이다.** 2026-09-06 까지는 이름이
+    `..._so_the_add_rule_is_dormant` 였고 *"축마다 카드가 정확히 하나"* 를
+    단언했다 — §5.120 이 찾아낸 사실(합산 규칙이 **한 번도 안 돈다**)을 못
+    박아, 열한 번째 카드가 들어오는 순간 깨져서 알리라고 둔 테스트다.
+    **의도대로 깨졌다**(§5.127, 공병대).
 
-    깨졌다면 고칠 것은 이 테스트가 아니라 **`docs/design.md` §3 의 할인 중첩
-    계산**이다 — 그 절은 *"할인 카드가 축마다 하나뿐"* 을 전제로 쓰여 있다."""
+    이제 재는 것이 반대다: 합산이 도는 축이 **정확히 하나**여야 한다.
+    - 0개면 규칙이 다시 잠든다(그때는 §5.120 으로 되돌아간 것이다).
+    - 여럿이면 `docs/design.md` §3 의 할인 중첩 계산을 **또** 다시 재야 한다 —
+      축마다 하한 도달 여부가 다르기 때문이다."""
     from collections import Counter
     per_axis = Counter(a.field for a in AUGMENTS)
     assert set(per_axis) == set(FIELDS), "축과 카드가 1:1 이 아니다"
-    assert all(n == 1 for n in per_axis.values()), (
-        f"한 축에 카드가 둘 이상이다: "
-        f"{[f for f, n in per_axis.items() if n > 1]} — "
+    stacked = [f for f, n in per_axis.items() if n > 1]
+    assert stacked == ["cost_highland_pct"], (
+        f"합산이 도는 축이 예상과 다르다: {stacked} — "
         f"`design.md` §3 의 할인 중첩 계산을 다시 재야 한다")
+    assert per_axis["cost_highland_pct"] == 2
 
 
 def test_a_discount_stack_can_never_make_conquest_free():
@@ -135,26 +143,40 @@ def test_a_discount_stack_can_never_make_conquest_free():
     assert m.mult("cost_vs_player_pct") > 0
 
 
-def test_no_real_card_combination_can_reach_the_axis_floor():
-    """⚠ **위 테스트의 재료는 카드가 만들 수 없는 값이다.**
+def test_a_real_card_combination_now_reaches_the_axis_floor():
+    """⚠ **이 테스트도 뒤집힌 것이다.** 이름이
+    `test_no_real_card_combination_can_reach_the_axis_floor` 였다 — §5.117 이
+    *"하한을 재는 테스트가 손으로 만든 −5.0 을 쓰는데 카드로는 그 축 최대가
+    −0.736 이라 만들 수 없다"* 를 찾아 못 박아 둔 것이다. 공병대가 그
+    **재료를 만들었다**(§5.127).
 
-    `Modifiers({"cost_vs_player_pct": -5.0})` 는 손으로 넣은 값이고, 실제
-    카드로는 그 축에 **한 장밖에** 안 실린다(할인 카드는 축마다 정확히 하나).
-    그래서 하한(0.2)은 **한 번도 걸리지 않는다** — 보호 장치는 있지만 잠들어
-    있다. 이 사실을 못 박아 두지 않으면 다음 세션이 *"하한이 막고 있다"* 로
-    읽는다(2026-09-04 까지 `docs/design.md` 가 실제로 그렇게 적고 있었다).
-    """
+    **막지 않았으면 무엇이 일어났을 것인가** — 산악병 Lv3 + 공병대 Lv3 은
+    합이 −1.196 이라 `1 + 계수` 가 **음수(−0.196)** 다. 하한이 없으면 정복
+    비용이 음수가 되어 **정복할수록 병력이 늘어난다.** 그 사실을 먼저
+    단언하지 않으면 하한을 뜯어내도 이 테스트가 통과한다."""
+    total = sum(value_at(AUGMENTS_BY_KEY[k], C.AUGMENT_MAX_LEVEL)
+                for k in ("mountaineers", "sappers"))
+    assert 1.0 + total < 0, (
+        "하한이 없으면 배율이 음수여야 한다 — 계수를 낮췄다면 이 테스트가 "
+        "재던 위험이 사라진 것이니 `design.md` §3 을 다시 본다")
+
+    m = Modifiers.from_augments({"mountaineers": C.AUGMENT_MAX_LEVEL,
+                                 "sappers": C.AUGMENT_MAX_LEVEL})
+    assert m.mult("cost_highland_pct") == 0.2       # 하한이 실제로 걸린다
+    assert m.mult("cost_highland_pct") > 0
+
+    # 나머지 할인 축은 여전히 카드가 하나뿐이라 하한에 못 닿는다.
     per_axis: dict[str, float] = {}
     for aug in AUGMENTS:
         if aug.per_level >= 0:
             continue
         per_axis[aug.field] = per_axis.get(aug.field, 0.0) + value_at(
             aug, C.AUGMENT_MAX_LEVEL)
-    assert per_axis, "할인 카드가 하나도 없다 — 이 테스트가 아무것도 안 잰다"
-    for field, total in per_axis.items():
-        m = Modifiers({field: total})
-        assert m.mult(field) > 0.2, (
-            f"{field} 이 하한에 닿았다 — 카드 구성이 바뀌었으면 "
+    for field, tot in per_axis.items():
+        if field == "cost_highland_pct":
+            continue
+        assert Modifiers({field: tot}).mult(field) > 0.2, (
+            f"{field} 이 하한에 닿았다 — 카드를 얹었으면 "
             f"`docs/design.md` §3 의 '할인 중첩' 을 다시 재야 한다")
 
 
@@ -197,9 +219,12 @@ def test_the_description_shows_the_value_for_that_level():
 
 def test_a_maxed_card_is_not_offered():
     """고를 수 없는 카드가 자리를 차지하면 선택지가 실질 2장이 된다."""
-    owned = {a.key: C.AUGMENT_MAX_LEVEL for a in AUGMENTS[:8]}
+    # ⚠ **카드 수를 박아 두지 않는다.** 예전에는 `AUGMENTS[:8]` 로 *"10장 중 8장"*
+    # 을 최대로 만들어 *"둘 남는다"* 를 단언했는데, 열한 번째 카드가 들어오자
+    # 셋이 남아 깨졌다 — 재려는 것(최대 레벨은 안 나온다)과 **무관한 결합**이다.
+    owned = {a.key: C.AUGMENT_MAX_LEVEL for a in AUGMENTS[:-2]}
     got = offer(random.Random(0), owned, count=3)
-    assert len(got) == 2                       # 남은 둘
+    assert len(got) == 2                       # 최대가 아닌 둘만 남는다
     assert all(g.key not in owned for g in got)
 
 
@@ -507,7 +532,7 @@ def test_the_replaced_cards_are_gone():
     from domynion.core.augments import FIELDS
     assert "naval_range" not in FIELDS and "cost_woodland_pct" not in FIELDS
     assert "seafaring" not in AUGMENTS_BY_KEY and "rangers" not in AUGMENTS_BY_KEY
-    assert len(AUGMENTS) == 10
+    assert len(AUGMENTS) == 11          # 열 장 + 공병대(§5.127)
 
 
 def test_the_draft_never_touches_the_game_rng():
