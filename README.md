@@ -53,7 +53,13 @@ python -m domynion.cli.play --games 20 --map world --clock normal --difficulty h
 python tools/balance.py --seeds 1 2 3 --ticks 45000
 
 # 증강 켜고/끄고 A/B — 생존율과 짝 판정을 낸다
+# ⚠ --focus 는 축을 **고립시키지 못한다** (뽑힌 3장에 없으면 다른 카드를 집는다).
+#    "그 축이 얼마를 벌어 줬나"는 아래 axis_worth.py 로 잰다 (§5.126)
 python tools/augment_ab.py --seeds 11 22 33 --focus troops
+
+# 증강 축 — 몇 번 걸리는가 / 얼마를 벌어 줬는가
+python tools/axis_hits.py  --seed 11 --ticks 12000
+python tools/axis_worth.py --seed 11 --ticks 12000
 
 # 골드가 어디로 가는지 센다 · 판을 프로파일한다
 python tools/gold_flow.py --ticks 9000 --size map
@@ -160,6 +166,9 @@ tools/
     balance.py     기준선 · augment_ab.py  증강 A/B
     gold_flow.py   골드 흐름 · profile_game.py  프로파일
     mutate.py      변이 하네스 · verify_port.py · oracle.mts  값 대조
+    axis_hits.py   증강 축이 한 판에 몇 번 걸리는가
+    axis_worth.py  그 축이 얼마를 벌어 줬는가 (횟수의 다음 질문)
+    site_stats.py  개발 노트 페이지의 통계를 실측해 갱신한다
     _budget.py     병렬 작업이 CPU·RAM 여유 10% 를 남기게 한다
 ```
 
