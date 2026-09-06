@@ -19,6 +19,7 @@ import math
 import random
 import heapq
 from collections import deque
+import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -212,6 +213,14 @@ def best_spawn(gmap: GameMap, pid: int, toward: TileRef) -> TileRef | None:
     return int(shore[np.argmin((xs - tx) ** 2 + (ys - ty) ** 2)])
 
 
+_UID = itertools.count(1)
+
+
+def _next_uid() -> int:
+    """배마다 붙는 유일 번호. **동등성 비교 전용**(위 `TransportShip.uid` 주석)."""
+    return next(_UID)
+
+
 @dataclass
 class TransportShip:
     """상륙 부대. 도착하면 상륙 지점을 정복하고 그 자리에서 육상 공격이 시작된다."""
@@ -221,6 +230,18 @@ class TransportShip:
     troops: float
     path: list[TileRef]
     dst: TileRef
+    # ⚠ **주소(`id()`)를 신원으로 쓰지 않는다.** 배는 계속 죽고 새로 생기는데
+    # 죽은 배의 주소는 **곧바로 재사용된다**(2026-09-06 실측: 연속으로 다섯 번
+    # 만들었더니 두 쌍이 같은 주소였다). AI 가 `id()` 를 tick 너머로 들고 있으면
+    # 새 배가 죽은 배의 표식을 물려받아 **조용히 무시된다.** 게다가 어떤 주소가
+    # 재사용되는지는 프로세스의 할당 이력에 달려 있어 **같은 seed 라도 판이
+    # 갈린다** — 45,000 tick 기준선에서 seed 3 만 재현이 안 됐다(§5.129).
+    #
+    # ⚠ **생성 자리에서 붙인다.** 엔진에서만 매기면 테스트·도구가 직접 만든 배가
+    # 전부 `uid=0` 이라 서로 충돌한다 — 고치려던 버그가 그 자리에 다시 생긴다.
+    # ⚠ **동등성 비교에만 쓴다.** 정렬 키로 쓰면 프로세스마다 시작값이 달라
+    # 판이 갈린다(이 값은 판이 아니라 **프로세스**가 센다).
+    uid: int = field(default_factory=lambda: _next_uid())
     step_i: int = 0
     _since_move: int = 0            # `lastMove` — 마지막으로 움직인 뒤 몇 tick
     retreating: bool = False
@@ -374,6 +395,7 @@ class TradeShip:
     dst_port: TileRef
     dst_owner: int
     path: list[TileRef]
+    uid: int = field(default_factory=lambda: _next_uid())   # 위 주석과 같은 이유
     step_i: int = 0
     done: bool = False
 

@@ -47,6 +47,16 @@ BOTS = 400
 TICKS = 9_000
 
 
+def _nukes(st) -> int:
+    """지금까지 발사된 핵(원자탄 + 수소탄)의 누적 수.
+
+    최종 집계와 **같은 식**이어야 한다 — 진행줄이 다른 것을 세면 곡선과 표가
+    어긋나고, 어긋난 줄 모르고 곡선으로 결론을 낸다."""
+    return sum(st.players[pid].units.constructed(UnitType.ATOM_BOMB)
+               + st.players[pid].units.constructed(UnitType.HYDROGEN_BOMB)
+               for pid in st.players)
+
+
 def run(seed: int, size: str, difficulty: str, ticks: int,
         nations: int, bots: int, clock: str | None = None,
         progress: int = 0) -> dict:
@@ -88,16 +98,20 @@ def run(seed: int, size: str, difficulty: str, ticks: int,
         for b in ai:
             b.tick(st)
         if progress and st.tick_count % progress == 0:
+            # ⚠ **누적 핵을 같이 찍는다.** 최종값만 보면 *"판이 길어서 는 것"*
+            # 과 *"어느 구간부터 갑자기 느는 것"* 을 못 가른다 — §5.128 에서
+            # tick 1.8배에 발사 3.5배가 나왔는데, 두 측정을 견주는 방식으로는
+            # 코드가 바뀐 순간 대조가 무효가 된다(§5.115 의 경고). 한 판 안에서
+            # 곡선을 보면 비교 없이 답이 나온다.
             print(f"[seed {seed}] {st.tick_count}/{ticks} tick  "
                   f"{time.perf_counter() - t0:.0f}초"
                   f"(cpu {time.process_time() - c0:.0f})  "
-                  f"생존 {len(list(st.alive))}",
+                  f"생존 {len(list(st.alive))}  "
+                  f"핵 {_nukes(st)}",
                   file=sys.stderr, flush=True)
 
     golds = sorted(int(p.gold) for p in st.alive) or [0]
-    launched = sum(p.units.constructed(UnitType.ATOM_BOMB)
-                   + p.units.constructed(UnitType.HYDROGEN_BOMB)
-                   for p in st.players.values())
+    launched = _nukes(st)
     silos = sum(len(list(p.units.of(UnitType.MISSILE_SILO)))
                 for p in st.players.values())
     return {

@@ -949,3 +949,53 @@ def test_tick_actually_runs_the_interceptor():
             break
         b._dealt_boats.clear()
     assert any(w.owner == 0 for w in st.warships), "tick 이 선제 대응을 안 부른다"
+
+
+# --- 신원: 주소가 아니라 번호 (§5.129) ---------------------------------------
+#
+# 배는 계속 죽고 새로 생기는데 **죽은 배의 주소는 곧바로 재사용된다.** AI 가
+# `id()` 를 tick 너머로 들고 있으면 새 배가 죽은 배의 표식을 물려받는다.
+
+def test_ships_get_a_stable_unique_id_even_when_built_by_hand():
+    """⚠ **엔진에서만 번호를 매기면 안 된다.** 테스트·도구가 직접 만든 배가
+    전부 같은 번호가 되어 고치려던 버그가 그 자리에 다시 생긴다."""
+    from domynion.core.naval import TradeShip, TransportShip
+    a = TransportShip(owner=0, target=1, troops=1.0, path=[0], dst=0)
+    b = TransportShip(owner=0, target=1, troops=1.0, path=[0], dst=0)
+    t = TradeShip(owner=0, src_port=0, dst_port=1, dst_owner=1, path=[0])
+    assert len({a.uid, b.uid, t.uid}) == 3, "같은 번호를 받았다"
+    assert all(x.uid for x in (a, b, t)), "번호가 0 이면 신원이 아니다"
+
+
+def test_a_new_boat_is_not_mistaken_for_a_dead_one_that_had_its_address():
+    """**막지 않았으면 무엇이 일어났을 것인가** — 죽은 배의 주소를 물려받은 새
+    배가 *"이미 처리했다"* 로 걸러져 **AI 가 아무 대응도 안 한다.**
+
+    옛 코드는 `self._dealt_boats` 에 `id(b)` 를 넣었으므로, 아래처럼 새 배의
+    **주소**를 미리 넣어 두면 그 배를 무시했다. 번호로 바꾼 지금은 주소가
+    표식과 무관하다.
+
+    ⚠ 실제 주소 재사용을 테스트에서 **강제할 수는 없다**(할당기가 정한다).
+    그래서 재사용이 *일어난 상태*를 손으로 만들어 그 뒤 동작을 잰다."""
+    st, b = _intercept_state()
+    boat = _incoming(st, 1, at_x=200, dst_x=10)
+    b._dealt_boats.add(id(boat))          # 죽은 배가 남긴 주소였다고 치자
+    for _ in range(30):
+        b._intercept_incoming(st)
+        if st.warships:
+            break
+        b._dealt_boats = {x for x in b._dealt_boats if x != boat.uid}
+    assert any(w.owner == 0 for w in st.warships), (
+        "주소를 신원으로 쓰고 있다 — 새 배가 죽은 배의 표식에 걸렸다")
+
+
+def test_the_trade_tracker_keys_on_the_number_not_the_address():
+    """무역선 쪽도 같은 병이다. 사라진 배의 주소를 새 배가 물려받으면
+    `alive.get(key)` 가 **엉뚱한 배**를 돌려주고, 그 배가 나포당하면 추적한 적
+    없는 배에 보복한다."""
+    import inspect
+
+    from domynion.ai import nation
+    src = inspect.getsource(nation.NationBot._track_trade_ships)
+    assert "id(t)" not in src, "무역선 추적이 주소를 쓴다"
+    assert "t.uid" in src

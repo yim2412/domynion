@@ -975,7 +975,7 @@ class NationBot:
 
         원본은 배가 목록에서 사라졌는지가 아니라 **주인이 바뀌었는지**를 본다.
         격침·도착과 나포를 구분해야 하기 때문이다 — 도착에 보복하면 안 된다."""
-        alive = {id(t): t for t in st.trade_ships}
+        alive = {t.uid: t for t in st.trade_ships}
         for key in list(self._tracked_trade):
             t = alive.get(key)
             if t is None:
@@ -987,7 +987,7 @@ class NationBot:
                                 C.REL_WARSHIP_SANK_TRADE)
         for t in st.trade_ships:
             if t.owner == self.pid and t.captured_by is None:
-                self._tracked_trade.add(id(t))
+                self._tracked_trade.add(t.uid)
 
     def _intercept_incoming(self, st: GameState) -> None:
         """`trackIncomingTransportsAndRetaliate` — 내 땅을 노리는 상륙선을 **미리** 친다.
@@ -1014,7 +1014,7 @@ class NationBot:
         def man(a, b):
             return abs(a % w2 - b % w2) + abs(a // w2 - b // w2)
 
-        live = {id(b) for b in st.boats}
+        live = {b.uid for b in st.boats}
         self._dealt_boats &= live          # 사라진 배는 잊는다
         mine = [x for x in st.warships if x.owner == self.pid and not x.sunk]
 
@@ -1027,10 +1027,10 @@ class NationBot:
                 continue
             if int(gmap.owner[b.dst]) != self.pid:
                 continue                    # 내 땅을 노리는 배가 아니다
-            if id(b) in self._dealt_boats:
+            if b.uid in self._dealt_boats:
                 continue
             if man(b.tile, b.dst) < C.INCOMING_BOAT_TOO_CLOSE:
-                self._dealt_boats.add(id(b))
+                self._dealt_boats.add(b.uid)
                 continue
             if st.diplomacy.is_friendly(self.pid, b.owner):
                 continue
@@ -1040,13 +1040,13 @@ class NationBot:
                     and man(x.patrol_origin, b.dst) < C.INCOMING_BOAT_COVERED_RANGE)
                 for x in mine)
             if covered:
-                self._dealt_boats.add(id(b))
+                self._dealt_boats.add(b.uid)
                 continue
             tile = self._warship_spawn_tile(st, b.dst,
                                             C.INCOMING_BOAT_SPAWN_RADIUS)
             if tile is not None:
                 self._retaliate(st, tile, b.owner, C.REL_WARSHIP_SANK_OTHER)
-            self._dealt_boats.add(id(b))
+            self._dealt_boats.add(b.uid)
             return                          # 원본의 `break` — tick 당 한 척
 
     def _counter_infestation(self, st: GameState) -> None:
