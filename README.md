@@ -57,6 +57,12 @@ python tools/balance.py --seeds 1 2 3 --ticks 45000
 #    "그 축이 얼마를 벌어 줬나"는 아래 axis_worth.py 로 잰다 (§5.126)
 python tools/augment_ab.py --seeds 11 22 33 --focus troops
 
+# 결정론 확인 — ⚠ "같은 명령 두 번"으로는 약하다. 할당 패턴을 일부러 다르게 한다
+# (§5.129: 계측을 얹는 것만으로 판이 갈렸다 — AI 가 배를 id() 로 알아봤다)
+python tools/balance.py --seeds 1 2 3 --ticks 45000 --progress 1000 > A.log 2>&1
+python tools/balance.py --seeds 1 2 3 --ticks 45000 --progress 500  > B.log 2>&1
+python tools/compare_runs.py A.log B.log
+
 # 증강 축 — 몇 번 걸리는가 / 얼마를 벌어 줬는가
 python tools/axis_hits.py  --seed 11 --ticks 12000
 python tools/axis_worth.py --seed 11 --ticks 12000
@@ -166,6 +172,7 @@ tools/
     balance.py     기준선 · augment_ab.py  증강 A/B
     gold_flow.py   골드 흐름 · profile_game.py  프로파일
     mutate.py      변이 하네스 · verify_port.py · oracle.mts  값 대조
+    compare_runs.py 두 판을 tick 별로 대조 (결정론 확인 · §5.129)
     axis_hits.py   증강 축이 한 판에 몇 번 걸리는가
     axis_worth.py  그 축이 얼마를 벌어 줬는가 (횟수의 다음 질문)
     site_stats.py  개발 노트 페이지의 통계를 실측해 갱신한다
