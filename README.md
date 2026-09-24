@@ -176,7 +176,7 @@ tools/
     gold_flow.py   골드 흐름 · profile_game.py  프로파일
     mutate.py      변이 하네스 · verify_port.py · oracle.mts  값 대조
     compare_runs.py 두 판을 tick 별로 대조 (결정론 확인 · §5.129)
-    nuke_block.py  핵이 왜 안 나가는가 — 관문별 횟수
+    nuke_block.py  핵이 왜 안 나가는가 — 관문별 횟수 · `쏠 칸 없음` 네 갈래(§5.133)
     axis_hits.py   증강 축이 한 판에 몇 번 걸리는가
     axis_worth.py  그 축이 얼마를 벌어 줬는가 (횟수의 다음 질문)
     site_stats.py  개발 노트 페이지의 통계를 실측해 갱신한다

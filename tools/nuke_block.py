@@ -37,6 +37,7 @@ from domynion.ai import nation                       # noqa: E402
 from domynion.ai.nukes import NationNukeBehavior   # noqa: E402
 from domynion.core.engine import GameState           # noqa: E402
 from domynion.core.units import UnitType             # noqa: E402
+from domynion.core.constants import LAND_BIT as C_LAND_BIT   # noqa: E402
 
 REASONS = (
     "죽었다",
@@ -45,9 +46,17 @@ REASONS = (
     "표적 없음",            # find_target
     "표적이 봇/공격 안 함",
     "탄종 없음",            # _pick_type — 골드가 여기서 걸린다
-    "쏠 칸 없음",
+    # ↓ `쏠 칸 없음` 을 가른 것(§5.133). 앞 관문을 다 지나고도 안 쏜 경우다.
+    "칸: 깨끗한 칸 0",        # _blast_is_clean 이 후보 전부를 거절
+    "칸: 궤적 회피",          # 깨끗한데 점수까지 못 갔다(hard 이상의 SAM 궤적)
+    "칸: SAM 50칸",           # 점수가 전부 -1 — medium 의 SAM 근접 거절
+    "칸: 최근 표적",          # 점수가 -1 아래 — 최근 때린 자리 감점
+    "칸: 발사 실패",          # 칸은 골랐는데 launch_nuke 가 None
     "**발사**",
 )
+
+# 깨끗한 칸 0 일 때 **무엇이** 테두리에 걸렸나 — 칸 하나당 첫 위반 소유자
+BLOCKERS = ("다른 나라", "무주지(땅)", "바다")
 
 
 def run(seed: int, ticks: int, nations: int, bots: int, size: str,
@@ -58,7 +67,12 @@ def run(seed: int, ticks: int, nations: int, bots: int, size: str,
     를 갈아 끼우는 것이라 프로세스마다 따로 걸어야 한다 — 부모에서 한 번 걸고
     자식이 물려받기를 기대하면 Windows(spawn)에서는 안 걸린다."""
     tally: Counter[tuple[int, str]] = Counter()
+    blockers: Counter[str] = Counter()
     orig = NationNukeBehavior.maybe_send
+    orig_clean = NationNukeBehavior._blast_is_clean
+    orig_score = NationNukeBehavior.tile_score
+    probe = {"clean": 0, "scores": []}
+    clean, score = make_probes(probe, blockers)
 
     def counted(self, st, should_attack) -> bool:
         b = st.tick_count // bucket * bucket
@@ -84,11 +98,14 @@ def run(seed: int, ticks: int, nations: int, bots: int, size: str,
         if self._pick_type(st, p) is None:
             tally[(b, "탄종 없음")] += 1
             return orig(self, st, should_attack)
+        probe["clean"], probe["scores"] = 0, []
         fired = orig(self, st, should_attack)
-        tally[(b, "**발사**" if fired else "쏠 칸 없음")] += 1
+        tally[(b, "**발사**" if fired else _why_no_tile(probe))] += 1
         return fired
 
     NationNukeBehavior.maybe_send = counted      # type: ignore[assignment]
+    NationNukeBehavior._blast_is_clean = clean   # type: ignore[assignment]
+    NationNukeBehavior.tile_score = score        # type: ignore[assignment]
     try:
         t0 = time.perf_counter()
         rng = random.Random(seed)
@@ -106,9 +123,76 @@ def run(seed: int, ticks: int, nations: int, bots: int, size: str,
                       file=sys.stderr, flush=True)
         return {"seed": seed, "ticks": st.tick_count,
                 "wall": round(time.perf_counter() - t0, 1),
-                "tally": {f"{k[0]}|{k[1]}": v for k, v in tally.items()}}
+                "tally": {f"{k[0]}|{k[1]}": v for k, v in tally.items()},
+                "blockers": dict(blockers)}
     finally:
         NationNukeBehavior.maybe_send = orig     # type: ignore[assignment]
+        NationNukeBehavior._blast_is_clean = orig_clean   # type: ignore[assignment]
+        NationNukeBehavior.tile_score = orig_score        # type: ignore[assignment]
+
+
+def make_probes(probe: dict, blockers: Counter):
+    """`_blast_is_clean`·`tile_score` 를 감싸 **한 번의 칸 고르기에서 본 것**을 남긴다.
+
+    **난수를 안 먹는 헬퍼만** 감싼다 — 후보를 다시 뽑으면 rng 를 먹어 판이
+    갈린다(§5.116). 테스트도 이 함수를 그대로 쓴다(세는 것과 도는 것이 한 벌)."""
+    orig_clean = NationNukeBehavior._blast_is_clean
+    orig_score = NationNukeBehavior.tile_score
+
+    def clean(self, st, tile, radius, target_pid) -> bool:
+        ok = orig_clean(self, st, tile, radius, target_pid)
+        if ok:
+            probe["clean"] += 1
+        else:
+            blockers[_first_blocker(st, tile, radius, target_pid)] += 1
+        return ok
+
+    def score(self, st, tile, silos, structures, utype) -> float:
+        v = orig_score(self, st, tile, silos, structures, utype)
+        probe["scores"].append(v)
+        return v
+
+    return clean, score
+
+
+def _why_no_tile(probe: dict) -> str:
+    """앞 관문을 다 지나고 안 쐈을 때 — 어느 갈래였나.
+
+    `_pick_tile_scored` 는 `v > -1.0` 인 칸만 고른다(원본 `bestValue = -1`).
+    medium 의 SAM 근접은 **정확히 -1** 을, 최근 표적 감점은 **-1 아래**를 낸다."""
+    if probe["clean"] == 0:
+        return "칸: 깨끗한 칸 0"
+    if not probe["scores"]:
+        return "칸: 궤적 회피"
+    best = max(probe["scores"])
+    if best > -1.0:
+        return "칸: 발사 실패"
+    return "칸: SAM 50칸" if best == -1.0 else "칸: 최근 표적"
+
+
+def _first_blocker(st, tile, radius, target_pid) -> str:
+    """`_blast_is_clean` 과 **같은 순서로** 테두리를 돌아 첫 위반 칸의 정체를 댄다.
+
+    판정은 원본 함수가 이미 했다 — 여기서는 *무엇이* 걸렸는지만 본다."""
+    gm = st.gmap
+    w, h = gm.width, gm.height
+    cx, cy = tile % w, tile // w
+    for r in (radius, radius // 2):
+        if r <= 0:
+            continue
+        x0, x1, y0, y1 = cx - r, cx + r, cy - r, cy + r
+        ring = [(x, y) for x in range(x0, x1 + 1) for y in (y0, y1)]
+        ring += [(x, y) for y in range(y0 + 1, y1) for x in (x0, x1)]
+        for x, y in ring:
+            if not (0 <= x < w and 0 <= y < h):
+                continue
+            owner = int(gm.owner[y * w + x])
+            if owner == target_pid:
+                continue
+            if owner >= 0:
+                return "다른 나라"
+            return "바다" if not bool(gm.raw[y * w + x] & C_LAND_BIT) else "무주지(땅)"
+    return "?"
 
 
 def _worker(a: tuple) -> dict:
@@ -181,6 +265,16 @@ def main(argv: list[str] | None = None) -> int:
         for x in used:
             print(f"| {x} | {sum(n for k, n in tally.items() if k[1] == x):,} |")
         print()
+        bl = r.get("blockers") or {}
+        if bl:
+            print("깨끗하지 않은 후보 칸 — 테두리에 **처음** 걸린 것:")
+            print()
+            print("| 걸린 것 | 후보 칸 수 |")
+            print("|---|---|")
+            for x in (*BLOCKERS, "?"):
+                if bl.get(x):
+                    print(f"| {x} | {bl[x]:,} |")
+            print()
 
     print("> ⚠ **횟수는 나라마다 매 tick 세진다.** 한 나라가 오래 막히면 그 사유가"
           " 크게 나온다 — **비율이 아니라 어느 사유가 그 구간을 채우는지**를 본다.")
