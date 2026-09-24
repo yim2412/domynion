@@ -37,7 +37,7 @@ from ..core.units import STRUCTURES, UnitStore, UnitType
 from .incoming import biggest_incoming_attacker
 from .nukes import NationNukeBehavior
 from .alliance import NationAllianceBehavior
-from .chatter import NationChatter
+from .chatter import NationChatter, maybe_send_attack_emoji
 from .mirv import NationMIRVBehavior
 from .structures import NationStructureBehavior
 
@@ -618,13 +618,7 @@ class NationBot:
         if troops is None:
             return False
         if target is not None:
-            # 관계가 나쁘지 않은데 친다 = 내가 먼저 시작한 것(😈).
-            # 이미 사이가 나쁘면 보복으로 본다(😡). `maybeSendAttackEmoji` 그대로.
-            if st.relation_of(self.pid, target) >= Relation.NEUTRAL:
-                if self.rng.randrange(2) == 0:
-                    st.ai_emoji(self.pid, target, emoji.AGGRESSIVE_ATTACK)
-            elif self.rng.randrange(4) == 0:
-                st.ai_emoji(self.pid, target, emoji.ATTACK)
+            maybe_send_attack_emoji(st, self.rng, self.pid, target)
         return st.launch_attack_troops(self.pid, target, troops) is not None
 
     def _attack_troops(self, st: GameState, target: int | None) -> float | None:
@@ -1086,6 +1080,8 @@ class NationBot:
                 # 적 전함 **옆에** 띄운다. 못 지으면 있던 배를 그리로 보낸다.
                 if st.build_warship(self.pid, tile) is None:
                     self._move_warship(st, mine, tile)
+                else:
+                    st.ai_broadcast(self.pid, emoji.WARSHIP_RETALIATION)
                 return
 
     def _is_rich(self, st: GameState) -> bool:
@@ -1140,6 +1136,7 @@ class NationBot:
         if st.build_warship(self.pid, tile) is None:
             self._move_warship(st, mine, tile)
             return
+        st.ai_emoji(self.pid, enemy, emoji.WARSHIP_RETALIATION, limit_by_time=True)
         # ⚠ `relate` 는 **한 방향**이다 — 당한 쪽만 나빠진다.
         st.relate(self.pid, enemy, rel_hit)
 

@@ -999,3 +999,63 @@ def test_the_trade_tracker_keys_on_the_number_not_the_address():
     src = inspect.getsource(nation.NationBot._track_trade_ships)
     assert "id(t)" not in src, "무역선 추적이 주소를 쓴다"
     assert "t.uid" in src
+
+
+# --- 전함 보복의 말 (§5.134) --------------------------------------------------
+
+def _said(st):
+    from domynion.core.events import EventKind
+    return [e.text for e in st.log.items if e.kind is EventKind.CHAT]
+
+
+def test_warship_retaliation_tells_the_enemy():
+    """원본 `maybeRetaliateWithWarship` — 지으면 상대에게 ⛵ 를 보낸다."""
+    from domynion.core import emoji
+    st = _sea_state()
+    _with_port(st)
+    st.players[1].kind = "human"
+    st.players[0].gold = 100_000_000
+    # ⚠ tick 0 에서는 30초 제한이 막는다 — 원본도 `lastSent` 기본값이 -300 이라
+    # `0 - (-300) <= 300` 이 참이다. 재료를 판 중간으로 옮긴다.
+    st.tick_count = 10 * C.EMOJI_AI_INTERVAL_TICKS
+    b = bot(difficulty="impossible", seed=1)
+    for _ in range(50):
+        b._retaliate(st, st.gmap.ref(200, 100), 1, C.REL_WARSHIP_SANK_TRADE)
+        if st.warships:
+            break
+    assert st.warships, "재료가 잘못됐다 — 한 척도 안 지었다"
+    assert _said(st) == list(emoji.WARSHIP_RETALIATION)
+
+
+def test_countering_an_infestation_is_announced_to_everyone():
+    """원본 `buildCounterWarship` — 지으면 **전체에** ⛵ 를 방송한다."""
+    from domynion.core import emoji
+    st, b = _rich_setup()
+    st.players[1].kind = "human"
+    b._counter_infestation(st)
+    assert any(w.owner == 0 for w in st.warships), "재료가 잘못됐다 — 견제를 안 했다"
+    assert _said(st) == list(emoji.WARSHIP_RETALIATION)
+
+
+def test_warship_retaliation_words_wait_thirty_seconds():
+    """전함 보복의 ⛵ 는 `maybeSendEmoji` — 30초 제한을 받는다."""
+    st = _sea_state()
+    _with_port(st)
+    st.players[1].kind = "human"
+    st.players[0].gold = 1_000_000_000
+    st.tick_count = 10 * C.EMOJI_AI_INTERVAL_TICKS
+    b = bot(difficulty="impossible", seed=1)
+
+    def build_one():
+        n = len(st.warships)
+        for _ in range(50):
+            b._retaliate(st, st.gmap.ref(200, 100), 1, C.REL_WARSHIP_SANK_TRADE)
+            if len(st.warships) > n:
+                return
+        raise AssertionError("재료가 잘못됐다 — 한 척도 안 지었다")
+
+    build_one()
+    assert len(_said(st)) == 1
+    st.tick_count += C.EMOJI_COOLDOWN_TICKS
+    build_one()
+    assert len(_said(st)) == 1, "30초 안에 ⛵ 를 또 보냈다"

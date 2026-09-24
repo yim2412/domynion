@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import random
 
+from ..core import emoji
 from ..core.units import UnitType
+from .chatter import maybe_send_attack_emoji
 
 # 30초. **나라들이 같은 상대에게 몰리는 것을 막는 장치**이므로 인스턴스가 아니라
 # 클래스에 둔다 — 원본도 `private static recentMirvTargets` 다. 이게 없으면
 # 골드가 많은 판에서 열 나라가 같은 tick 에 같은 상대를 MIRV 로 덮는다.
 MIRV_COOLDOWN_TICKS = 300
+# `respondToMIRV` 의 `chance(8)` — 맞은 쪽이 비명을 방송할 확률의 역수
+MIRV_RESPONSE_CHANCE = 8
 
 # `chance(n)` = 1/n 로 **망설인다.** 낮을수록 자주 망설인다.
 MIRV_HESITATION_ODDS = {"easy": 2, "medium": 4, "hard": 8, "impossible": 16}
@@ -136,12 +140,18 @@ class NationMIRVBehavior:
 
     def _send(self, st, target) -> bool:
         """`maybeSendMIRV` — 표적 영토의 **중심**을 친다. 무작위 칸이 아니다."""
+        # 원본은 **쏠 수 있는지 보기 전에** 공격 이모지부터 낸다
+        maybe_send_attack_emoji(st, self.rng, self.pid, target.pid)
         tile = territory_center(st, target.pid)
         if tile is None:
             return False
         if st.launch_nuke(self.pid, UnitType.MIRV, tile) is None:
             return False
         NationMIRVBehavior.recent_targets[target.pid] = st.tick_count
+        st.ai_broadcast(self.pid, emoji.NUKE)
+        # `respondToMIRV` — 맞은 쪽이 1/8 로 *"무너진다"* 를 전체에 외친다
+        if self.rng.randrange(MIRV_RESPONSE_CHANCE) == 0:
+            st.ai_broadcast(target.pid, emoji.OVERWHELMED)
         return True
 
 

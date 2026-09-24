@@ -31,6 +31,7 @@ from __future__ import annotations
 import random
 
 from ..core import emoji
+from ..core.relations import Relation
 
 # `chance(n)` — 확률의 역수. 원본 상수 그대로다.
 CHANCE_OVERWHELMED = 16
@@ -119,7 +120,7 @@ class NationChatter:
                 continue
             if a.troops < me.troops * SMALL_ATTACK_RATIO:
                 pool = (emoji.CONFUSED if self._chance(2) else emoji.BORED)
-                st.ai_emoji(self.pid, other.pid, pool)
+                st.ai_emoji(self.pid, other.pid, pool, limit_by_time=True)
 
     # --- 판 전체 ----------------------------------------------------------
 
@@ -213,3 +214,28 @@ class NationChatter:
         가 `AllPlayers` 면 맨 앞에서 true 를 돌려준다). 사람이 여럿이어도 한 번의
         판단으로 모두에게 간다."""
         st.ai_broadcast(self.pid, pool)
+
+
+def maybe_send_attack_emoji(st, rng: random.Random, pid: int, target: int) -> None:
+    """`maybeSendAttackEmoji` — 나라의 공격과 MIRV 가 같이 부른다(§5.134).
+
+    ⚠ **순서가 규칙이다.** 원본은 *사람 표적 확인 + 30초 도장*을 **먼저** 찍고
+    그다음 주사위를 굴린다 — 굴림에 실패해도 도장은 찍혀 30초 동안 조용하다.
+    전에는 먼저 굴리고 성공할 때만 도장을 찍어 공격 이모지가 원본보다 자주
+    갔고, 사람이 아닌 표적에게도 공격마다 주사위를 굴렸다.
+
+    관계가 나쁘지 않은데 친다 = 내가 먼저 시작한 것(😈). 이미 사이가 나쁘면
+    보복으로 본다(😡)."""
+    me, them = st.players.get(pid), st.players.get(target)
+    if me is None or them is None:
+        return
+    if me.kind == "bot" or them.kind != "human":
+        return
+    if not st.emojis.ai_may_speak(pid, target, st.tick_count):
+        return
+    if st.relation_of(pid, target) >= Relation.NEUTRAL:
+        if rng.randrange(2) == 0:
+            st.ai_emoji(pid, target, emoji.AGGRESSIVE_ATTACK)
+        return
+    if rng.randrange(4) == 0:
+        st.ai_emoji(pid, target, emoji.ATTACK)

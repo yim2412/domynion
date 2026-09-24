@@ -168,13 +168,28 @@ def test_bots_never_speak():
 
 
 def test_ai_waits_thirty_seconds_before_speaking_again():
-    """막지 않았으면: AI 가 판단할 때마다 말을 걸어 화면이 이모지로 덮인다."""
+    """`maybeSendEmoji` 자리(조롱·핵·전함 보복) — 막지 않았으면 AI 가 판단할
+    때마다 말을 걸어 화면이 이모지로 덮인다."""
     st = state({0: "nation", 1: "human"})
-    assert st.ai_emoji(0, 1, emoji.LOVE)
+    assert st.ai_emoji(0, 1, emoji.NUKE, limit_by_time=True)
     st.tick_count += C.EMOJI_COOLDOWN_TICKS     # 5초 쿨다운은 지났다
-    assert not st.ai_emoji(0, 1, emoji.LOVE), "30초 제한이 따로 있다"
+    assert not st.ai_emoji(0, 1, emoji.NUKE, limit_by_time=True), "30초 제한이 따로 있다"
     st.tick_count += C.EMOJI_AI_INTERVAL_TICKS
-    assert st.ai_emoji(0, 1, emoji.LOVE)
+    assert st.ai_emoji(0, 1, emoji.NUKE, limit_by_time=True)
+
+
+def test_replies_are_not_held_by_the_thirty_second_clock():
+    """`sendEmoji` 자리(동맹·지원 답장 · 잡담)는 **30초 제한이 없다**(§5.134).
+
+    원본 `sendEmoji` 는 `shouldSendEmoji(other, false)` 로 제한을 끈다. 전에는
+    전부에 걸어, 동맹 요청을 두 번 거절하면 두 번째 답이 사라졌다."""
+    st = state({0: "nation", 1: "human"})
+    assert st.ai_emoji(0, 1, emoji.CONFUSED)
+    st.tick_count += C.EMOJI_COOLDOWN_TICKS - 1
+    assert not st.ai_emoji(0, 1, emoji.CONFUSED), "5초 쿨다운은 그대로다"
+    st.tick_count += 1
+    assert C.EMOJI_COOLDOWN_TICKS < C.EMOJI_AI_INTERVAL_TICKS   # 둘이 갈리는 구간이 있다
+    assert st.ai_emoji(0, 1, emoji.CONFUSED), "답장이 30초 제한에 걸렸다"
 
 
 def test_the_thirty_second_clock_starts_when_the_check_passes():
@@ -359,3 +374,88 @@ def test_only_the_latest_thing_someone_said_is_shown():
     # 목록에 담긴 순서가 아니라 **시각**으로 고른다.
     st.emojis.outgoing.reverse()
     assert st.emojis.visible_to(0, st.tick_count + 1) == {1: "🖕"}
+
+
+# --- 공격 이모지 — 도장이 주사위보다 먼저다 (§5.134) -------------------------
+
+class _Dice:
+    """주사위 값을 정해 두고, 몇 번 굴렸는지 센다."""
+
+    def __init__(self, value: int):
+        self.value, self.rolls = value, 0
+
+    def randrange(self, n: int) -> int:
+        self.rolls += 1
+        return self.value
+
+
+def test_attack_emoji_stamps_the_clock_even_when_the_dice_say_no():
+    """원본 `maybeSendAttackEmoji` 는 30초 도장을 **먼저** 찍고 굴린다 — 굴림에
+    실패해도 30초 동안 조용하다. 전에는 성공할 때만 찍어 원본보다 자주 말했다."""
+    from domynion.ai.chatter import maybe_send_attack_emoji
+    st = state({0: "nation", 1: "human"})
+    maybe_send_attack_emoji(st, _Dice(1), 0, 1)          # 굴림 실패(1/2 → 1)
+    assert chats(st) == []
+    # 막지 않았으면 — 도장이 없으면 다음 공격의 성공 굴림이 바로 말한다
+    st.tick_count += C.EMOJI_COOLDOWN_TICKS
+    maybe_send_attack_emoji(st, _Dice(0), 0, 1)
+    assert chats(st) == [], "굴림에 실패했는데 30초 도장이 안 찍혔다"
+    st.tick_count += C.EMOJI_AI_INTERVAL_TICKS
+    maybe_send_attack_emoji(st, _Dice(0), 0, 1)
+    assert chats(st) and chats(st)[0] in emoji.AGGRESSIVE_ATTACK
+
+
+def test_attack_emoji_does_not_roll_for_a_non_human_target():
+    """사람이 아닌 표적에는 **주사위를 안 굴린다** — 굴리면 AI 난수가 한 칸씩
+    밀려 헤드리스 판 전체가 원본과 다른 흐름이 된다."""
+    from domynion.ai.chatter import maybe_send_attack_emoji
+    st = state({0: "nation", 1: "nation", 2: "human"})
+    dice = _Dice(0)
+    maybe_send_attack_emoji(st, dice, 0, 1)
+    assert dice.rolls == 0
+    maybe_send_attack_emoji(st, dice, 0, 2)              # 대조군 — 사람이면 굴린다
+    assert dice.rolls == 1
+
+
+def test_a_hostile_target_gets_the_retaliation_emoji():
+    from domynion.ai.chatter import maybe_send_attack_emoji
+    st = state({0: "nation", 1: "human"})
+    st.players[0].relations.update(1, -200)
+    maybe_send_attack_emoji(st, _Dice(0), 0, 1)
+    assert chats(st) and chats(st)[0] in emoji.ATTACK
+
+
+# --- 30초 제한이 걸리는 세 자리 (§5.134) ---------------------------------------
+
+def test_a_second_nuke_within_thirty_seconds_is_silent():
+    """`maybeSendEmoji(target, NUKE)` — 핵 이모지는 **30초 제한을 받는다.**"""
+    from domynion.core.units import Unit, UnitType
+    st = state({0: "nation", 1: "human"})
+    st.tick_count = 10 * C.EMOJI_AI_INTERVAL_TICKS
+    st.players[0].units.units.append(
+        Unit(UnitType.MISSILE_SILO, 0, tile=st.gmap.ref(0, 0), level=3))
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(6, 0)) is not None
+    assert len(chats(st)) == 1
+    st.tick_count += C.EMOJI_COOLDOWN_TICKS          # 5초 쿨다운만 지났다
+    assert st.launch_nuke(0, UnitType.ATOM_BOMB, st.gmap.ref(7, 0)) is not None
+    assert len(chats(st)) == 1, "30초 안에 핵 이모지를 또 보냈다"
+
+
+class _AllZero(random.Random):
+    def randrange(self, *a, **k):
+        return 0
+
+
+def test_the_small_attack_taunt_waits_thirty_seconds():
+    """`maybeSendEmoji` — 작은 공격 조롱도 30초 제한을 받는다."""
+    from domynion.ai.chatter import NationChatter
+    from domynion.core.attack import Attack
+    st = state({0: "nation", 1: "human"})
+    st.tick_count = 10 * C.EMOJI_AI_INTERVAL_TICKS
+    c = NationChatter(0, _AllZero())                 # 확률 관문은 여기서 재지 않는다
+    st.attacks.append(Attack(attacker=1, target=0, troops=1.0))
+    c._small_attack(st, st.players[0])
+    assert len(chats(st)) == 1
+    st.tick_count += C.EMOJI_COOLDOWN_TICKS
+    c._small_attack(st, st.players[0])
+    assert len(chats(st)) == 1, "30초 안에 또 비웃었다"

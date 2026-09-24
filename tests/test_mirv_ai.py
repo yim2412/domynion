@@ -246,3 +246,43 @@ def test_a_concave_territory_falls_back_to_the_nearest_owned_tile():
     centre = territory_center(st, 1)
     assert int(st.gmap.owner[centre]) == 1, "남의 땅/빈 땅을 겨눴다"
     assert centre != st.gmap.ref(149, 89), "중심이 빈 땅인데 그대로 겨눴다"
+
+
+# --- MIRV 의 말 (§5.134) -----------------------------------------------------
+
+class _Dice(random.Random):
+    """모든 굴림이 0 — 확률 관문을 전부 통과시킨다."""
+
+    def randrange(self, *a, **k):
+        return 0
+
+
+def _mirv_at_human():
+    from domynion.core import emoji
+    st = state()
+    st.players[1].kind = "human"
+    only(st, 1, 100, 40, 200, 140)
+    ready(st)
+    b = behavior()
+    b.rng = _Dice()
+    return st, b, emoji
+
+
+def test_a_mirv_is_announced_to_everyone():
+    """원본 `maybeSendMIRV` — 공격 이모지를 내고, 쏘면 **전체에** ☢️ 를 방송한다."""
+    from domynion.core.events import EventKind
+    st, b, emoji = _mirv_at_human()
+    assert b._send(st, st.players[1]) is True
+    said = [e.text for e in st.log.items if e.kind is EventKind.CHAT]
+    assert any(t in emoji.AGGRESSIVE_ATTACK for t in said), said
+    assert any(t in emoji.NUKE for t in said), said
+
+
+def test_the_mirv_victim_may_cry_out():
+    """`respondToMIRV` — 맞은 쪽이 1/8 로 비명을 **전체에** 외친다."""
+    from domynion.core.emoji import ALL_PLAYERS
+    st, b, emoji = _mirv_at_human()
+    assert b._send(st, st.players[1]) is True
+    cries = [m for m in st.emojis.outgoing
+             if m[0] == 1 and m[1] == ALL_PLAYERS and m[2] in emoji.OVERWHELMED]
+    assert cries, st.emojis.outgoing

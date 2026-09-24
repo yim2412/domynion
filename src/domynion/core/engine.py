@@ -1365,8 +1365,12 @@ class GameState:
                 self.relate(pid, victim, C.REL_MIRV)
         else:
             self._nuke_angers(pid, utype, dst)
+        # 원본 `NationNukeBehavior.sendNuke` 의 `maybeSendEmoji(target, NUKE)`.
+        # MIRV 는 원본에 이 말이 없다(공격 이모지 + 전체 방송, `ai/mirv.py`).
+        # 따로 거르지 않는 이유: MIRV 는 쏘기 **전에** 공격 이모지가 30초 도장을
+        # 찍으므로 여기서 반드시 막힌다 — 거르는 조건은 변이로 못 잰다(§5.134).
         if victim >= 0 and victim != pid:
-            self.ai_emoji(pid, victim, emoji_mod.NUKE)
+            self.ai_emoji(pid, victim, emoji_mod.NUKE, limit_by_time=True)
         return n
 
     def _nuke_angered(self, pid: int, utype: UnitType, dst: TileRef) -> list[int]:
@@ -2028,7 +2032,8 @@ class GameState:
         return True
 
     def ai_emoji(self, pid: int, to: int, pool: tuple[str, ...],
-                 after_game_over: bool = False) -> bool:
+                 after_game_over: bool = False,
+                 limit_by_time: bool = False) -> bool:
         """AI 가 **먼저** 말을 건다.
 
         `shouldSendEmoji` 의 두 조건을 그대로 지킨다: 봇은 안 보내고, **받는 쪽이
@@ -2048,7 +2053,10 @@ class GameState:
             return False
         if not me.alive or not them.alive:
             return False
-        if not self.emojis.ai_may_speak(pid, to, self.tick_count):
+        # ⚠ **30초 제한은 원본 `maybeSendEmoji` 자리에만 걸린다**(§5.134).
+        # `sendEmoji` 는 `shouldSendEmoji(other, false)` — 제한 없이 일반
+        # 쿨다운(`can_send`)만 본다. 동맹 답장·지원 답장·잡담이 그쪽이다.
+        if limit_by_time and not self.emojis.ai_may_speak(pid, to, self.tick_count):
             return False
         if not self.emojis.can_send(pid, to, self.tick_count):
             return False
