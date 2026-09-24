@@ -298,3 +298,59 @@ def test_the_blast_radius_is_what_decides_not_the_target_tile():
     st.request_alliance(0, 1)
     st.request_alliance(1, 0)
     assert len(st.nukes) == 1, "반경 밖 핵이 취소됐다"
+
+
+# --- MIRV 의 표적은 **쏠 때** 정해진다 (§5.136) -------------------------------
+
+def _mirv_at_1(st):
+    own_square(st, 1, 40, 40, 20)
+    give_silo(st, 0, st.players[0].start)
+    st.players[0].gold = 10_000_000_000
+    n = st.launch_nuke(0, UnitType.MIRV, st.gmap.ref(40, 40))
+    assert n is not None
+    return n
+
+
+def test_a_mirv_breaks_the_alliance_with_its_target_on_launch():
+    """원본 `MIRVExecution.init` — *"Betrayal on launch"*. 전에는 관계만 깎아
+    **동맹에게 MIRV 를 쏘고도 동맹이 남았다.**"""
+    st = state()
+    st.request_alliance(0, 1)
+    st.accept_alliance(1, 0)
+    assert st.diplomacy.allied(0, 1)              # 막지 않았으면 — 동맹이다
+    _mirv_at_1(st)
+    assert not st.diplomacy.allied(0, 1), "동맹에게 MIRV 를 쏘고도 동맹이다"
+
+
+def test_a_mirv_is_cancelled_by_the_nation_it_was_aimed_at():
+    """날아가는 동안 겨눈 칸의 주인이 바뀌어도 **쏠 때의 표적**과 동맹을 맺으면
+    취소된다(원본 주석: *"so tile ownership changes mid-flight ... don't skip
+    cancellation"*). 전에는 지금의 칸 주인을 봐서 계속 날아갔다."""
+    st = state()
+    n = _mirv_at_1(st)
+    st.gmap.owner[n.dst] = 2                      # 제3자가 중심을 먹었다
+    st.request_alliance(0, 1)
+    st.request_alliance(1, 0)
+    assert st.diplomacy.allied(0, 1)
+    assert n not in st.nukes, "표적과 동맹을 맺었는데 MIRV 가 계속 난다"
+
+
+def test_mirv_warheads_follow_the_nation_it_was_aimed_at(monkeypatch):
+    """탄두는 **쏠 때의 표적** 땅에 떨어진다. 전에는 갈라지는 순간의 중심 칸
+    주인을 봐서, 제3자가 중심을 먹으면 탄두가 **그 제3자**에게 쏟아졌다."""
+    st = state(size=200)
+    st.gmap.owner[:] = 1                          # 표적이 지도 전체를 가졌다
+    st._counts[1] = st.gmap.size
+    give_silo(st, 0, st.players[0].start)
+    st.gmap.owner[st.players[0].start] = 0
+    st.players[0].gold = 10_000_000_000
+    n = st.launch_nuke(0, UnitType.MIRV, st.gmap.ref(100, 100))
+    assert n is not None and n.target_pid == 1
+    st.gmap.owner[n.dst] = 2                      # 중심 한 칸만 제3자에게 넘어갔다
+    hit: list[int] = []
+    monkeypatch.setattr(st, "_detonate", lambda m: hit.append(m.dst))
+    st._split_mirv(n)
+    others = [t for t in hit if t != n.dst]
+    assert others, "재료가 잘못됐다 — 중심 말고는 한 발도 안 떨어졌다"
+    assert all(int(st.gmap.owner[t]) == 1 for t in others), "탄두가 제3자에게 갔다"
+    assert n.dst in hit, "겨눈 칸 자체에 한 발이 떨어져야 한다(원본 `stagedTargets = [dst]`)"

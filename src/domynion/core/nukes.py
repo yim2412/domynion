@@ -213,6 +213,10 @@ class Nuke:
     # other instead of overlapping"*). 미는 동안에도 핵은 발사점에 떠 있으므로
     # SAM 의 표적이 될 수 있다.
     wait_ticks: int = 0
+    # MIRV 만 — **쏠 때 잡아 둔 표적 나라**(원본 `targetPlayer`, §5.136). 날아가는
+    # 동안 표적 칸의 주인이 바뀌어도(제3자 정복) 탄두는 이 나라 땅에 떨어지고,
+    # 동맹이 맺어지면 이 나라 기준으로 취소된다. None = 중립(`TerraNullius`).
+    target_pid: int | None = None
 
 
     def tile(self, gmap: GameMap) -> TileRef:

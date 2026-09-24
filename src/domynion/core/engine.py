@@ -1359,6 +1359,11 @@ class GameState:
         victim = int(self.gmap.owner[dst])
         self.emit(kind, who=victim if victim >= 0 else None, other=pid, tile=dst)
         if utype is UnitType.MIRV:
+            n.target_pid = victim if victim >= 0 else None
+            # 원본 *"Betrayal on launch"* — 쏘는 순간 **표적과의 동맹을 깬다**
+            # (§5.136). 전에는 관계만 깎아 동맹에게 MIRV 를 쏘고도 동맹이 남았다.
+            if victim >= 0 and victim != pid:
+                self.break_alliance(pid, victim)
             # MIRV 만 **양방향**이다 — 쏜 쪽도 상대를 적으로 확정한다.
             if victim >= 0 and victim != pid:
                 self.relate(victim, pid, C.REL_MIRV)
@@ -1433,7 +1438,12 @@ class GameState:
             for n in list(self.nukes):
                 if n.owner != launcher:
                     continue
-                if n.utype in (UnitType.MIRV, UnitType.MIRV_WARHEAD):
+                if n.utype is UnitType.MIRV:
+                    # 쏠 때 잡아 둔 나라로 본다 — 원본 주석: *"so tile ownership
+                    # changes mid-flight ... don't skip cancellation"*(§5.136)
+                    if n.target_pid != other:
+                        continue
+                elif n.utype is UnitType.MIRV_WARHEAD:
                     if int(self.gmap.owner[n.dst]) != other:
                         continue
                 elif other not in self._nuke_angered(launcher, n.utype, n.dst):
@@ -1470,11 +1480,12 @@ class GameState:
         (6·27 은 분모가 틀렸을 때의 값이다 — 고친 뒤 실측으로 갈아 끼웠다.)"""
         count = max(1, round(C.MIRV_WARHEAD_COUNT
                              * self.gmap.land_count / C.FULL_MAP_LAND))
-        for tile in self._mirv_targets(n.dst, count):
+        for tile in self._mirv_targets(n.dst, count, n.target_pid):
             self._detonate(Nuke(owner=n.owner, utype=UnitType.MIRV_WARHEAD,
                                 src=n.dst, dst=tile))
 
-    def _mirv_targets(self, base: TileRef, count: int) -> list[TileRef]:
+    def _mirv_targets(self, base: TileRef, count: int,
+                      target: int | None) -> list[TileRef]:
         """`tryGenerateTarget` — 탄두가 떨어질 자리들.
 
         ⚠ **표적의 땅에만 떨어진다.** 우리는 상자 안 아무 칸에나 뿌리고 있었다 —
@@ -1485,13 +1496,17 @@ class GameState:
         채우려 하지 않는다 — 좁은 나라에 쏘면 그만큼 적게 떨어진다."""
         gm = self.gmap
         w, h = gm.width, gm.height
-        owner = int(gm.owner[base])
+        # ⚠ **쏠 때 잡아 둔 나라**다(§5.136). 갈라지는 순간의 칸 주인이 아니다 —
+        # 그 사이 제3자가 중심을 먹으면 탄두가 엉뚱한 나라에 떨어졌다.
+        owner = -1 if target is None else target
         bx, by = base % w, base // w
         rng_ = C.MIRV_TARGET_RANGE
         r2 = rng_ * rng_
         spread = C.MIRV_MIN_SPREAD
-        taken: list[tuple[int, int]] = []
-        out: list[TileRef] = []
+        # 원본은 `stagedTargets = [this.dst]` 로 시작한다 — **표적 칸 자체에 한
+        # 발**이 떨어지고(주인이 바뀌어도 남긴다), 간격도 거기서부터 잰다(§5.136).
+        taken: list[tuple[int, int]] = [(bx, by)]
+        out: list[TileRef] = [base]
         # ⚠ 시도 예산은 **전체**다(자리마다가 아니다). 원본은 던져서 되면 담고,
         # 예산이 다 떨어지거나 발 수를 채우면 멈춘다 — 좁은 나라에 쏘면 예산만
         # 태우고 적게 떨어진다.

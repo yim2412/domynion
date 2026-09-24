@@ -508,7 +508,7 @@ def test_warheads_only_land_on_the_targets_territory():
     st._counts[1] = 10_000
     dst = st.gmap.ref(300, 200)
 
-    targets = st._mirv_targets(dst, 60)
+    targets = st._mirv_targets(dst, 60, 1)
     assert targets, "한 발도 자리를 못 찾았다"
     assert all(int(st.gmap.owner[t]) == 1 for t in targets), "남의 땅에 떨어졌다"
 
@@ -524,7 +524,7 @@ def test_warheads_keep_a_minimum_spread():
     st.gmap.owner[:] = 1
     st._counts[1] = st.gmap.land_count
     w = st.gmap.width
-    targets = st._mirv_targets(st.gmap.ref(300, 200), 129)
+    targets = st._mirv_targets(st.gmap.ref(300, 200), 129, 1)
     assert len(targets) >= 20, f"{len(targets)}발 — 재료가 성기다"
     for i, a in enumerate(targets):
         for b in targets[i + 1:]:
@@ -544,23 +544,27 @@ def test_warheads_never_land_on_water():
     st.gmap.terrain[st.gmap.size // 2:] = Terrain.OCEAN
     st.gmap.invalidate_terrain_caches()
     st._counts[1] = int(st.gmap.passable_mask().sum())
-    targets = st._mirv_targets(st.gmap.ref(300, 100), 129)
+    targets = st._mirv_targets(st.gmap.ref(300, 100), 129, 1)
     assert targets, "한 발도 안 떨어졌다"
     assert all(st.gmap.passable(t) for t in targets), "바다에 떨어졌다"
 
 
-def test_a_cramped_target_gets_no_warheads_at_all():
+def test_a_cramped_target_gets_only_the_centre_warhead():
     """자리를 못 찾으면 **그 탄두는 그냥 없다.** 원본도 발 수를 안 채운다.
 
-    5×5 짜리 나라에는 **한 발도 안 떨어진다** — 반경 1500 안에 100번을 던져도
-    25칸을 맞힐 확률이 사실상 0이다. 원본도 같은 수식이라 같은 결과가 된다.
-    MIRV 는 큰 나라를 치는 무기라는 뜻이다(AI 도 영토 중심을 겨눈다, §5.49)."""
+    5×5 짜리 나라에는 **겨눈 칸 한 발만** 떨어진다 — 반경 1500 안에 100번을
+    던져도 25칸을 맞힐 확률이 사실상 0이다. 원본도 같은 수식이라 같은 결과가 된다.
+    MIRV 는 큰 나라를 치는 무기라는 뜻이다(AI 도 영토 중심을 겨눈다, §5.49).
+
+    ⚠ 전에는 **0발**을 기대했다. 원본은 `stagedTargets = [this.dst]` 로 시작해
+    겨눈 칸에는 **항상** 한 발이 떨어진다(§5.136)."""
     st = wide_state(width=600, height=400)
     for y in range(198, 203):
         for x in range(298, 303):
             st.gmap.owner[st.gmap.ref(x, y)] = 1
     st._counts[1] = 25
-    assert st._mirv_targets(st.gmap.ref(300, 200), 60) == []
+    dst = st.gmap.ref(300, 200)
+    assert st._mirv_targets(dst, 60, 1) == [dst]
 
 
 def test_the_test_map_yields_few_warheads_and_that_is_the_material():
@@ -577,7 +581,7 @@ def test_the_test_map_yields_few_warheads_and_that_is_the_material():
         for x in range(250, 350):               # 100×100 = 10,000칸
             st.gmap.owner[st.gmap.ref(x, y)] = 1
     st._counts[1] = 10_000
-    got = st._mirv_targets(st.gmap.ref(300, 200), 129)
+    got = st._mirv_targets(st.gmap.ref(300, 200), 129, 1)
     assert 1 <= len(got) <= 15, f"{len(got)}발 — 실측은 5발 안팎이다"
 
 
@@ -614,7 +618,7 @@ def test_the_warhead_count_on_the_real_map(tmp_path):
         take = land[:int(len(land) * share)]
         gm.owner[take] = 0
         st._counts[0] = len(take)
-        got[share] = len(st._mirv_targets(int(take[len(take) // 2]), 350))
+        got[share] = len(st._mirv_targets(int(take[len(take) // 2]), 350, 0))
 
     assert got[0.02] < got[0.30], got            # 영토가 클수록 많이 떨어진다
     assert 10 <= got[0.30] <= 40, f"30% 영토에 {got[0.30]}발 — 실측은 19발이다"
