@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from ..core import constants as C
 from ..core.engine import GameState
 from ..core.units import STRUCTURES
+from .incoming import biggest_incoming_attacker
 
 # 봇에게 보내는 양 — `calculateBotAttackTroops`. `ai/nation.py` 와 같은 값이다.
 BOT_ATTACK_MULTIPLE = 4
@@ -184,26 +185,11 @@ class TribeBot:
                 return
 
     def _biggest_incoming_attacker(self, st: GameState) -> "int | None":
-        """`findIncomingAttackPlayer` — 나에게 들어오는 공격 중 가장 큰 것의 주인.
+        """`findIncomingAttackPlayer` — 한 곳에만 둔다(`ai/incoming.py`).
 
         ⚠ **봇은 봇의 공격도 센다.** 원본이 거르는 조건이
         `player.type() !== Bot` 이라, 내가 봇이면 그 필터가 아예 안 걸린다."""
-        best, best_troops = None, 0.0
-        for a in st.attacks:
-            if a.target != self.pid or a.attacker is None:
-                continue
-            # ⚠ 이 줄도 **변이로 안 잡힌다. 정상이다** — 친한 상대는
-            # `launch_attack` 의 `can_attack` 이 어차피 막는다. 원본이 여기서
-            # 거르는 이유는 *"가장 큰 공격"* 을 고를 때 동맹의 공격이 1등을
-            # 차지해 **반격 자체가 무산되는 것**을 막기 위해서다(고르고 나서
-            # 실패하면 그 tick 은 반격을 안 한 것이 된다).
-            if st.diplomacy.is_friendly(self.pid, a.attacker):
-                continue
-            if a.attacker not in st.players:
-                continue
-            if a.troops > best_troops:
-                best, best_troops = a.attacker, a.troops
-        return best
+        return biggest_incoming_attacker(st, self.pid)
 
     def _nearby_traitor(self, st: GameState) -> int | None:
         found = [o for o in st.border_targets(self.pid)

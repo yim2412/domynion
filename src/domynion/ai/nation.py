@@ -34,6 +34,7 @@ from ..core import emoji
 from ..core.relations import Relation
 from ..core.naval import _touching_components, shoreline_tiles
 from ..core.units import STRUCTURES, UnitStore, UnitType
+from .incoming import biggest_incoming_attacker
 from .nukes import NationNukeBehavior
 from .alliance import NationAllianceBehavior
 from .chatter import NationChatter
@@ -417,24 +418,8 @@ class NationBot:
         return not any(t is not None for t in st.diplomacy.teams.values())
 
     def _biggest_incoming_attacker(self, st: GameState) -> "int | None":
-        """`findIncomingAttackPlayer` — 나에게 들어오는 공격 중 **가장 큰 것**의
-        주인. 친한 쪽은 빼고, **내가 봇이 아니면 봇의 공격은 무시한다**(봇에게
-        되받아 봐야 판이 안 바뀐다)."""
-        me = st.players[self.pid]
-        best, best_troops = None, 0.0
-        for a in st.attacks:
-            if a.target != self.pid or a.attacker is None:
-                continue
-            if st.diplomacy.is_friendly(self.pid, a.attacker):
-                continue
-            other = st.players.get(a.attacker)
-            if other is None:
-                continue
-            if not me.is_bot and other.is_bot:
-                continue
-            if a.troops > best_troops:
-                best, best_troops = a.attacker, a.troops
-        return best
+        """`findIncomingAttackPlayer` — 한 곳에만 둔다(`ai/incoming.py`)."""
+        return biggest_incoming_attacker(st, self.pid)
 
     def _has_bot_neighbour_with_structures(self, st: GameState,
                                            enemies: list) -> bool:

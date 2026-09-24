@@ -32,6 +32,7 @@ from ..core.nukes import (NUKE_MAGNITUDES, NUKE_SPEED, Nuke, is_targetable,
                           sam_range)
 from ..core.relations import Relation
 from ..core.units import STRUCTURES, UnitType
+from .incoming import biggest_incoming_attacker
 
 # `nukeTileScore` 의 건물 값. 사일로가 가장 값진 것이 핵심이다 — 상대의 핵을
 # 먼저 없애는 것이 무엇보다 낫다.
@@ -363,13 +364,15 @@ class NationNukeBehavior:
                 if q.pid != self.pid:
                     return q
 
-        # 1) 들어오는 공격
-        for a in st.attacks:
-            if a.target == self.pid and a.attacker != self.pid:
-                q = st.players.get(a.attacker)
-                if q is not None and q.alive and not st.diplomacy.is_friendly(
-                        self.pid, q.pid):
-                    return q
+        # 1) 들어오는 공격 — **가장 큰 것**, 봇의 공격은 무시(§5.132).
+        # ⚠ 전에는 여기에 사본이 따로 있어 *처음 만난* 공격을 봇이든 아니든
+        # 돌려줬다. 봇이 나를 치면 표적이 봇이 되고 다음 관문(봇은 안 친다)에서
+        # 핵이 멈췄다 — 원본은 봇을 걸러 아래 순위로 내려간다.
+        who = biggest_incoming_attacker(st, self.pid)
+        if who is not None:
+            q = st.players.get(who)
+            if q is not None and q.alive:
+                return q
 
         # 2) impossible — 최고 부자만 밀도 높은 상대를 선제적으로 친다
         if (self.difficulty == "impossible"

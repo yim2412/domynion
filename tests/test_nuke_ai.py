@@ -87,6 +87,35 @@ def test_incoming_attack_is_the_first_priority():
     assert b.find_target(st).pid == 1, "더 큰 나라를 골랐다"
 
 
+def test_a_bot_attack_does_not_hijack_the_nuke_target():
+    """봇이 나를 쳐도 **표적은 봇이 아니다** — 원본은 봇의 공격을 걸러 아래 순위로
+    내려간다(§5.132). 전에는 봇이 표적이 되고, 다음 관문(봇은 안 친다)에서 핵이
+    그냥 멈췄다."""
+    st = state()
+    fill(st, 0, 0, 0, 100, 100)
+    fill(st, 1, 200, 0, 300, 100)
+    fill(st, 2, 400, 0, 450, 50)
+    st.players[2].is_bot = True
+    st.players[2].kind = "bot"
+    st.players[0].relations.update(1, -200)     # 아래 순위에 미운 상대가 있다
+    st.attacks.append(Attack(attacker=2, target=0, troops=9_000.0))
+    assert behavior().find_target(st).pid == 1, "봇의 공격이 표적을 가로챘다"
+    # 막지 않았으면 — 같은 공격이 나라의 것이면 그쪽이 1순위다
+    st.players[2].is_bot = False
+    st.players[2].kind = "nation"
+    assert behavior().find_target(st).pid == 2
+
+
+def test_the_biggest_incoming_attack_wins_not_the_first():
+    """들어오는 공격이 여럿이면 **가장 큰 것**의 주인이다. 목록 순서가 아니다."""
+    st = state(players=4)
+    fill(st, 1, 100, 100, 110, 110)
+    fill(st, 2, 200, 100, 210, 110)
+    st.attacks.append(Attack(attacker=1, target=0, troops=100.0))
+    st.attacks.append(Attack(attacker=2, target=0, troops=900.0))
+    assert behavior().find_target(st).pid == 2, "먼저 들어온 작은 공격을 골랐다"
+
+
 def test_a_much_weaker_hated_player_is_skipped():
     """미운 상대라도 **훨씬 약하면** 핵을 안 쓴다.
 

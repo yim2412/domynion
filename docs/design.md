@@ -275,6 +275,7 @@ src/domynion/
     nation.py      나라 AI 본체 (최대 파일)
     simple_ai.py   가벼운 AI + attach 배선
     nukes.py       핵 판단
+    incoming.py    가장 큰 들어오는 공격 — 나라·봇·핵 AI 공용(§5.132)
     mirv.py        MIRV 판단
     structures.py  건설 판단
     placement.py   자리 고르기 값 함수
